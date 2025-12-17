@@ -16,9 +16,9 @@ Backend, JSON based web API based on OpenAPI: <http://localhost:8000>
 
 Automatic interactive documentation with Swagger UI (from the OpenAPI backend): <http://localhost:8000/docs>
 
-Adminer, database web administration: <http://localhost:8080>
+Adminer, database web administration: <http://localhost:8087>
 
-Traefik UI, to see how the routes are being handled by the proxy: <http://localhost:8090>
+Traefik UI, to see how the routes are being handled by the proxy: <http://localhost:8091>
 
 **Note**: The first time you start your stack, it might take a minute for it to be ready. While the backend waits for the database to be ready and configures everything. You can check the logs to monitor it.
 
@@ -194,9 +194,9 @@ Automatic Interactive Docs (Swagger UI): <http://localhost:8000/docs>
 
 Automatic Alternative Docs (ReDoc): <http://localhost:8000/redoc>
 
-Adminer: <http://localhost:8080>
+Adminer: <http://localhost:8087>
 
-Traefik UI: <http://localhost:8090>
+Traefik UI: <http://localhost:8091>
 
 MailCatcher: <http://localhost:1080>
 
@@ -212,8 +212,8 @@ Automatic Interactive Docs (Swagger UI): <http://api.localhost.tiangolo.com/docs
 
 Automatic Alternative Docs (ReDoc): <http://api.localhost.tiangolo.com/redoc>
 
-Adminer: <http://localhost.tiangolo.com:8080>
+Adminer: <http://localhost.tiangolo.com:8087>
 
-Traefik UI: <http://localhost.tiangolo.com:8090>
+Traefik UI: <http://localhost.tiangolo.com:1>
 
 MailCatcher: <http://localhost.tiangolo.com:1080>
