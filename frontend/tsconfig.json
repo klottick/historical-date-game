@@ -27,7 +27,8 @@
     "tests",
     "tests-real-catalog",
     "playwright.config.ts",
-    "playwright.real-catalog.config.ts"
+    "playwright.real-catalog.config.ts",
+    "vite.real-catalog.config.ts"
   ],
   "references": [
     {

@@ -107,3 +107,15 @@ test("test-only real catalog answers stay outside application imports and Vite e
   assert.equal(status, 0)
   assert.equal(stdout.trim(), "")
 })
+
+test("real Vite configuration denies private auth and runner files over HTTP", () => {
+  assert.ok(
+    existsSync("vite.real-catalog.config.ts"),
+    "real Vite privacy configuration is missing",
+  )
+  const config = readFileSync("vite.real-catalog.config.ts", "utf8")
+  assert.match(config, /\*\*\/playwright\/\.auth\/\*\*/)
+  assert.match(config, /\*\*\/tests-real-catalog\/\*\*/)
+  assert.match(config, /\*\*\/data\/game\/\*\*/)
+  assert.match(config, /\.env/)
+})

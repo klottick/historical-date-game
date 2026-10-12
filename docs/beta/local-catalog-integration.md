@@ -187,7 +187,7 @@ uv run uvicorn app.main:app --host 127.0.0.1 --port 8010
 
 # In a separate shell, from frontend/; verify 5174 is free first.
 export PATH=/tmp/opencode/node-v26.11.1-linux-x64/bin:$PATH
-VITE_API_URL=http://localhost:8010 npm run dev -- --host 127.0.0.1 --port 5174 --strictPort
+VITE_API_URL=http://localhost:8010 npm run dev -- --config vite.real-catalog.config.ts --host 127.0.0.1 --port 5174 --strictPort
 
 # Supply FIRST_SUPERUSER / FIRST_SUPERUSER_PASSWORD privately from local .env.
 REAL_CATALOG_RELEASE_DIR="$(realpath ../data/game/releases/jsonl-trial-2026-10-12-review-r1)" \
@@ -199,6 +199,12 @@ curl --fail http://127.0.0.1:8010/api/v1/utils/health-check/
 
 The configuration has no automatic webServer/reuse behavior. Auth files live
 only in ignored `frontend/playwright/.auth/` (directory 0700, files 0600).
+Use the separate Vite configuration above: ignoring files and Unix permissions
+alone do **not** stop a dev server from serving them. A final F2 probe reproduced
+HTTP 200 for private auth JSON under the default Vite configuration; the new
+real-only Vite configuration preserves default sensitive-file denies and blocks
+auth, test-runner, SDD and catalog paths. Actual UI-origin probes now return 403,
+including raw-query and `/@fs/` paths. The fixture Vite configuration is unchanged.
 `real-catalog.json` is the player storage state; `real-catalog-players.json` and
 `real-catalog-journey-players.jsonl` retain dedicated local credentials for owner
 play, not public enrollment. Do not paste these into logs or reports. Players

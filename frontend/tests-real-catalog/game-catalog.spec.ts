@@ -255,6 +255,20 @@ test("actual release options, readable safe credits, asset HTTP and private arti
     })
   }
   expect(assetChecks).toHaveLength(8)
+  const frontendDenied = []
+  for (const path of [
+    "/playwright/.auth/real-catalog-players.json",
+    "/playwright/.auth/real-catalog.json",
+    "/playwright/.auth/real-catalog-restart-players.json?raw",
+    `/@fs${process.cwd()}/playwright/.auth/real-catalog-players.json`,
+    "/tests-real-catalog/catalog.ts?raw",
+    `/@fs${process.env.REAL_CATALOG_RELEASE_DIR}/events.jsonl`,
+    `/@fs${process.env.REAL_CATALOG_RELEASE_DIR}/manifest.json`,
+  ]) {
+    const response = await page.request.get(`http://localhost:5174${path}`)
+    expect([403, 404]).toContain(response.status())
+    frontendDenied.push({ path, status: response.status() })
+  }
   const denied = []
   for (const path of [
     "/media/",
@@ -300,6 +314,7 @@ test("actual release options, readable safe credits, asset HTTP and private arti
         options,
         eventCount: catalog.manifest.event_count,
         assetChecks,
+        frontendDenied,
         denied,
       },
       null,
