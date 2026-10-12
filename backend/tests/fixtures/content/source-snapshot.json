@@ -1,0 +1,21 @@
+{
+  "synthetic": true,
+  "snapshot_id": "synthetic-selected-v1",
+  "records": [
+    {"source_id": "wikidata", "record_id": "synthetic-birth", "entity_id": "Q900001", "milestone": "birth", "category_ids": ["births"], "region_ids": ["synthetic"]},
+    {"source_id": "wikipedia_en", "record_id": "synthetic-birth-alias", "entity_id": "Q900001", "milestone": "birth", "category_ids": ["births"], "region_ids": ["synthetic"]},
+    {"source_id": "wikidata", "record_id": "synthetic-death", "entity_id": "Q900001", "milestone": "death", "category_ids": ["deaths"], "region_ids": ["synthetic"]}
+  ],
+  "entity": {
+    "id": "Q900001", "lastrevid": 101,
+    "labels": {"en": {"language": "en", "value": "Synthetic Ada"}},
+    "claims": {
+      "P569": [{"id": "Q900001$birth", "rank": "normal", "mainsnak": {"snaktype": "value", "property": "P569", "datavalue": {"type": "time", "value": {"time": "+00000001800-00-00T00:00:00Z", "precision": 9, "before": 0, "after": 0, "timezone": 0, "calendarmodel": "http://www.wikidata.org/entity/Q1985727"}}}, "references": []}],
+      "P570": [{"id": "Q900001$death", "rank": "normal", "mainsnak": {"snaktype": "value", "property": "P570", "datavalue": {"type": "time", "value": {"time": "+00000001870-00-00T00:00:00Z", "precision": 9, "before": 0, "after": 0, "timezone": 0, "calendarmodel": "http://www.wikidata.org/entity/Q1985727"}}}, "references": []}]
+    }
+  },
+  "page": {
+    "pageid": 900001, "title": "Synthetic Ada", "pageprops": {"wikibase_item": "Q900001"},
+    "revisions": [{"revid": 202, "slots": {"main": {"contentmodel": "wikitext", "content": "{{Infobox person\n| name = Synthetic Ada\n| birth_date = 1800\n| death_date = 1870\n}}"}}}]
+  }
+}
