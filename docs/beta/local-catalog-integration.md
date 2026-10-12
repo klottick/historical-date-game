@@ -139,3 +139,107 @@ three local default-secret warnings, and API-suite PyJWT short-HMAC-key warnings
 These local defaults are not suitable for deployment. UI ports `8010`/`5174`,
 browser checks, physical devices, spoken screen readers, owner gameplay and all
 production/budget/invitation approvals remain outside F1.
+
+## F2: isolated real browser environment
+
+F2 adds a **separate** real-catalog Playwright configuration, not a replacement for
+the eight-event fixture tests. The private runner requires the absolute
+`REAL_CATALOG_RELEASE_DIR`, verifies the pinned manifest above and every listed
+file hash, refuses fixtures/counts below 1,000, and checks the API's selected
+release **before** loading answers. Answers never enter application imports,
+`VITE_` variables, browser globals, or a new API endpoint.
+
+Only the F1-owned `historical_date_game_catalog_test` database at
+`127.0.0.1:5433` is used. Confirm its ownership comment and selection first.
+Do **not** run full backend pytest, cleanup, migration, or activation merely to
+start browser testing. The existing `init_db` may initialize the local admin
+without resetting existing accounts/runs/definitions. Supply existing local
+admin credentials through the environment; setup uses admin APIs to create
+restricted dedicated players. Public signup on the real backend is disabled.
+
+### Media provisioning correction
+
+F1 checked/copied eight flat assets but did not exercise HTTP serving. The
+existing production projection and media allowlist require
+`/media/<release-id>/<digest>.svg`, not a flat `/media/<digest>.svg` alias. F2
+hash-checked all eight originals and made **create-only identical copies** into
+`data/game/local-catalog-runtime/media/jsonl-trial-2026-10-12-review-r1/`.
+Conflicting existing destinations must fail. No release/original asset bytes
+changed, no private artifacts were copied, and the media allowlist was not
+weakened. All eight actual projected asset URLs return 200 with matching byte
+hashes. Private artifacts and directory listings return 404, including paths
+under this release directory. The flat digest path remains deliberately 404.
+
+### Launch and tests (loopback only)
+
+Inspect `ss -ltnp` and process command/cwd before starting. Occupied ports require
+established ownership or approval; a responding health check is not ownership.
+Do not stop the original fixture backend on port 8000.
+
+```bash
+# From backend/, after ownership checks; keep existing .env credentials private.
+export POSTGRES_DB=historical_date_game_catalog_test
+export POSTGRES_SERVER=127.0.0.1 POSTGRES_PORT=5433 ENVIRONMENT=local
+export GAME_DATA_DIR="$(realpath ../data/game/local-catalog-runtime)"
+export FRONTEND_HOST=http://localhost:5174 PUBLIC_REGISTRATION_ENABLED=false
+uv run python -m app.initial_data
+uv run uvicorn app.main:app --host 127.0.0.1 --port 8010
+
+# In a separate shell, from frontend/; verify 5174 is free first.
+export PATH=/tmp/opencode/node-v26.11.1-linux-x64/bin:$PATH
+VITE_API_URL=http://localhost:8010 npm run dev -- --host 127.0.0.1 --port 5174 --strictPort
+
+# Supply FIRST_SUPERUSER / FIRST_SUPERUSER_PASSWORD privately from local .env.
+REAL_CATALOG_RELEASE_DIR="$(realpath ../data/game/releases/jsonl-trial-2026-10-12-review-r1)" \
+  VITE_API_URL=http://localhost:8010 npx playwright test \
+  --config=playwright.real-catalog.config.ts --project=chromium \
+  --project=game-mobile --workers=1 --reporter=line
+curl --fail http://127.0.0.1:8010/api/v1/utils/health-check/
+```
+
+The configuration has no automatic webServer/reuse behavior. Auth files live
+only in ignored `frontend/playwright/.auth/` (directory 0700, files 0600).
+`real-catalog.json` is the player storage state; `real-catalog-players.json` and
+`real-catalog-journey-players.jsonl` retain dedicated local credentials for owner
+play, not public enrollment. Do not paste these into logs or reports. Players
+and their active runs are preserved; no whole-DB cleanup is performed.
+
+### Verified outcomes and restart
+
+Final evidence, failures/traces, complete command outputs, lifecycle/PIDs and
+sanitized state are in the private same-workspace `task-F2-report.md` and
+`F2-evidence/` under the followup SDD directory. The real suite exercised ten
+journeys (five per project) plus setup. Actual options expose the eight slugs,
+9–2025 CE, and this 1,276-event release. The real two-year exhausted pool uses
+inclusive **9–14 CE with gap 5**, chosen from the full verified catalog, not a
+synthetic release or a shortened engine. Broad Freeplay proves correct scoring,
+preview-only drop, exact retry, reload/resume, intentional loss, and a new run.
+Two fresh Daily players per project share the anchor/three-card correct prefix,
+frozen categories, one attempt despite a new operation ID, and owner-only reads.
+Pending DTO allowlists/credits, revealed sources, real assets, failed imagery and
+a genuinely committed-but-dropped response are checked through UI and HTTP.
+
+`frontend/tests-real-catalog/restart-probe.ts` is an explicit two-phase Node
+runner, outside default discovery. Run `node tests-real-catalog/restart-probe.ts
+before` with the private release environment, stop **only the verified owned
+8010 PID**, relaunch with identical settings, then run its `after` phase. F2's
+actual restart preserved the complete progressed Daily/Freeplay DTOs at revision
+1 (catalog, timeline, pending, config, feedback and Daily identity), then the
+browser scored the next correct move on each to revision/streak 2. Saved owner
+restart auth is in ignored `real-catalog-restart-players.json` /
+`real-catalog-restart.json` so a later setup cannot erase those credentials.
+
+The original fixture suite was independently rerun against port 8000 and its
+original eight-event DB/catalog, with a separate loopback Vite on 5173: **111
+passed**. No fixture answer table, default discovery or generated client changed.
+The owned real UI/API remain usable at `http://localhost:5174` /
+`http://localhost:8010`. Use the report's current PIDs, verify cmdline/cwd/port
+again, then send SIGTERM only to those owned processes when stopping. The private
+`F2-evidence/local-environment.py` retains exact launch and guarded backend
+restart commands. Never use a broad service kill or DB reset.
+
+Desktop Chromium and Pixel 5 **touch emulation are not physical-device evidence**
+or unassisted owner play. Physical-device, spoken screen-reader, owner gameplay,
+production security/default-secret replacement, hosting/budget and invitation
+gates remain outstanding. No deployment, paid operations, live acquisition,
+LAN/tunnel binding, push, merge, or publication was performed.
