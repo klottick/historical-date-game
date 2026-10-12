@@ -16,8 +16,11 @@ import { Route as ResetPasswordRouteImport } from './routes/reset-password'
 import { Route as SignupRouteImport } from './routes/signup'
 import { Route as LayoutIndexRouteImport } from './routes/_layout/index'
 import { Route as LayoutAdminRouteImport } from './routes/_layout/admin'
+import { Route as LayoutDailyRouteImport } from './routes/_layout/daily'
+import { Route as LayoutFreeplayRouteImport } from './routes/_layout/freeplay'
 import { Route as LayoutItemsRouteImport } from './routes/_layout/items'
 import { Route as LayoutSettingsRouteImport } from './routes/_layout/settings'
+import { Route as LayoutPlayRunIdRouteImport } from './routes/_layout/play/$runId'
 
 const LayoutRoute = LayoutRouteImport.update({
   id: '/_layout',
@@ -53,6 +56,16 @@ const LayoutAdminRoute = LayoutAdminRouteImport.update({
   path: '/admin',
   getParentRoute: () => LayoutRoute,
 } as any)
+const LayoutDailyRoute = LayoutDailyRouteImport.update({
+  id: '/daily',
+  path: '/daily',
+  getParentRoute: () => LayoutRoute,
+} as any)
+const LayoutFreeplayRoute = LayoutFreeplayRouteImport.update({
+  id: '/freeplay',
+  path: '/freeplay',
+  getParentRoute: () => LayoutRoute,
+} as any)
 const LayoutItemsRoute = LayoutItemsRouteImport.update({
   id: '/items',
   path: '/items',
@@ -63,6 +76,11 @@ const LayoutSettingsRoute = LayoutSettingsRouteImport.update({
   path: '/settings',
   getParentRoute: () => LayoutRoute,
 } as any)
+const LayoutPlayRunIdRoute = LayoutPlayRunIdRouteImport.update({
+  id: '/play/$runId',
+  path: '/play/$runId',
+  getParentRoute: () => LayoutRoute,
+} as any)
 
 export interface FileRoutesByFullPath {
   '/': typeof LayoutIndexRoute
@@ -71,8 +89,11 @@ export interface FileRoutesByFullPath {
   '/reset-password': typeof ResetPasswordRoute
   '/signup': typeof SignupRoute
   '/admin': typeof LayoutAdminRoute
+  '/daily': typeof LayoutDailyRoute
+  '/freeplay': typeof LayoutFreeplayRoute
   '/items': typeof LayoutItemsRoute
   '/settings': typeof LayoutSettingsRoute
+  '/play/$runId': typeof LayoutPlayRunIdRoute
 }
 export interface FileRoutesByTo {
   '/login': typeof LoginRoute
@@ -80,9 +101,12 @@ export interface FileRoutesByTo {
   '/reset-password': typeof ResetPasswordRoute
   '/signup': typeof SignupRoute
   '/admin': typeof LayoutAdminRoute
+  '/daily': typeof LayoutDailyRoute
+  '/freeplay': typeof LayoutFreeplayRoute
   '/items': typeof LayoutItemsRoute
   '/settings': typeof LayoutSettingsRoute
   '/': typeof LayoutIndexRoute
+  '/play/$runId': typeof LayoutPlayRunIdRoute
 }
 export interface FileRoutesById {
   __root__: typeof rootRouteImport
@@ -92,9 +116,12 @@ export interface FileRoutesById {
   '/reset-password': typeof ResetPasswordRoute
   '/signup': typeof SignupRoute
   '/_layout/admin': typeof LayoutAdminRoute
+  '/_layout/daily': typeof LayoutDailyRoute
+  '/_layout/freeplay': typeof LayoutFreeplayRoute
   '/_layout/items': typeof LayoutItemsRoute
   '/_layout/settings': typeof LayoutSettingsRoute
   '/_layout/': typeof LayoutIndexRoute
+  '/_layout/play/$runId': typeof LayoutPlayRunIdRoute
 }
 export interface FileRouteTypes {
   fileRoutesByFullPath: FileRoutesByFullPath
@@ -105,8 +132,11 @@ export interface FileRouteTypes {
     | '/reset-password'
     | '/signup'
     | '/admin'
+    | '/daily'
+    | '/freeplay'
     | '/items'
     | '/settings'
+    | '/play/$runId'
   fileRoutesByTo: FileRoutesByTo
   to:
     | '/login'
@@ -114,9 +144,12 @@ export interface FileRouteTypes {
     | '/reset-password'
     | '/signup'
     | '/admin'
+    | '/daily'
+    | '/freeplay'
     | '/items'
     | '/settings'
     | '/'
+    | '/play/$runId'
   id:
     | '__root__'
     | '/_layout'
@@ -125,9 +158,12 @@ export interface FileRouteTypes {
     | '/reset-password'
     | '/signup'
     | '/_layout/admin'
+    | '/_layout/daily'
+    | '/_layout/freeplay'
     | '/_layout/items'
     | '/_layout/settings'
     | '/_layout/'
+    | '/_layout/play/$runId'
   fileRoutesById: FileRoutesById
 }
 export interface RootRouteChildren {
@@ -189,6 +225,20 @@ declare module '@tanstack/react-router' {
       preLoaderRoute: typeof LayoutAdminRouteImport
       parentRoute: typeof LayoutRoute
     }
+    '/_layout/daily': {
+      id: '/_layout/daily'
+      path: '/daily'
+      fullPath: '/daily'
+      preLoaderRoute: typeof LayoutDailyRouteImport
+      parentRoute: typeof LayoutRoute
+    }
+    '/_layout/freeplay': {
+      id: '/_layout/freeplay'
+      path: '/freeplay'
+      fullPath: '/freeplay'
+      preLoaderRoute: typeof LayoutFreeplayRouteImport
+      parentRoute: typeof LayoutRoute
+    }
     '/_layout/items': {
       id: '/_layout/items'
       path: '/items'
@@ -203,21 +253,34 @@ declare module '@tanstack/react-router' {
       preLoaderRoute: typeof LayoutSettingsRouteImport
       parentRoute: typeof LayoutRoute
     }
+    '/_layout/play/$runId': {
+      id: '/_layout/play/$runId'
+      path: '/play/$runId'
+      fullPath: '/play/$runId'
+      preLoaderRoute: typeof LayoutPlayRunIdRouteImport
+      parentRoute: typeof LayoutRoute
+    }
   }
 }
 
 interface LayoutRouteChildren {
   LayoutAdminRoute: typeof LayoutAdminRoute
+  LayoutDailyRoute: typeof LayoutDailyRoute
+  LayoutFreeplayRoute: typeof LayoutFreeplayRoute
   LayoutItemsRoute: typeof LayoutItemsRoute
   LayoutSettingsRoute: typeof LayoutSettingsRoute
   LayoutIndexRoute: typeof LayoutIndexRoute
+  LayoutPlayRunIdRoute: typeof LayoutPlayRunIdRoute
 }
 
 const LayoutRouteChildren: LayoutRouteChildren = {
   LayoutAdminRoute: LayoutAdminRoute,
+  LayoutDailyRoute: LayoutDailyRoute,
+  LayoutFreeplayRoute: LayoutFreeplayRoute,
   LayoutItemsRoute: LayoutItemsRoute,
   LayoutSettingsRoute: LayoutSettingsRoute,
   LayoutIndexRoute: LayoutIndexRoute,
+  LayoutPlayRunIdRoute: LayoutPlayRunIdRoute,
 }
 
 const LayoutRouteWithChildren =

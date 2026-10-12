@@ -1,4 +1,5 @@
 import { zodResolver } from "@hookform/resolvers/zod"
+import { useQuery } from "@tanstack/react-query"
 import {
   createFileRoute,
   Link as RouterLink,
@@ -20,6 +21,7 @@ import {
 import { Input } from "@/components/ui/input"
 import { LoadingButton } from "@/components/ui/loading-button"
 import { PasswordInput } from "@/components/ui/password-input"
+import { getPublicConfig } from "@/features/game/api"
 import useAuth, { isLoggedIn } from "@/hooks/useAuth"
 
 const formSchema = z.object({
@@ -44,13 +46,18 @@ export const Route = createFileRoute("/login")({
   head: () => ({
     meta: [
       {
-        title: "Log In - FastAPI Cloud",
+        title: "Log In - Historical Date Game",
       },
     ],
   }),
 })
 
 function Login() {
+  const enrollment = useQuery({
+    queryKey: ["public-enrollment"],
+    queryFn: getPublicConfig,
+    retry: false,
+  })
   const { loginMutation } = useAuth()
   const form = useForm<FormData>({
     resolver: zodResolver(formSchema),
@@ -129,12 +136,22 @@ function Login() {
             </LoadingButton>
           </div>
 
-          <div className="text-center text-sm">
-            Don't have an account yet?{" "}
-            <RouterLink to="/signup" className="underline underline-offset-4">
-              Sign up
-            </RouterLink>
-          </div>
+          {enrollment.data?.registration_open ? (
+            <div className="text-center text-sm">
+              Don't have an account yet?{" "}
+              <RouterLink to="/signup" className="underline underline-offset-4">
+                Sign up
+              </RouterLink>
+            </div>
+          ) : (
+            <p className="text-center text-sm">
+              {enrollment.isPending
+                ? "Checking enrollment…"
+                : enrollment.error
+                  ? "Enrollment information is unavailable. Existing accounts can still log in."
+                  : "Enrollment is restricted during the friends beta. Ask the host for an account."}
+            </p>
+          )}
         </form>
       </Form>
     </AuthLayout>

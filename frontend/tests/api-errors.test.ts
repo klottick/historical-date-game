@@ -69,3 +69,24 @@ test("Game errors display structured detail.message", () => {
   }, error)
   assert.equal(message, "Game command rejected")
 })
+
+test("Malformed validation detail falls back to the error message", () => {
+  const error = new AxiosError(
+    "Request failed",
+    undefined,
+    undefined,
+    undefined,
+    {
+      data: { detail: [{}] },
+      status: 422,
+      statusText: "Unprocessable Entity",
+      headers: {},
+      config: { headers: new AxiosHeaders() },
+    },
+  )
+  let message = ""
+  handleError.call((value) => {
+    message = value
+  }, error)
+  assert.equal(message, "Request failed")
+})
