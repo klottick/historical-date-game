@@ -1,6 +1,7 @@
 """Pure boundary checks: never initialize or clean a database."""
 
 import json
+import os
 import subprocess
 import sys
 from datetime import UTC, date, datetime
@@ -170,3 +171,111 @@ def test_probe_daily_day_avoids_suite_dates_and_used_days() -> None:
     assert probe._unused_probe_day({date(2300, 1, 2), date(2300, 1, 3)}) == datetime(
         2300, 1, 5, 12, tzinfo=UTC
     )
+
+
+@pytest.mark.parametrize("source_name", ["manifest.json", "runtime.svg"])
+@pytest.mark.parametrize("passed", [True, False])
+def test_probe_report_replaces_hardlink_without_changing_source(
+    monkeypatch: pytest.MonkeyPatch, tmp_path: Path, source_name: str, passed: bool
+) -> None:
+    local_target(monkeypatch)
+    release, media, private = (
+        tmp_path / name for name in ("release", "media", "private")
+    )
+    for directory in (release, media, private):
+        directory.mkdir()
+    source = (release if source_name == "manifest.json" else media) / source_name
+    original = (
+        b'{"fixture":true}'
+        if source_name == "manifest.json"
+        else b"<svg>fixture artwork</svg>"
+    )
+    source.write_bytes(original)
+    source.chmod(0o640)
+    original_inode = source.stat().st_ino
+    report = private / "report.json"
+    os.link(source, report)
+    session, activate = Mock(), Mock()
+    monkeypatch.setattr(probe, "Session", session)
+    monkeypatch.setattr(probe, "activate_catalog", activate)
+    if passed:
+        # The real success writer, not a pretend service/catalog proof.
+        probe._write_report(report, {"passed": True, "release_id": "fixture"})
+        assert json.loads(report.read_text()) == {
+            "passed": True,
+            "release_id": "fixture",
+        }
+    else:
+        # Exercise the actual CLI verification-failure writer before any session.
+        verification = Mock(side_effect=ValueError("invalid fixture release"))
+        monkeypatch.setattr(probe, "verify_release", verification)
+        assert (
+            probe.main(
+                [
+                    "--release",
+                    str(release),
+                    "--media",
+                    str(media),
+                    "--report",
+                    str(report),
+                ]
+            )
+            == 1
+        )
+        verification.assert_called_once_with(release, media, require_beta=True)
+        assert json.loads(report.read_text()) == {
+            "passed": False,
+            "error": "probe_failed",
+        }
+    session.assert_not_called()
+    activate.assert_not_called()
+    assert source.read_bytes() == original
+    assert source.stat().st_ino == original_inode
+    assert source.stat().st_mode & 0o777 == 0o640
+    assert report.stat().st_ino != original_inode
+    assert report.stat().st_mode & 0o777 == 0o600
+    assert list(private.iterdir()) == [report]
+
+
+@pytest.mark.parametrize("failure_stage", ["serialize", "replace"])
+def test_probe_report_failure_preserves_existing_inode_and_cleans_only_own_temp(
+    monkeypatch: pytest.MonkeyPatch, tmp_path: Path, failure_stage: str
+) -> None:
+    source, report = tmp_path / "manifest.json", tmp_path / "report.json"
+    original = b"immutable fixture manifest"
+    source.write_bytes(original)
+    os.link(source, report)
+    unrelated = tmp_path / "unrelated.tmp"
+    unrelated.write_bytes(b"preserve unrelated work")
+    before = set(tmp_path.iterdir())
+    if failure_stage == "serialize":
+
+        def fail_serialization(*_args: object, **_kwargs: object) -> None:
+            raise OSError("injected serialization failure")
+
+        monkeypatch.setattr(json, "dump", fail_serialization)
+    else:
+
+        def fail_replace(src: str, dst: Path) -> None:
+            temporary = Path(src)
+            assert temporary.parent == report.parent and dst == report
+            assert temporary.stat().st_mode & 0o777 == 0o600
+            assert json.loads(temporary.read_text()) == {"passed": True}
+            raise OSError("injected replace failure")
+
+        monkeypatch.setattr(os, "replace", fail_replace)
+    with pytest.raises(OSError, match="injected"):
+        probe._write_report(report, {"passed": True})
+    assert set(tmp_path.iterdir()) == before
+    assert source.read_bytes() == report.read_bytes() == original
+    assert source.stat().st_ino == report.stat().st_ino
+    assert unrelated.read_bytes() == b"preserve unrelated work"
+
+
+def test_probe_report_writer_still_rejects_symlink(tmp_path: Path) -> None:
+    source, report = tmp_path / "manifest.json", tmp_path / "report.json"
+    source.write_bytes(b"immutable fixture manifest")
+    report.symlink_to(source)
+    with pytest.raises(OSError):
+        probe._write_report(report, {"passed": True})
+    assert report.is_symlink() and source.read_bytes() == b"immutable fixture manifest"

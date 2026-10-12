@@ -94,14 +94,26 @@ reported **798 passed, 1 failed, 70 warnings**: the probe's initial trusted date
 `2200-01-01` overlapped an existing API test's deliberately undefined date. The
 service correctly preserved the prior frozen definition. The probe now searches
 from `2300-01-01`, with a pure regression test, without changing the API test or
-resetting a definition. The final full rerun passed **800 tests, 70 warnings**;
-pure safety passed **13 tests, 4 warnings**, and full app lint plus mypy/Ruff on both
-new test modules passed. The complete content/game/safety pure suite passed
-**602 tests, 4 warnings**. The previously failing API test also passed against real
-seeded state (**1 test, 7 warnings**), followed by final reseeding after its cleanup.
-The final probe and independent read-only audit exited 0: the real release is
+resetting a definition. The pre-writer-fix full rerun passed **800 tests, 70 warnings**;
+after the writer-only review fix, pure safety passed **20 tests, 4 warnings**, and
+full app lint plus mypy/Ruff on both new test modules passed. The complete
+content/game/safety pure suite passed **609 tests, 4 warnings**. The previously
+failing API test also passed against real seeded state (**1 test, 7 warnings**),
+followed by reseeding after its cleanup. That initial post-suite probe and
+independent read-only audit exited 0: the real release is
 selected, 1,276 event revisions persist, and two Daily definitions are frozen on
 the real release for `2300-01-01`/`2300-01-02`. All 19 proof checks passed.
+
+The report writer now serializes into a fresh private mode-0600 inode in the report
+parent and atomically replaces the final entry; it never truncates an existing
+inode, including an external report hardlinked to a source manifest or SVG.
+Success/failure hardlink regressions preserve original bytes/inodes/permissions;
+serialization/replace failures clean only the writer's own temporary file.
+Symlink rejection and release/media path-containment checks remain in place.
+One authorized real probe after this fix passed all 19 checks on
+`2300-01-03`/`2300-01-04`, preserving every existing run/definition/account and all
+release/media bytes, with a mode-0600 success report. No DB suite/cleanup/reset was
+performed for this writer-only fix. Its proof is `F1-fix1-real-proof.json`.
 
 Observed assertions cover real counts/options/categories, inclusive bounds and
 category union, pairwise gaps/no duplicate years, zero-streak anchors, correct

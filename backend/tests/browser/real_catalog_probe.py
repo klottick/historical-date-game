@@ -14,6 +14,7 @@ from datetime import UTC, date, datetime, timedelta
 from functools import partial
 from itertools import combinations
 from pathlib import Path
+from tempfile import NamedTemporaryFile
 from uuid import UUID, uuid4
 
 from sqlmodel import Session, select
@@ -92,13 +93,29 @@ def _write_report(path: Path, report: dict[str, object]) -> None:
         "fixture_release_id",
     }
     sanitized = {key: value for key, value in report.items() if key in allowed}
+    if path.is_symlink():
+        raise OSError("Probe report symlinks are not allowed")
     path.parent.mkdir(parents=True, exist_ok=True)
-    # O_NOFOLLOW refuses accidental writes through a report symlink.
-    fd = os.open(path, os.O_WRONLY | os.O_CREAT | os.O_TRUNC | os.O_NOFOLLOW, 0o600)
-    with os.fdopen(fd, "w") as stream:
-        os.fchmod(stream.fileno(), 0o600)
-        json.dump(sanitized, stream, indent=2, sort_keys=True)
-        stream.write("\n")
+    # A report entry may hardlink immutable source/media. Never open its inode:
+    # write a fresh private inode on the same filesystem, then replace the entry.
+    temporary: Path | None = None
+    try:
+        with NamedTemporaryFile(
+            mode="w",
+            encoding="utf-8",
+            dir=path.parent,
+            prefix=f".{path.name}.",
+            delete=False,
+        ) as stream:
+            temporary = Path(stream.name)
+            os.fchmod(stream.fileno(), 0o600)
+            json.dump(sanitized, stream, indent=2, sort_keys=True)
+            stream.write("\n")
+        os.replace(temporary, path)
+        temporary = None
+    finally:
+        if temporary is not None:
+            temporary.unlink(missing_ok=True)
 
 
 def _denied(action: Callable[[], object], code: str, status: int) -> None:
