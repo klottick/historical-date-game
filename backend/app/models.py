@@ -3,6 +3,8 @@ import uuid
 from pydantic import EmailStr
 from sqlmodel import Field, Relationship, SQLModel
 
+from app.game.models import GameOperation, GameRun
+
 
 # Shared properties
 class UserBase(SQLModel):
@@ -44,6 +46,12 @@ class User(UserBase, table=True):
     id: uuid.UUID = Field(default_factory=uuid.uuid4, primary_key=True)
     hashed_password: str
     items: list[Item] = Relationship(back_populates="owner", cascade_delete=True)
+    game_runs: list[GameRun] = Relationship(
+        back_populates="owner", cascade_delete=True, passive_deletes=True
+    )
+    game_operations: list[GameOperation] = Relationship(
+        back_populates="owner", cascade_delete=True, passive_deletes=True
+    )
 
 
 # Properties to return via API, id is always required

@@ -1,4 +1,4 @@
-"""Machine-only private acquisition/media/publication commands; no DB required."""
+"""Machine-only private content commands; only activation requires a database."""
 
 import argparse
 import json
@@ -54,6 +54,10 @@ def main(argv: list[str] | None = None) -> int:
     verifying.add_argument("--release", type=Path, required=True)
     verifying.add_argument("--media", type=Path, required=True)
     verifying.add_argument("--require-beta", action="store_true")
+    activating = commands.add_parser("activate")
+    activating.add_argument("--release", type=Path, required=True)
+    activating.add_argument("--media", type=Path, required=True)
+    activating.add_argument("--require-beta", action="store_true")
     args = parser.parse_args(argv)
     try:
         if args.command == "import":
@@ -92,6 +96,19 @@ def main(argv: list[str] | None = None) -> int:
             result = publish_release(
                 args.workspace, args.output, args.release_id, fixture=args.fixture
             ).model_dump(mode="json")
+        elif args.command == "activate":
+            # Keep all acquisition/publication/verification commands DB-independent.
+            from sqlmodel import Session
+
+            from app.core.db import engine
+            from app.game.catalog_repository import activate_catalog
+
+            with Session(engine) as session:
+                release_id = activate_catalog(
+                    session, args.release, args.media, require_beta=args.require_beta
+                )
+                session.commit()
+            result = {"release_id": release_id}
         else:
             result = verify_release(
                 args.release, args.media, require_beta=args.require_beta
