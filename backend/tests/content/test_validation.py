@@ -176,6 +176,70 @@ def test_bce_prompt_leak(
 
 
 @pytest.mark.parametrize(
+    ("year", "prompt", "expected_codes"),
+    [
+        (
+            1905,
+            "A fictional clock is installed in nineteen hundred and five.",
+            {"answer_in_prompt"},
+        ),
+        (
+            1905,
+            "A fictional clock is installed in nineteen hundred five.",
+            {"answer_in_prompt"},
+        ),
+        (
+            1915,
+            "A fictional clock is installed in nineteen hundred and fifteen.",
+            {"answer_in_prompt"},
+        ),
+        (
+            1999,
+            "A fictional clock is installed in nineteen hundred and ninety-nine.",
+            {"answer_in_prompt"},
+        ),
+        (
+            1905,
+            "A fictional clock is installed in nineteen oh five.",
+            {"answer_in_prompt"},
+        ),
+        (1905, "A fictional clock is installed in nineteen hundred and six.", set()),
+        (1905, "A fictional clock is installed in the 1900s.", {"answer_in_prompt"}),
+        (1900, "A fictional clock is installed in the 1900s.", {"answer_in_prompt"}),
+        (1909, "A fictional clock is installed in the 1900s.", {"answer_in_prompt"}),
+        (1899, "A fictional clock is installed in the 1900s.", set()),
+        (1910, "A fictional clock is installed in the 1900s.", set()),
+        (1905, "A fictional clock is installed in the 1890s.", set()),
+        (1905, "A fictional clock is installed in the 1910s.", set()),
+        (1905, "A fictional clock is installed in the 1 900’s.", {"answer_in_prompt"}),
+        (1905, "A fictional town installs a 1900series clock.", set()),
+    ],
+)
+def test_written_year_or_containing_decade_quarantined(
+    event: EventRecord,
+    taxonomy: tuple[CategoryRecord, ...],
+    year: int,
+    prompt: str,
+    expected_codes: set[str],
+) -> None:
+    payload = event.model_dump(mode="json")
+    payload.update({"year_index": year, "prompt": prompt})
+    payload["sources"][0].update(
+        {
+            "raw_date": f"{year} CE",
+            "date_resolution": f"source-resolved:gregorian:year_index={year}",
+        }
+    )
+    candidate = EventRecord.model_validate_json(json.dumps(payload))
+    before = candidate.model_dump(mode="json")
+    digest_before = candidate_digest(candidate)
+    assert codes(candidate, taxonomy) == expected_codes
+    assert candidate.prompt == prompt
+    assert candidate.model_dump(mode="json") == before
+    assert candidate_digest(candidate) == digest_before
+
+
+@pytest.mark.parametrize(
     ("field", "value", "code"),
     [
         ("calendar", "unknown", "unresolved_calendar"),
@@ -344,6 +408,72 @@ def test_resolution_cannot_contradict_raw_bce_era(
     assert "unresolved_date" in codes(
         bce.model_copy(update={"sources": (source,)}), taxonomy
     )
+
+
+@pytest.mark.parametrize(
+    ("raw_date", "year_index", "expected_codes"),
+    [
+        ("1 BCE", 0, set()),
+        ("44 BCE", -43, set()),
+        ("2 BC", -1, set()),
+        ("1 CE", 1, set()),
+        ("1 BCE", -43, {"unresolved_date"}),
+        ("44 BCE", 0, {"unresolved_date"}),
+        ("2 BCE", -2, {"unresolved_date"}),
+        ("1 CE", 0, {"unresolved_date"}),
+        ("0 BCE", 0, {"invalid_civil_year"}),
+        ("-1 BCE", 0, {"invalid_civil_year"}),
+        ("-00000000044-00-00T00:00:00Z", -43, set()),
+        ("-00000000001-00-00T00:00:00Z", -43, {"unresolved_date"}),
+    ],
+)
+def test_raw_civil_magnitude_matches_resolved_index(
+    event: EventRecord,
+    taxonomy: tuple[CategoryRecord, ...],
+    raw_date: str,
+    year_index: int,
+    expected_codes: set[str],
+) -> None:
+    payload = event.model_dump(mode="json")
+    payload["year_index"] = year_index
+    source = payload["sources"][0]
+    source["raw_date"] = raw_date
+    source["calendar"] = "proleptic-gregorian"
+    source["date_resolution"] = (
+        f"source-resolved:proleptic-gregorian:year_index={year_index}"
+    )
+    candidate = EventRecord.model_validate_json(json.dumps(payload))
+    before = candidate.model_dump(mode="json")
+    digest_before = candidate_digest(candidate)
+    assert codes(candidate, taxonomy) == expected_codes
+    assert candidate.model_dump(mode="json") == before
+    assert candidate_digest(candidate) == digest_before
+
+
+def test_conflicting_bce_citations_quarantined(
+    event: EventRecord,
+    taxonomy: tuple[CategoryRecord, ...],
+) -> None:
+    payload = event.model_dump(mode="json")
+    payload["year_index"] = -43
+    first = payload["sources"][0]
+    first.update(
+        {
+            "raw_date": "44 BCE",
+            "calendar": "proleptic-gregorian",
+            "date_resolution": "source-resolved:proleptic-gregorian:year_index=-43",
+        }
+    )
+    payload["sources"].append(
+        first | {"record_id": "contradictory", "raw_date": "1 BCE"}
+    )
+    candidate = EventRecord.model_validate_json(json.dumps(payload))
+    before = candidate.model_dump(mode="json")
+    issues = validate_event(candidate, taxonomy, 2026)
+    assert {(issue.code, issue.field) for issue in issues} == {
+        ("unresolved_date", "sources.1.raw_date"),
+    }
+    assert candidate.model_dump(mode="json") == before
 
 
 def test_passed_content_receipt_not_publication_ready(

@@ -68,6 +68,17 @@ assert validate_event(approved_exact_year, taxonomy, 2026) == ()
 
 **Interfaces:** `RawCandidate(source_id: str, record_id: str, payload: dict[str, object])`; `ImportReport(imported: int, quarantined: int, duplicates: int)`. `SourceAdapter.fetch(snapshot_dir: Path) -> Iterable[RawCandidate]`; `SourceAdapter.normalize(raw: RawCandidate) -> EventRecord | tuple[ValidationIssue, ...]`; `import_snapshot(adapter: SourceAdapter, snapshot_dir: Path, workspace: Path) -> ImportReport`. File workspace contains candidates, quarantine, private exact-identity aliases, and automated validation decisions/receipts, not human approvals. Define these types in `adapters/base.py`/`importer.py`.
 
+**Source-resolution producer contract:** Emit `SourceCitation.date_resolution`
+as `source-resolved:<calendar>:year_index=<integer>` only after resolving exact
+source dates; `<calendar>` is `gregorian` or `proleptic-gregorian`. Preserve raw
+source dates/calendars and derive the canonical index from positive civil
+magnitude `n` using CE `n -> n`, BCE `n -> 1 - n`, including preserved signed
+provider BCE encodings. The token is not evidence by itself: C2 independently
+checks raw source/calendar/year consistency at this acquisition boundary before
+B1's later gameplay conversion implementation. Unsupported or unresolved date
+strings remain raw quarantined candidates, never fabricated tokens or a manual
+review queue.
+
 - [ ] Write `test_reimport_and_aliases_are_idempotent`, `test_birth_and_death_remain_distinct`, and `test_date_conflicts_quarantined` against mocked source snapshots. Require `second.imported == 0`, unchanged stable UUIDs, separate birth/death identities, and quarantine of circa/range/non-Gregorian dates without a deterministic documented resolution. Only exact source entity plus milestone identity merges cross-source records and retains citations; similar wording/fuzzy aliases remain quarantined.
 - [ ] Run `uv run pytest tests/content/test_importer.py -q`; expect missing-adapter/importer failure.
 - [ ] Implement selected adapters from C1, snapshot caching, retry/backoff within documented limits, raw-date preservation, category mappings, and resumable writes. Persist exact source-key-to-event UUID aliases. Generate original template prompts from resolved milestone fields; quarantine conflicting dates, answer leaks and suspected duplicates automatically. Emit passed/failed content-only receipts bound to candidate/source digests and policy version, with `stage='content'` and `media_catalog_sha256=None`; these are never publication-ready even when passed. Changed inputs invalidate those content checks; C4 must revalidate content plus media for final receipts, not carry forward a C3 pass as acceptance.

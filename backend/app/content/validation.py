@@ -8,7 +8,8 @@ year-month[-day], or preserved signed Wikibase UTC timestamps (00 month/day
 denotes year/month precision). Gregorian calendar URIs are retained verbatim.
 Other formats, calendars, approximate dates, and ranges stay quarantined. C3
 retains unresolved raw candidates outside EventRecord and B1 owns conversion;
-this module neither converts civil years nor infers calendar corrections.
+this acquisition boundary checks raw CE=n/BCE=1-n consistency without importing
+gameplay conversion code or inferring calendar corrections.
 
 Receipts bind metadata, not actual image bytes. C4 freezes the entire media
 batch; C5 independently verifies asset bytes and handles missing receipts.
@@ -186,6 +187,9 @@ def _answer_in_prompt(event: EventRecord, civil_years: set[int]) -> bool:
     for year in civil_years:
         if re.search(rf"(?<!\d){year}(?!\d)", prompt):
             return True
+        decade_start = year // 10 * 10
+        if re.search(rf"(?<!\d){decade_start}['’]?s\b", prompt):
+            return True
         if year < 10000:
             alternatives = {_number_words(year)}
             if 1000 <= year < 10000:
@@ -193,6 +197,11 @@ def _answer_in_prompt(event: EventRecord, civil_years: set[int]) -> bool:
                 alternatives.add(
                     _number_words(first)
                     + (" " + _number_words(last) if last else " hundred")
+                )
+                alternatives.add(
+                    _number_words(first)
+                    + " hundred"
+                    + (" " + _number_words(last) if last else "")
                 )
                 if 0 < last < 10:
                     alternatives.add(
@@ -314,11 +323,12 @@ def validate_event(
             )
         if civil_year is not None:
             civil_years.add(civil_year)
+            # Validate source evidence here; B1 separately owns gameplay conversion.
+            raw_year_index = 1 - civil_year if bce else civil_year
             if (
-                bce
-                and (event.year_index > 0 or source.date_resolution != proleptic)
-                or not bce
-                and civil_year != event.year_index
+                raw_year_index != event.year_index
+                or bce
+                and source.date_resolution != proleptic
             ):
                 issue(
                     "unresolved_date",

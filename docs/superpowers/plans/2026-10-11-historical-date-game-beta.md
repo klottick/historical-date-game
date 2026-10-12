@@ -102,6 +102,14 @@ deletion of sample CRUD is required. Generated `frontend/src/client/` and
 - `SourceCitation(source_id: str, record_id: str, url: str, rights_basis: str,
   raw_date: str, calendar: str, acquired_at: datetime, snapshot_id: str,
   date_resolution: str)`; resolution states why the canonical year is justified.
+  The adopted machine token is `source-resolved:<calendar>:year_index=<integer>`;
+  `<calendar>` is `gregorian` or `proleptic-gregorian`. C3 emits it only from
+  resolved exact sources, retaining raw dates/calendars unchanged. The token is
+  not proof: C2 independently checks raw source/calendar/year consistency using
+  positive civil magnitude `n`, with CE `n -> n` and BCE `n -> 1 - n` (1 BCE is 0).
+  Preserved signed provider BCE encodings denote a positive civil magnitude.
+  Unsupported/unresolved strings stay quarantined, with no manual queue. This
+  acquisition-boundary check precedes B1, which later owns gameplay conversion.
 - `CategoryRecord(id: str, label: str)`.
 - `MediaRecord(asset_id: UUID, sha256: str, filename: str, source_url: str,
   creator: str, rights_basis: str, attribution: str, license_url: str | None,
