@@ -1,7 +1,7 @@
-import { useQuery } from "@tanstack/react-query"
+import { useQuery, useQueryClient } from "@tanstack/react-query"
 import { Link } from "@tanstack/react-router"
 import { useCallback, useEffect, useRef, useState } from "react"
-import type { PlaceCommand } from "@/client"
+import type { PlaceCommand, RunPublic } from "@/client"
 import { Button } from "@/components/ui/button"
 import useAuth from "@/hooks/useAuth"
 import { extractErrorMessage } from "@/utils"
@@ -35,7 +35,15 @@ function OwnedBoard({
   const [state, setState] = useState<PlacementState | null>(null)
   const current = useRef<PlacementState | null>(null)
   const [message, setMessage] = useState<string | null>(null)
+  const mounted = useRef(true)
+  const queryClient = useQueryClient()
   const storageKey = `game-placement:${ownerId}:${runId}`
+  useEffect(() => {
+    mounted.current = true
+    return () => {
+      mounted.current = false
+    }
+  }, [])
   const update = useCallback(
     (next: PlacementState) => {
       current.current = next // Synchronous guard against duplicate click/late callbacks.
@@ -53,7 +61,21 @@ function OwnedBoard({
     refetchOnMount: "always",
     refetchOnWindowFocus: "always",
     refetchOnReconnect: "always",
+    structuralSharing: (previous, incoming) => {
+      const cached = previous as RunPublic | undefined
+      const run = incoming as RunPublic
+      return cached?.run_id === run.run_id && cached.revision > run.revision
+        ? cached
+        : run
+    },
   })
+  function cacheRun(run: RunPublic) {
+    if (run.run_id !== runId) return
+    queryClient.setQueryData<RunPublic>(
+      ["game-run", ownerId, runId],
+      (cached) => (cached && cached.revision > run.revision ? cached : run),
+    )
+  }
   useEffect(() => {
     const run = query.data
     if (!run || run.run_id !== runId) return
@@ -65,12 +87,18 @@ function OwnedBoard({
       }
       return
     }
+    // Cached data is not a recovery decision. Wait for a successful owned GET
+    // after this observer mounted, including when the returned DTO is unchanged.
+    if (!query.isFetchedAfterMount || query.isFetching || query.isError) return
     let saved: PlaceCommand | null = null
     try {
       saved = JSON.parse(sessionStorage.getItem(storageKey) || "null")
     } catch {
       sessionStorage.removeItem(storageKey)
     }
+    // A delayed read may even predate the saved command. Never destroy newer
+    // recovery information; focus/reconnect or Retry run can obtain a newer read.
+    if (saved && saved.expected_revision > run.revision) return
     const recoverable =
       saved &&
       typeof saved.operation_id === "string" &&
@@ -86,7 +114,15 @@ function OwnedBoard({
       command: recoverable ? saved : null,
       phase: recoverable ? "uncertain" : "idle",
     })
-  }, [query.data, runId, storageKey, update])
+  }, [
+    query.data,
+    query.isFetchedAfterMount,
+    query.isFetching,
+    query.isError,
+    runId,
+    storageKey,
+    update,
+  ])
 
   async function reconcile() {
     const before = current.current
@@ -94,6 +130,7 @@ function OwnedBoard({
     update({ ...before, phase: "reconcile" })
     try {
       const run = await getRun(runId)
+      if (!mounted.current) return
       const latest = current.current
       if (
         latest?.phase !== "reconcile" ||
@@ -103,12 +140,14 @@ function OwnedBoard({
       )
         return
       const next = acceptRun(latest, run)
+      cacheRun(run)
       // Explicit successful reconciliation (not background polling) permits a new guess.
       update(
         next === latest ? { ...latest, command: null, phase: "idle" } : next,
       )
       setMessage("Server progress checked. You can choose a new placement.")
     } catch (error) {
+      if (!mounted.current) return
       if (gameFailure(error) === "auth") {
         renewRunLogin(runId)
         return
@@ -129,13 +168,16 @@ function OwnedBoard({
     const command = sending.command
     try {
       const run = await placeCard(runId, command)
+      if (!mounted.current) return
       const latest = current.current
       if (!latest || run.run_id !== runId) return
+      cacheRun(run)
       const next = acceptRun(latest, run)
       if (next !== latest) update(next)
       else if (latest.command?.operation_id === command.operation_id)
         update(markUncertain(latest))
     } catch (error) {
+      if (!mounted.current) return
       const latest = current.current
       if (!latest || latest.command?.operation_id !== command.operation_id)
         return
@@ -174,12 +216,12 @@ function OwnedBoard({
           {query.error ? "Run unavailable" : "Loading run…"}
         </h1>
         {query.error && (
-          <>
-            <p role="alert">
-              Unable to read this run. This does not erase your history.
-            </p>
-            <Button onClick={() => query.refetch()}>Retry run</Button>
-          </>
+          <p role="alert">
+            Unable to read this run. This does not erase your history.
+          </p>
+        )}
+        {!query.isFetching && (
+          <Button onClick={() => query.refetch()}>Retry run</Button>
         )}
       </div>
     )

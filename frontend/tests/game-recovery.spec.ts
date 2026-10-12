@@ -151,6 +151,187 @@ test("committed_move_response_lost_then_retry", async ({
   )
 })
 
+for (const committed of [false, true]) {
+  test(`route re-entry waits for fresh progress before ${committed ? "clearing a committed" : "restoring an uncertain"} command`, async ({
+    page,
+    player,
+    run,
+  }, testInfo) => {
+    // Reach the second round through an actual successful browser POST. Blind
+    // guesses can lose; new owned runs avoid an answer map or private fixtures.
+    let initial = run
+    let advanced: RunPublic | undefined
+    for (let attempt = 0; attempt < 20; attempt++) {
+      await openRun(page, initial)
+      const response = page.waitForResponse(
+        (value) => value.url() === `${runURL(initial)}/placements`,
+      )
+      await page.getByRole("button", { name: "Slot 1", exact: true }).click()
+      await page
+        .getByRole("button", { name: "Lock it in", exact: true })
+        .click()
+      const result: RunPublic = await (await response).json()
+      await expect(page.getByTestId("run-revision")).toHaveText("Revision: 1")
+      if (result.status === "active") {
+        advanced = result
+        break
+      }
+      const started = await page.request.post(`${api}/games/freeplay`, {
+        headers: player.headers,
+        data: {
+          operation_id: crypto.randomUUID(),
+          catalog_release_id: initial.catalog_release_id,
+          config: initial.config,
+        },
+      })
+      expect(started.ok()).toBeTruthy()
+      initial = await started.json()
+    }
+    expect(
+      advanced,
+      "A successful blind move is required to reproduce cross-round cache hydration",
+    ).toBeDefined()
+    const round = advanced!
+    const owner = await (
+      await page.request.get(`${api}/users/me`, { headers: player.headers })
+    ).json()
+    const storageKey = `game-placement:${owner.id}:${round.run_id}`
+    const commands: PlaceCommand[] = []
+    await page.route(
+      `**/games/runs/${round.run_id}/placements`,
+      async (route) => {
+        commands.push(route.request().postDataJSON())
+        if (commands.length === 1) {
+          if (committed) expect((await route.fetch()).ok()).toBeTruthy()
+          await route.abort("timedout")
+        } else await route.continue()
+      },
+    )
+    await page.getByRole("button", { name: "Slot 1", exact: true }).click()
+    await page.getByRole("button", { name: "Lock it in", exact: true }).click()
+    await expect(
+      page.getByRole("button", { name: "Retry same move" }),
+    ).toBeVisible()
+    const saved = commands[0]
+    expect(saved.expected_revision).toBe(1)
+    expect(saved.event_id).toBe(round.pending!.event_id)
+    expect(
+      await page.evaluate(
+        (key) => JSON.parse(sessionStorage.getItem(key)!),
+        storageKey,
+      ),
+    ).toEqual(saved)
+
+    let release!: () => void
+    const held = new Promise<void>((resolve) => {
+      release = resolve
+    })
+    let captured!: () => void
+    const ready = new Promise<void>((resolve) => {
+      captured = resolve
+    })
+    let fresh: RunPublic | undefined
+    await page.route(`**/games/runs/${round.run_id}`, async (route) => {
+      const response = await route.fetch()
+      fresh = await response.json()
+      captured()
+      await held
+      await route.fulfill({ response })
+    })
+    try {
+      // SPA navigation preserves QueryClient's previous cached GET, unlike reload.
+      await page
+        .getByRole("link", { name: "Back to Home", exact: true })
+        .click()
+      await expect(
+        page.getByRole("heading", {
+          name: "Historical Date Game",
+          exact: true,
+        }),
+      ).toBeVisible()
+      await page.goBack()
+      await ready
+      expect(fresh!.revision).toBe(committed ? 2 : 1)
+      expect(
+        await page.evaluate(
+          (key) => JSON.parse(sessionStorage.getItem(key)!),
+          storageKey,
+        ),
+      ).toEqual(saved)
+      await expect(
+        page.getByRole("heading", { name: "Loading run…" }),
+      ).toBeVisible()
+      await expect(page.getByTestId("pending-card")).toHaveCount(0)
+      await expect(
+        page.getByRole("button", { name: "Lock it in", exact: true }),
+      ).toHaveCount(0)
+      expect(commands).toHaveLength(1)
+      const read = page.waitForResponse(
+        (response) =>
+          response.url() === runURL(round) &&
+          response.request().method() === "GET",
+      )
+      release()
+      await read
+      await expect(page.getByTestId("run-revision")).toHaveText(
+        `Revision: ${fresh!.revision}`,
+      )
+      if (!committed) {
+        await expect(
+          page.getByRole("button", { name: "Retry same move" }),
+        ).toBeVisible()
+        await expect(page.getByTestId("pending-card")).toContainText(
+          round.pending!.prompt,
+        )
+        await expect(
+          page.getByRole("button", { name: "Lock it in", exact: true }),
+        ).toBeDisabled()
+        expect(
+          await page.evaluate(
+            (key) => JSON.parse(sessionStorage.getItem(key)!),
+            storageKey,
+          ),
+        ).toEqual(saved)
+        await page.getByRole("button", { name: "Retry same move" }).click()
+        await expect(page.getByTestId("run-revision")).toHaveText("Revision: 2")
+        expect(commands).toHaveLength(2)
+        expect(commands[1]).toEqual(saved)
+      } else {
+        expect(
+          await page.evaluate((key) => sessionStorage.getItem(key), storageKey),
+        ).toBeNull()
+        await expect(
+          page.getByRole("button", { name: "Retry same move" }),
+        ).toHaveCount(0)
+        expect(commands).toHaveLength(1)
+        if (fresh!.pending)
+          await expect(page.getByTestId("pending-card")).toContainText(
+            fresh!.pending.prompt,
+          )
+        else await expect(page.getByTestId("pending-card")).toHaveCount(0)
+      }
+      const after: RunPublic = await (
+        await page.request.get(runURL(round), { headers: player.headers })
+      ).json()
+      expect(after.revision).toBe(2)
+      if (committed) expect(after).toEqual(fresh)
+      console.info(
+        `U2-I1 remount proof: command_revision=1, held_GET_revision=${fresh!.revision}, preserved_while_held=true, after_revision=${after.revision}, operation=${saved.operation_id}, exact_retry=${!committed}, newer_cleared=${committed}`,
+      )
+      await testInfo.attach("remount-recovery-proof", {
+        body: JSON.stringify({
+          held_revision: fresh!.revision,
+          commands,
+          after_revision: after.revision,
+        }),
+        contentType: "application/json",
+      })
+    } finally {
+      release()
+    }
+  })
+}
+
 test("equal revision focus and reconnect preserve an uncertain command", async ({
   page,
   player,
