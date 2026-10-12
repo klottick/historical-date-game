@@ -108,14 +108,40 @@ test("test-only real catalog answers stay outside application imports and Vite e
   assert.equal(stdout.trim(), "")
 })
 
-test("real Vite configuration denies private auth and runner files over HTTP", () => {
-  assert.ok(
-    existsSync("vite.real-catalog.config.ts"),
-    "real Vite privacy configuration is missing",
-  )
-  const config = readFileSync("vite.real-catalog.config.ts", "utf8")
-  assert.match(config, /\*\*\/playwright\/\.auth\/\*\*/)
-  assert.match(config, /\*\*\/tests-real-catalog\/\*\*/)
-  assert.match(config, /\*\*\/data\/game\/\*\*/)
-  assert.match(config, /\.env/)
-})
+for (const configFile of ["vite.config.ts", "vite.real-catalog.config.ts"]) {
+  test(`${configFile} resolves strict private-file protection and retains installed Vite defaults`, () => {
+    const result = spawnSync(
+      process.execPath,
+      [
+        "--input-type=module",
+        "-e",
+        `
+      import { resolveConfig } from 'vite';
+      const defaults = await resolveConfig({configFile:false,envDir:false}, 'serve');
+      const defaultDeny = [...defaults.server.fs.deny];
+      const actual = await resolveConfig({configFile:${JSON.stringify(configFile)},envDir:false}, 'serve');
+      console.log(JSON.stringify({strict:actual.server.fs.strict,deny:actual.server.fs.deny,defaults:defaultDeny}));
+    `,
+      ],
+      { encoding: "utf8" },
+    )
+    assert.equal(result.status, 0, result.stderr)
+    const actual = JSON.parse(result.stdout.trim().split("\n").pop()!)
+    assert.equal(actual.strict, true)
+    assert.ok(
+      actual.defaults.length > 0,
+      "installed default deny list is nonempty",
+    )
+    for (const pattern of [
+      ...actual.defaults,
+      "**/playwright/.auth/**",
+      "**/tests-real-catalog/**",
+      "**/.superpowers/**",
+      "**/data/game/**",
+    ])
+      assert.ok(
+        actual.deny.includes(pattern),
+        `${configFile} must retain deny: ${pattern}`,
+      )
+  })
+}

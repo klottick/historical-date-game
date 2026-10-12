@@ -220,9 +220,27 @@ test("actual release options, readable safe credits, asset HTTP and private arti
   ).toBe(403)
   for (const box of await page.getByRole("checkbox").all())
     await expect(box).toBeChecked()
+  // The five Wikidata births have public-domain text, unlike the chronology.
+  // Select chronology categories here to require its mandatory CC BY-SA credits.
+  await page.getByRole("checkbox", { name: "Births", exact: true }).uncheck()
   const run = await start(page)
   publicOnly(run)
   const pending = page.getByTestId("pending-card")
+  expect(run.pending!.media.credits.length).toBeGreaterThan(0)
+  expect(run.pending!.media.credits).toEqual(
+    expect.arrayContaining([
+      expect.objectContaining({
+        label: expect.stringMatching(
+          /^Catalog text: adapted from Wikipedia contributors.*CC BY-SA 4\.0/,
+        ),
+        url: "https://github.com/mneedham/wikipedia-onthisday",
+      }),
+      {
+        label: "Catalog text license: CC BY-SA 4.0",
+        url: "https://creativecommons.org/licenses/by-sa/4.0/",
+      },
+    ]),
+  )
   for (const credit of run.pending!.media.credits) {
     await expect(pending.locator(".event-image-credits")).toContainText(
       credit.label,

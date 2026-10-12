@@ -204,7 +204,8 @@ alone do **not** stop a dev server from serving them. A final F2 probe reproduce
 HTTP 200 for private auth JSON under the default Vite configuration; the new
 real-only Vite configuration preserves default sensitive-file denies and blocks
 auth, test-runner, SDD and catalog paths. Actual UI-origin probes now return 403,
-including raw-query and `/@fs/` paths. The fixture Vite configuration is unchanged.
+including raw-query and `/@fs/` paths. The initial fix left the fixture Vite
+configuration unchanged; the reviewed fix below closes that alternate-origin gap.
 `real-catalog.json` is the player storage state; `real-catalog-players.json` and
 `real-catalog-journey-players.jsonl` retain dedicated local credentials for owner
 play, not public enrollment. Do not paste these into logs or reports. Players
@@ -249,3 +250,37 @@ or unassisted owner play. Physical-device, spoken screen-reader, owner gameplay,
 production security/default-secret replacement, hosting/budget and invitation
 gates remain outstanding. No deployment, paid operations, live acquisition,
 LAN/tunnel binding, push, merge, or publication was performed.
+
+### F2 review fix1: protect every shared-root Vite origin
+
+The controller authorized minimal shared private-artifact deny hardening. A newly
+owned default Vite on loopback 5173 reproduced HTTP 200 for retained real auth
+JSON, query aliases and actual absolute `/@fs/` aliases. This is a new controlled
+reproduction, **not** a claim that 5173 was live during the independent review.
+
+The private-file deny list now lives once in `frontend/vite.config.ts`, with
+strict filesystem handling and all installed Vite defaults preserved; the real
+config inherits it. Fixture discovery, API origin and application behavior remain
+separate. Both default and real servers now deny auth/runner/SDD/catalog paths.
+Resolved-config unit tests import both actual configurations and compare against
+the installed default deny list; they are not mislabeled as HTTP tests. The
+explicit HTTP regression checks both origins and ordinary UI/JS availability:
+
+```bash
+# Inspect ownership/free port first; this is the default/fixture frontend only.
+VITE_API_URL=http://localhost:8000 npm run dev -- --host 127.0.0.1 --port 5173 --strictPort
+F2_PRIVACY_DEFAULT_ORIGIN=http://localhost:5173 \
+  REAL_CATALOG_RELEASE_DIR="$(realpath ../data/game/releases/jsonl-trial-2026-10-12-review-r1)" \
+  node tests-real-catalog/private-artifact-http.ts
+```
+
+The real credits case now requires nonempty chronology attribution and its exact
+CC BY-SA 4.0 license link before iterating rendered credits. It excludes only the
+five public-domain Wikidata births from that credit-specific run to avoid falsely
+requiring CC BY-SA on them; broad Freeplay still tests the full eight-category union.
+Owner auth/credentials are snapshotted privately and restored byte-identically
+after suite setup; newly created suite credentials and the append-only journey
+journal are retained. No existing account, password, registration setting,
+backend process, database cleanup, firewall or production configuration changed.
+Full fix1 RED/GREEN, fresh browser/unit/build verification and lifecycle results
+are appended to the private `task-F2-report.md` and `F2-fix1-evidence/` directory.
