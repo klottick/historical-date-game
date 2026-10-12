@@ -11,7 +11,6 @@ import os
 import re
 from dataclasses import asdict, dataclass
 from datetime import UTC, datetime
-from difflib import SequenceMatcher
 from pathlib import Path
 from typing import Any
 from uuid import NAMESPACE_URL, uuid5
@@ -22,26 +21,17 @@ from app.content.adapters.onthisday import (
     SNAPSHOT_PREFIX,
     SOURCE_ID,
     OnThisDayAdapter,
-    semantic_text,
     snapshot_bytes,
 )
-from app.content.adapters.selected import (
-    MILESTONES,
-    SelectedSourceAdapter,
-    digest,
-    issue,
-)
+from app.content.adapters.selected import SelectedSourceAdapter, digest
+from app.content.corpus import normalize_corpus, raw_identity, source_key
 from app.content.schemas import (
     CategoryRecord,
-    EventRecord,
-    SourceCitation,
-    ValidationIssue,
     ValidationReceipt,
 )
 from app.content.validation import (
     VALIDATION_POLICY_VERSION,
     candidate_digest,
-    validate_event,
 )
 
 
@@ -53,22 +43,11 @@ class ImportReport:
 
 
 def _key(raw: RawCandidate) -> str:
-    return json.dumps([raw.source_id, raw.record_id], separators=(",", ":"))
+    return source_key(raw)
 
 
 def _identity(raw: RawCandidate) -> str:
-    chronology_identity = router.identity(raw)
-    if chronology_identity is not None:
-        return chronology_identity
-    qid, milestone = raw.payload.get("entity_id"), raw.payload.get("milestone")
-    if (
-        isinstance(qid, str)
-        and re.fullmatch(r"Q[1-9]\d*", qid)
-        and isinstance(milestone, str)
-        and milestone in MILESTONES
-    ):
-        return f"wikidata:{qid}:{milestone}"
-    return "unresolved:" + _key(raw)
+    return raw_identity(raw)
 
 
 def _write(path: Path, text: str) -> None:
@@ -164,193 +143,26 @@ def _import_locked(
     taxonomy = tuple(
         CategoryRecord.model_validate_json(json.dumps(c)) for c in taxonomy_data
     )
-    groups: dict[
-        str, list[tuple[RawCandidate, EventRecord | tuple[ValidationIssue, ...]]]
-    ] = {}
-    # Migrate 618bca1 placeholders: an unresolved disposition was never proof
-    # of canonical identity and must not prevent later machine-only recovery.
-    aliases = {
-        key: value
-        for key, value in previous["aliases"].items()
-        if not value["identity_key"].startswith("unresolved:")
-    }
-    alias_conflicts: set[str] = set()
-    semantic_years: dict[str, set[int]] = {}
-    for data in raw_state.values():
-        source_row = data["payload"].get("row")
-        if (
-            data["source_id"] == SOURCE_ID
-            and isinstance(source_row, dict)
-            and isinstance(source_row.get("event"), str)
-            and type(source_row.get("year")) is int
-        ):
-            semantic_years.setdefault(semantic_text(source_row["event"]), set()).add(
-                source_row["year"]
-            )
-    for key in sorted(raw_state):
-        raw = RawCandidate(**raw_state[key])
-        result = (
-            router.normalize(raw)
-            if isinstance(
-                adapter, (SelectedSourceAdapter, OnThisDayAdapter, router.AdapterRouter)
-            )
-            else adapter.normalize(raw)
+    normalizer = (
+        router.normalize
+        if isinstance(
+            adapter, (SelectedSourceAdapter, OnThisDayAdapter, router.AdapterRouter)
         )
-        identity = (
-            result.identity_key if isinstance(result, EventRecord) else _identity(raw)
-        )
-        source_row = raw.payload.get("row")
-        if (
-            raw.source_id == SOURCE_ID
-            and isinstance(source_row, dict)
-            and isinstance(source_row.get("event"), str)
-            and len(semantic_years.get(semantic_text(source_row["event"]), set())) > 1
-        ):
-            result = (
-                issue(
-                    "conflicting_dates",
-                    "row.year",
-                    "Repeated chronology semantics disagree on reported year",
-                ),
-            )
-        if key in aliases and aliases[key]["identity_key"] != identity:
-            # Alias retargeting is not proof that two entities are identical.
-            result = (
-                issue(
-                    "conflicting_identity",
-                    "aliases",
-                    "Source alias changed canonical identity",
-                ),
-            )
-            alias_conflicts.update((identity, aliases[key]["identity_key"]))
-        groups.setdefault(identity, []).append((raw, result))
-        if isinstance(result, EventRecord):
-            aliases.setdefault(
-                key,
-                {"identity_key": identity, "event_id": str(result.event_id)},
-            )
-    normalized: dict[str, EventRecord] = {}
-    failures: dict[str, list[ValidationIssue]] = {}
-    for identity, members in groups.items():
-        events = [result for _, result in members if isinstance(result, EventRecord)]
-        errors = [
-            error
-            for _, result in members
-            if isinstance(result, tuple)
-            for error in result
-        ]
-        if identity in alias_conflicts:
-            errors.append(
-                issue(
-                    "conflicting_identity",
-                    "aliases",
-                    "A persistent source alias ambiguously retargeted this identity",
-                )
-            )
-        if len({event.year_index for event in events}) > 1:
-            errors.append(
-                issue(
-                    "conflicting_dates",
-                    "year_index",
-                    "Exact identity aliases disagree on year",
-                )
-            )
-        if (
-            identity.startswith("onthisday:")
-            and len({event.prompt for event in events}) > 1
-        ):
-            errors.append(
-                issue(
-                    "suspected_duplicate",
-                    "prompt",
-                    "Normalized chronology aliases have different original wording; do not silently choose one",
-                )
-            )
-        if SelectedSourceAdapter().alias_dates_conflict(
-            [
-                raw
-                for raw, result in members
-                if isinstance(result, EventRecord) and raw.source_id != SOURCE_ID
-            ]
-        ):
-            errors.append(
-                issue(
-                    "conflicting_dates",
-                    "sources",
-                    "Exact source aliases disagree at common supported date precision",
-                )
-            )
-        if events:
-            base = events[0]
-            ranks = {"year": 1, "month": 2, "day": 3}
-            common_precision = min(
-                (event.date_precision for event in events), key=ranks.__getitem__
-            )
-            citations: dict[tuple[str, str], SourceCitation] = {}
-            for source_event in events:
-                for source in source_event.sources:
-                    source_key = source.source_id, source.record_id
-                    old = citations.get(source_key)
-                    same_date = old is None or old.raw_date == source.raw_date
-                    if old is not None and source.source_id in {
-                        "wikidata",
-                        "wikipedia_en",
-                    }:
-                        same_date = SelectedSourceAdapter.citation_dates_agree(
-                            old, source, common_precision
-                        )
-                    if old is not None and (
-                        not same_date
-                        or old.calendar != source.calendar
-                        or old.date_resolution != source.date_resolution
-                    ):
-                        errors.append(
-                            issue(
-                                "conflicting_dates",
-                                "sources",
-                                "Repeated source identity has conflicting date evidence",
-                            )
-                        )
-                    citations[source_key] = source
-            merged = base.model_copy(
-                update={
-                    "date_precision": common_precision,
-                    "sources": tuple(citations[k] for k in sorted(citations)),
-                    "category_ids": tuple(
-                        sorted({c for e in events for c in e.category_ids})
-                    ),
-                    "region_ids": tuple(
-                        sorted({r for e in events for r in e.region_ids})
-                    ),
-                }
-            )
-            errors.extend(validate_event(merged, taxonomy, datetime.now(UTC).year))
-            normalized[identity] = merged
-        failures[identity] = errors
-    # Fuzzy similarity only detects suspicion; it never merges accepted facts.
-    identities = sorted(normalized)
-    for position, identity in enumerate(identities):
-        left = normalized[identity]
-        for other in identities[position + 1 :]:
-            right = normalized[other]
-            if identity.rsplit(":", 1)[-1] != other.rsplit(":", 1)[-1]:
-                continue
-            a = re.sub(r"\W+", " ", left.prompt.casefold()).strip()
-            b = re.sub(r"\W+", " ", right.prompt.casefold()).strip()
-            matcher = SequenceMatcher(None, a, b)
-            if (
-                matcher.real_quick_ratio() >= 0.90
-                and matcher.quick_ratio() >= 0.90
-                and matcher.ratio() >= 0.90
-            ):
-                for suspect in (identity, other):
-                    failures[suspect].append(
-                        issue(
-                            "suspected_duplicate",
-                            "identity_key",
-                            "Similar wording without exact source identity is quarantined, not merged",
-                        )
-                    )
+        else adapter.normalize
+    )
+    corpus = normalize_corpus(
+        [RawCandidate(**data) for data in raw_state.values()],
+        taxonomy,
+        datetime.now(UTC).year,
+        aliases=previous["aliases"],
+        normalize=normalizer,
+    )
+    groups, normalized, failures, aliases = (
+        corpus.groups,
+        corpus.normalized,
+        corpus.failures,
+        corpus.aliases,
+    )
     candidates: list[dict[str, Any]] = []
     quarantine: list[dict[str, Any]] = []
     decisions: list[dict[str, Any]] = []

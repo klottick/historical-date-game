@@ -37,6 +37,7 @@ def rules_digest() -> str:
         content_root / "validation.py",
         content_root / "importer.py",
         content_root / "schemas.py",
+        content_root / "corpus.py",
     )
     return digest(
         {

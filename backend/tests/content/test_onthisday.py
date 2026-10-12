@@ -580,3 +580,141 @@ def test_standalone_verifier_rechecks_resealed_source_text_and_receipts(
     (release / "manifest.json").write_text(json.dumps(manifest))
     with pytest.raises(ValueError, match=expected):
         verify_release(release, release / "media")
+
+
+def quarantined_corpus(
+    tmp_path: Path, monkeypatch: pytest.MonkeyPatch, kind: str
+) -> tuple[Path, EventRecord]:
+    """Synthetic individually-valid row excluded only by whole-raw constraints."""
+    second = {
+        "different_year": row(date="1801-01-01", year=1801),
+        "fuzzy": row(event="Ada Example patents a mechanical calculators."),
+        "wording": row(event="Ada Example patents a mechanical calculator!"),
+    }[kind]
+    adapter, root = fixture_snapshot(
+        tmp_path,
+        monkeypatch,
+        [row(), second, row(event="The parliament ratifies the Example treaty.")],
+    )
+    workspace = tmp_path / "work"
+    report = import_snapshot(adapter, root, workspace)
+    assert report.imported == 1 and report.quarantined == 2
+    expected = (
+        "conflicting_dates" if kind == "different_year" else "suspected_duplicate"
+    )
+    assert all(
+        expected in q["issue_codes"] for q in active(workspace, "quarantine.jsonl")
+    )
+    restored = adapter.normalize(list(adapter.fetch(root))[0])
+    assert isinstance(restored, EventRecord)
+    assert restored.event_id not in {
+        EventRecord.model_validate_json(json.dumps(e)).event_id
+        for e in active(workspace, "candidates.jsonl")
+    }
+    return workspace, restored
+
+
+@pytest.mark.parametrize("module_name", ["app.content.corpus"])
+def test_shared_corpus_code_is_fingerprint_bound(
+    monkeypatch: pytest.MonkeyPatch, module_name: str
+) -> None:
+    from app.content.adapters import router
+    from app.content.media import pipeline
+
+    assert importlib.util.find_spec(module_name) is not None, (
+        "Whole-corpus gates need one shared pure implementation"
+    )
+    before_content, before_media = router.rules_digest(), pipeline.media_rules_digest()
+    original = Path.read_bytes
+
+    def changed_rules(path: Path) -> bytes:
+        body = original(path)
+        return (
+            body + b"\n# Changed corpus acceptance\n"
+            if path.name == "corpus.py"
+            else body
+        )
+
+    monkeypatch.setattr(Path, "read_bytes", changed_rules)
+    assert router.rules_digest() != before_content
+    assert pipeline.media_rules_digest() != before_media
+
+
+def test_late_gates_normalize_entire_raw_corpus_once_per_batch(
+    tmp_path: Path, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    from app.content.media import pipeline
+    from app.content.publish import publish_release, verify_release
+
+    adapter, root = fixture_snapshot(
+        tmp_path,
+        monkeypatch,
+        [
+            row(),
+            row(event="The parliament ratifies the Example treaty."),
+            row(event="An unclassified sports club opens."),
+        ],
+    )
+    workspace = tmp_path / "work"
+    assert import_snapshot(adapter, root, workspace).imported == 2
+    selection = SourceSelection.model_validate_json(
+        (Path(__file__).parents[3] / "docs/research/source-selection.json").read_bytes()
+    )
+    pipeline.assign_chronology_media(selection, workspace)
+    calls: list[str] = []
+    original = module().OnThisDayAdapter.normalize
+
+    def observed(self: Any, raw: RawCandidate) -> Any:
+        calls.append(raw.record_id)
+        return original(self, raw)
+
+    monkeypatch.setattr(module().OnThisDayAdapter, "normalize", observed)
+    assert all(r.passed for r in pipeline.finalize_media_receipts(workspace))
+    assert len(calls) == len(set(calls)) == 3, (
+        "Every raw, including rejected data, is normalized once per C4 batch"
+    )
+    publish_release(workspace, tmp_path / "out", "once", fixture=True)
+    calls.clear()
+    release = tmp_path / "out/once"
+    verify_release(release, release / "media")
+    assert len(calls) == len(set(calls)) == 3, (
+        "C5 must not normalize the entire corpus for each event"
+    )
+
+
+def test_late_gates_preserve_same_year_cross_day_provenance_merge(
+    tmp_path: Path, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    from app.content.media import pipeline
+    from app.content.publish import publish_release, verify_release
+
+    adapter, root = fixture_snapshot(
+        tmp_path,
+        monkeypatch,
+        [
+            row(),
+            row(
+                date="1800-01-02",
+                day=2,
+                source_url="https://en.wikipedia.org/wiki/January_2",
+            ),
+            row(event="The parliament ratifies the Example treaty."),
+        ],
+    )
+    workspace = tmp_path / "work"
+    report = import_snapshot(adapter, root, workspace)
+    assert (report.imported, report.duplicates, report.quarantined) == (2, 1, 0)
+    selection = SourceSelection.model_validate_json(
+        (Path(__file__).parents[3] / "docs/research/source-selection.json").read_bytes()
+    )
+    pipeline.assign_chronology_media(selection, workspace)
+    assert all(r.passed for r in pipeline.finalize_media_receipts(workspace))
+    publish_release(workspace, tmp_path / "out", "merged", fixture=True)
+    release = tmp_path / "out/merged"
+    assert verify_release(release, release / "media").event_count == 2
+    events = [
+        EventRecord.model_validate_json(line)
+        for line in (release / "events.jsonl").read_text().splitlines()
+    ]
+    merged = next(e for e in events if e.category_ids == ("inventions",))
+    assert len(merged.sources) == 2 and merged.year_index == 1800

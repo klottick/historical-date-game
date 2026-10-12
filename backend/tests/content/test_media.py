@@ -142,6 +142,33 @@ def batch(tmp_path: Path) -> tuple[Path, list[EventRecord]]:
     ]
 
 
+@pytest.mark.parametrize("kind", ["different_year", "fuzzy", "wording"])
+def test_finalization_rechecks_quarantined_aliases_outside_accepted_set(
+    tmp_path: Path, monkeypatch: pytest.MonkeyPatch, kind: str
+) -> None:
+    from tests.content.test_onthisday import quarantined_corpus
+
+    workspace, restored = quarantined_corpus(tmp_path, monkeypatch, kind)
+    content, _, events, _ = pipeline._inputs(workspace)
+    # Reseal C3 candidates/aliases as if the excluded row had been restored. C4
+    # must ignore stored dispositions and independently check the complete raw set.
+    events.append(restored)
+    (content / "candidates.jsonl").write_text(
+        "".join(event.model_dump_json() + "\n" for event in events)
+    )
+    (content / "receipts.jsonl").unlink()
+    (content / "quarantine.jsonl").unlink()
+    (content / "decisions.jsonl").unlink()
+    pipeline.assign_chronology_media(SELECTION, workspace)
+    receipts = pipeline.finalize_media_receipts(workspace)
+    rejected = next(r for r in receipts if r.event_id == restored.event_id)
+    expected = (
+        "conflicting_dates" if kind == "different_year" else "suspected_duplicate"
+    )
+    assert expected in rejected.issue_codes and not rejected.passed
+    assert next(r for r in receipts if r.event_id != restored.event_id).passed
+
+
 def cache(workspace: Path, title: str, body: dict[str, Any]) -> None:
     root = workspace / "media-cache" / "commons"
     root.mkdir(parents=True, exist_ok=True)

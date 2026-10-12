@@ -24,6 +24,7 @@ from app.content.adapters.onthisday import (
     SOURCE_ID,
 )
 from app.content.adapters.selected import digest
+from app.content.corpus import normalize_corpus
 from app.content.importer import _sources, _sync_directory
 from app.content.media import pipeline
 from app.content.media.rights import MediaCandidate
@@ -309,6 +310,7 @@ def _check(
     if codes:
         raise ValueError("asset_validation:" + ",".join(sorted(codes)))
     raw_index = pipeline._raw_index(raws)
+    corpus = normalize_corpus(raws, taxonomy, datetime.now(UTC).year, aliases=aliases)
     for event in events:
         original = by_id[event.event_id]
         if (
@@ -335,7 +337,7 @@ def _check(
             event, receipt_by_id[event.event_id], current_digests, catalog
         )
         codes = {issue.code for issue in issues}
-        codes |= pipeline._recheck_content(event, event_raws, sources)
+        codes |= pipeline._recheck_content(event, event_raws, sources, corpus=corpus)
         codes |= pipeline._recheck_media(
             root, event, original, event_raws, decision, catalog
         )

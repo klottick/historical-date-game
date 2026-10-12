@@ -175,3 +175,48 @@ tests pass**; Ruff and mypy pass. The destructive DB suite was intentionally not
 run during browser use. Original exact-source adapter code is unchanged. Full
 private commands, outputs, hashes, audit and limitations:
 `.superpowers/sdd/2026-10-11-historical-date-game-beta/task-JSONL-report.md`.
+
+## 2026-10-12 JSONL review round 1 — WHOLE-RAW GATES, NOT ACTIVATED
+
+The C6 and initial JSONL checkpoints above remain historical evidence. Review
+identified a late-gate integrity gap, not a demonstrated bad published catalog:
+individually valid quarantined rows could bypass whole-input duplicate/conflict
+constraints when restored with resealed bindings. C4 finalization and C5 standalone
+verification now independently normalize **all 19,865 retained raw candidates**
+once per batch using the same deterministic constraints as import. Stored
+passed/quarantine decisions are not evidence of eligibility. Original exact-source
+alias/date safety is preserved; the new shared rules are fingerprint-bound.
+
+**Use `data/game/releases/jsonl-trial-2026-10-12-review-r1/` for current review.**
+Fresh CLI publish and standalone `verify --require-beta` both exit 0:
+**fixture=false, 1,276 events**, comprising **1,271 chronology + five C6 births**.
+The earlier `-final` release is immutable and now correctly fails with
+`stale_media_rules`; it is no longer the current-rules release.
+
+- All **19,865 import dispositions and 1,276 candidate digests** match the prior
+  generation. The reimport reports zero newly imported events, not zero accepted
+  events; fresh media finalization reports 1,276 passed / zero failed.
+- All 1,276 accepted events received an automated whole-raw eligibility and
+  provenance audit. Actual Soyuz line 5001 remains excluded with
+  `suspected_duplicate`; no stored decisions were used to establish eligibility.
+- Event, candidate, raw, alias, taxonomy, source-policy, coverage, text-license,
+  pinned chronology snapshot and all eight fallback bytes match the prior release.
+- Counts/limitations above are unchanged: births 5, deaths 171, battles 544,
+  inventions 23, literature 65, arts 32, exploration 145, politics 291; 569 distinct
+  years, 9–2025 CE, no BCE; 1,271 events without regions; zero photographs and 1,276
+  fallbacks. This remains **DONE_WITH_CONCERNS**, not balanced coverage, historical
+  truth validation, human review, legal clearance or activation approval.
+- Verification: **366 focused importer/chronology/media/publisher tests and 589
+  pure content/game/safety tests**, four existing warnings; Ruff, formatting and
+  mypy pass. No DB suite, live HTTP, service, game/UI or active-catalog change.
+
+| Replacement binding | SHA-256 |
+| --- | --- |
+| Manifest | `804ec52ccfc3e19cd955913b05cbfd59158f562408e45c1916fa8626d3ac50d3` |
+| Content input | `d9c665f4c1554aadea0dfb372e9c62470a54186587110163dd9c062f70086dac` |
+| Whole MediaCatalog | `b8fc4ded39564f7e1e10c4cb0b3ba2fe886f4586036a369d4d6bce5d008e9298` |
+| Media rules/dependencies | `fda414e26041f641ef125449f56ab5859d5e4b3f5d2f3cdd6eef4a0d46a93fa3` |
+
+Private round-1 evidence: `jsonl-pilot/review-fix/` beside the existing private
+`task-JSONL-report.md`. Controller followup remains scoped to the Important finding
+and `dd52c87..` fix diff; no merge, push or activation is authorized here.

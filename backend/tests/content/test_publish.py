@@ -12,6 +12,7 @@ from typing import Any
 import httpx
 import pytest
 
+from app.content.adapters.base import RawCandidate
 from app.content.adapters.selected import SelectedSourceAdapter, digest
 from app.content.importer import _sources
 from app.content.media import pipeline
@@ -492,6 +493,90 @@ def refresh(root: Path, filename: str = "manifest.json") -> None:
     for name in data["files"]:
         data["files"][name] = hashlib.sha256((root / name).read_bytes()).hexdigest()
     (root / filename).write_text(json.dumps(data))
+
+
+@pytest.mark.parametrize("kind", ["different_year", "fuzzy", "wording"])
+def test_verify_rejects_resealed_quarantine_restoration_against_whole_raw(
+    tmp_path: Path, monkeypatch: pytest.MonkeyPatch, kind: str
+) -> None:
+    from tests.content.test_onthisday import quarantined_corpus
+
+    workspace, restored = quarantined_corpus(tmp_path, monkeypatch, kind)
+    pipeline.assign_chronology_media(SELECTION, workspace)
+    assert all(r.passed for r in pipeline.finalize_media_receipts(workspace))
+    publish_release(workspace, tmp_path / "out", "restored", fixture=True)
+    root = tmp_path / "out/restored"
+    originals = [
+        EventRecord.model_validate_json(line)
+        for line in (root / "candidates.jsonl").read_text().splitlines()
+    ]
+    originals.append(restored)
+    events = [
+        EventRecord.model_validate_json(line)
+        for line in (root / "events.jsonl").read_text().splitlines()
+    ]
+    assigned = restored.model_copy(
+        update={"fallback_key": pipeline.fallback_key(restored)}
+    )
+    events.append(assigned)
+    for name, values in (("candidates.jsonl", originals), ("events.jsonl", events)):
+        (root / name).write_text("".join(e.model_dump_json() + "\n" for e in values))
+    raws = [
+        RawCandidate(**json.loads(line))
+        for line in (root / "raw.jsonl").read_text().splitlines()
+    ]
+    event_raws = pipeline._event_raws(restored, raws)
+    sha = _sources(event_raws)
+    catalog = MediaCatalog.model_validate_json((root / "media.json").read_bytes())
+    receipts = json.loads((root / "validation.json").read_text())
+    receipts.append(
+        ValidationReceipt(
+            event_id=assigned.event_id,
+            candidate_sha256=candidate_digest(assigned),
+            source_sha256=sha,
+            policy_version="automated-v1",
+            stage="content_media",
+            media_catalog_sha256=media_catalog_digest(catalog),
+            passed=True,
+            checked_at=datetime.now(UTC),
+            issue_codes=(),
+        ).model_dump(mode="json")
+    )
+    (root / "validation.json").write_text(json.dumps(receipts))
+    sync_receipts(root)
+    decisions = json.loads((root / "decisions.json").read_text())
+    decisions[str(assigned.event_id)] = {
+        "event_id": str(assigned.event_id),
+        "input_candidate_sha256": candidate_digest(restored),
+        "candidate_sha256": candidate_digest(assigned),
+        "source_sha256": sha,
+        "policy_version": "automated-v1",
+        "media_rules_sha256": pipeline.media_rules_digest(),
+        "selection": SELECTION.model_dump(mode="json"),
+        "attempts": [],
+        "candidate": None,
+        "fallback_key": assigned.fallback_key,
+        "reason": "no_source_image_metadata",
+    }
+    (root / "decisions.json").write_text(json.dumps(decisions))
+    aliases = json.loads((root / "aliases.json").read_text())
+    for raw in event_raws:
+        aliases[json.dumps([raw.source_id, raw.record_id], separators=(",", ":"))] = {
+            "identity_key": assigned.identity_key,
+            "event_id": str(assigned.event_id),
+        }
+    (root / "aliases.json").write_text(json.dumps(aliases))
+    from app.content.publish import _coverage
+
+    (root / "coverage.json").write_text(json.dumps(_coverage(events, catalog)))
+    rewrite(root / "batch.json", lambda d: d.update(event_count=len(events)))
+    rewrite(root / "manifest.json", lambda d: d.update(event_count=len(events)))
+    refresh(root)
+    expected = (
+        "conflicting_dates" if kind == "different_year" else "suspected_duplicate"
+    )
+    with pytest.raises(ValueError, match=expected):
+        verify_release(root, root / "media")
 
 
 def rewrite(path: Path, change: Any) -> None:

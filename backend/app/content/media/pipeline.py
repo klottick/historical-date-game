@@ -13,7 +13,6 @@ import time
 import warnings
 from dataclasses import dataclass
 from datetime import UTC, datetime
-from difflib import SequenceMatcher
 from html.parser import HTMLParser
 from importlib.metadata import version as package_version
 from pathlib import Path
@@ -38,7 +37,8 @@ from app.content.adapters.onthisday import (
     OnThisDayAdapter,
     snapshot_bytes,
 )
-from app.content.adapters.selected import SelectedSourceAdapter, digest
+from app.content.adapters.selected import digest
+from app.content.corpus import CorpusResult, normalize_corpus
 from app.content.importer import _identity, _jsonl, _sources, _sync_directory, _write
 from app.content.media.download import UA, asset_sha256, download_image, immutable_write
 from app.content.media.prepare import MAX_DIMENSION, MAX_PIXELS, prepare_image
@@ -136,6 +136,7 @@ def media_rules_digest() -> str:
         content_root / "schemas.py",
         content_root / "validation.py",
         content_root / "importer.py",
+        content_root / "corpus.py",
         *sorted(content_root.joinpath("adapters").glob("*.py")),
     )
     return digest(
@@ -931,12 +932,16 @@ def assign_chronology_media(selection: SourceSelection, workspace: Path) -> None
 
 
 def _recheck_content(
-    event: EventRecord, raws: list[RawCandidate], sources: dict[str, Any]
+    event: EventRecord,
+    raws: list[RawCandidate],
+    sources: dict[str, Any],
+    *,
+    corpus: CorpusResult,
 ) -> set[str]:
-    codes: set[str] = set()
+    """Check one candidate against independently normalized WHOLE-batch results."""
+    codes = {issue.code for issue in corpus.failures.get(event.identity_key, [])}
     if not raws:
-        return {"missing_current_sources"}
-    normalized = []
+        return codes | {"missing_current_sources"}
     for raw in raws:
         source_key = json.dumps([raw.source_id, raw.record_id], separators=(",", ":"))
         if sources.get("records", {}).get(source_key, {}).get("raw_sha256") != digest(
@@ -947,41 +952,39 @@ def _recheck_content(
             }
         ):
             codes.add("source_integrity")
-        result = router.normalize(raw)
-        if isinstance(result, EventRecord):
-            normalized.append(result)
-        else:
-            codes.update(issue.code for issue in result)
-    selected_raws = [raw for raw in raws if raw.source_id != SOURCE_ID]
-    if normalized and SelectedSourceAdapter().alias_dates_conflict(selected_raws):
-        codes.add("conflicting_dates")
-    if normalized:
-        for other in normalized:
-            if any(
-                getattr(other, field) != getattr(event, field)
-                for field in (
-                    "event_id",
-                    "identity_key",
-                    "prompt",
-                    "year_index",
-                    "explanation",
-                )
-            ):
-                codes.add("current_content_mismatch")
-        citations = {source for other in normalized for source in other.sources}
-        if (
-            set(event.sources) != citations
-            or set(event.category_ids)
-            != {c for other in normalized for c in other.category_ids}
-            or set(event.region_ids)
-            != {r for other in normalized for r in other.region_ids}
+    canonical = corpus.normalized.get(event.identity_key)
+    # Preserve the prior exact-alias content agreement check, using the raw
+    # normalization already computed once for this batch (not only its base).
+    for _, result in corpus.groups.get(event.identity_key, []):
+        if isinstance(result, EventRecord) and any(
+            getattr(result, field) != getattr(event, field)
+            for field in (
+                "event_id",
+                "identity_key",
+                "prompt",
+                "year_index",
+                "explanation",
+            )
         ):
             codes.add("current_content_mismatch")
-        ranks = {"year": 1, "month": 2, "day": 3}
-        if event.date_precision != min(
-            (other.date_precision for other in normalized), key=ranks.__getitem__
-        ):
-            codes.add("current_content_mismatch")
+    if canonical is None or any(
+        getattr(canonical, field) != getattr(event, field)
+        for field in (
+            "event_id",
+            "identity_key",
+            "prompt",
+            "year_index",
+            "explanation",
+            "date_precision",
+        )
+    ):
+        codes.add("current_content_mismatch")
+    if canonical is not None and (
+        set(event.sources) != set(canonical.sources)
+        or set(event.category_ids) != set(canonical.category_ids)
+        or set(event.region_ids) != set(canonical.region_ids)
+    ):
+        codes.add("current_content_mismatch")
     return codes
 
 
@@ -1229,6 +1232,12 @@ def finalize_media_receipts(workspace: Path) -> tuple[ValidationReceipt, ...]:
             global_codes.add("unreviewed_catalog_record")
         receipts = []
         raw_index = _raw_index(raws)
+        corpus = normalize_corpus(
+            raws,
+            taxonomy,
+            now.year,
+            aliases=json.loads((content / "aliases.json").read_text()),
+        )
         for original, event in zip(originals, events, strict=True):
             codes = set(global_codes)
             # Assignments may change only media references, never event content.
@@ -1246,7 +1255,7 @@ def finalize_media_receipts(workspace: Path) -> tuple[ValidationReceipt, ...]:
             codes.update(
                 issue.code for issue in validate_event(event, taxonomy, now.year)
             )
-            codes.update(_recheck_content(event, event_raws, sources))
+            codes.update(_recheck_content(event, event_raws, sources, corpus=corpus))
             codes.update(
                 _recheck_media(
                     target,
@@ -1257,22 +1266,6 @@ def finalize_media_receipts(workspace: Path) -> tuple[ValidationReceipt, ...]:
                     catalog,
                 )
             )
-            for other in events:
-                if (
-                    other.event_id == event.event_id
-                    or other.identity_key.rsplit(":", 1)[-1]
-                    != event.identity_key.rsplit(":", 1)[-1]
-                ):
-                    continue
-                a = re.sub(r"\W+", " ", event.prompt.casefold()).strip()
-                b = re.sub(r"\W+", " ", other.prompt.casefold()).strip()
-                matcher = SequenceMatcher(None, a, b)
-                if other.identity_key == event.identity_key or (
-                    matcher.real_quick_ratio() >= 0.90
-                    and matcher.quick_ratio() >= 0.90
-                    and matcher.ratio() >= 0.90
-                ):
-                    codes.add("suspected_duplicate")
             receipts.append(
                 ValidationReceipt(
                     event_id=event.event_id,
