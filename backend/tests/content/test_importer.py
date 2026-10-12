@@ -852,3 +852,45 @@ def test_inactive_nodes_do_not_manufacture_a_raw_year_token(
         ).quarantined
         == 1
     )
+
+
+@pytest.mark.parametrize("duplicate", ["", "   ", "<!-- no active value -->"])
+@pytest.mark.parametrize("duplicate_first", [False, True])
+def test_duplicate_infobox_field_quarantines_even_blank_or_comment_only(
+    tmp_path: Path, duplicate: str, duplicate_first: bool
+) -> None:
+    data = json.loads(FIXTURE.read_text())
+    data["records"] = data["records"][:1]
+    values = [duplicate, "1800"] if duplicate_first else ["1800", duplicate]
+    text = (
+        "{{Infobox person\n"
+        + "".join(f"| birth_date = {value}\n" for value in values)
+        + "}}"
+    )
+    data["page"]["revisions"][0]["slots"]["main"]["content"] = text
+    work = tmp_path / "work"
+    report = import_snapshot(SelectedSourceAdapter(), snapshot(tmp_path, data), work)
+    assert (report.imported, report.quarantined) == (0, 1)
+    assert active(work, "candidates.jsonl") == []
+    quarantine = active(work, "quarantine.jsonl")[0]
+    assert "unresolved_wikipedia_date" in quarantine["issue_codes"]
+    assert (
+        quarantine["raw"][0]["payload"]["page"]["revisions"][0]["slots"]["main"][
+            "content"
+        ]
+        == text
+    )
+    assert not active(work, "receipts.jsonl")[0]["passed"]
+
+
+def test_single_valid_infobox_field_still_passes(tmp_path: Path) -> None:
+    data = json.loads(FIXTURE.read_text())
+    data["records"] = data["records"][:1]
+    data["page"]["revisions"][0]["slots"]["main"]["content"] = (
+        "{{Infobox person\n| birth_date = 1800\n}}"
+    )
+    work = tmp_path / "work"
+    report = import_snapshot(SelectedSourceAdapter(), snapshot(tmp_path, data), work)
+    assert (report.imported, report.quarantined) == (1, 0)
+    assert active(work, "candidates.jsonl")[0]["year_index"] == 1800
+    assert active(work, "receipts.jsonl")[0]["passed"]

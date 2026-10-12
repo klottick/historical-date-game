@@ -107,11 +107,18 @@ Wikitext is parsed with stable `mwparserfromhell` 0.7.2, not searched for field
 lines throughout page text. Only one supported **active top-level** infobox can
 substantiate the requested milestone. Comments, nowiki/tag-wrapped examples,
 unrelated/nested templates and duplicate milestone fields cannot supply facts.
+Every relevant top-level parameter occurrence is counted before value cleanup;
+duplicates quarantine in either order, including blank or comment-only values.
 Date fields are bounded (16 KiB before footnote/comment exclusion; 512 characters
 of active date grammar); the original bytes/templates/annotations stay private
 and unchanged. Footnote refs/comments are excluded from date interpretation,
 not treated as event fields; their exclusion never concatenates separated digits
 into an invented raw year. Unsupported active markup remains quarantined.
+
+The retained transistor example's infobox names Bipolar Junction Transistor
+(BJT), while its article/entity is general transistor Q5339. It demonstrates
+the `invention_year` grammar, not production-approved historical equivalence
+between subtype and general-entity milestones. No identity resolution is guessed.
 
 All claims for the selected property are checked, not just preferred rank.
 Unknown/non-time values, deprecated claims, any qualifiers, uncertainty bounds,
@@ -240,6 +247,11 @@ and receipts and return `imported=0`. Any changed input regenerates the entire
 active content decision set; do not reuse prior-generation receipts. `imported`
 counts newly passed/changed canonical candidates; `quarantined` counts active
 failed raw keys; `duplicates` counts exact merged extra keys among passing facts.
+
+After a parser correction, do not rely on the unchanged-import fast path to
+recheck old decisions. Force revalidation through an updated adapter fingerprint
+or import the retained snapshot into a fresh private workspace; never carry an
+old pass forward without those fresh checks.
 
 A filesystem lock serializes writers. Files and directories are fsynced before
 an atomic pointer rename. Crashes/fetch failures before that rename leave the

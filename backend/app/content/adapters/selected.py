@@ -358,15 +358,16 @@ def _wiki_date(page: dict[str, Any], milestone: str) -> _SourceDate:
         fields = INFOBOX_FIELDS[milestone][
             str(box.name).strip().casefold().replace("_", " ")
         ]
-        values = [
-            (str(param.name).strip().casefold(), str(param.value).strip())
+        occurrences = [
+            param
             for param in box.params
-            if str(param.name).strip().casefold() in fields and str(param.value).strip()
+            if str(param.name).strip().casefold() in fields
         ]
-        if len(values) != 1:
+        if len(occurrences) != 1:
             raise ValueError("missing/ambiguous exact infobox milestone")
-        field, value = values[0]
-        value = _clean_value(value)
+        parameter = occurrences[0]
+        field = str(parameter.name).strip().casefold()
+        value = _clean_value(str(parameter.value).strip())
         if field == "date" and milestone in {"start", "end"}:
             return _conflict_endpoint(value, milestone)
         return _wiki_value(value)
