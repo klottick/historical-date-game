@@ -65,7 +65,7 @@ def candidate(**changes: Any) -> MediaCandidate:
     return MediaCandidate(**values)
 
 
-def test_throttle_only_hooks_preserve_base_acceptance_fingerprint() -> None:
+def test_chronology_changes_invalidate_base_acceptance_fingerprint() -> None:
     root = Path(pipeline.__file__).parents[1]
     paths = (
         *sorted(root.joinpath("media").glob("*.py")),
@@ -73,7 +73,7 @@ def test_throttle_only_hooks_preserve_base_acceptance_fingerprint() -> None:
         root / "schemas.py",
         root / "validation.py",
         root / "importer.py",
-        root / "adapters" / "selected.py",
+        *sorted(root.joinpath("adapters").glob("*.py")),
     )
     hashes = {
         str(path.relative_to(root)): hashlib.sha256(path.read_bytes()).hexdigest()
@@ -94,7 +94,25 @@ def test_throttle_only_hooks_preserve_base_acceptance_fingerprint() -> None:
             "python": pipeline.python_version(),
         }
     )
-    assert pipeline.media_rules_digest() == expected
+    # Chronology routing/year/license/source-byte checks are acceptance changes,
+    # unlike the earlier operational-only stop/retry fix. Stale C5 fails closed.
+    assert pipeline.media_rules_digest() != expected
+
+
+def test_throttle_hooks_only_are_projected_out_of_current_fingerprint(
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    from app.content import commons_transport
+
+    before = pipeline.media_rules_digest()
+    projected = commons_transport.fingerprint_source(Path(pipeline.__file__))
+    original = Path.read_bytes
+
+    def without_hooks(path: Path) -> bytes:
+        return projected if path == Path(pipeline.__file__) else original(path)
+
+    monkeypatch.setattr(Path, "read_bytes", without_hooks)
+    assert pipeline.media_rules_digest() == before
 
 
 def test_throttle_fingerprint_projection_still_binds_pipeline_acceptance(

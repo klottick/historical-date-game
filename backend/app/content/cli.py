@@ -6,14 +6,18 @@ import sys
 from dataclasses import asdict
 from pathlib import Path
 
-from app.content.adapters.selected import SelectedSourceAdapter
+from app.content.adapters.router import AdapterRouter
 from app.content.commons_transport import (
     CommonsThrottle,
     ensure_commons_ready,
     retry_commons,
 )
 from app.content.importer import import_snapshot
-from app.content.media.pipeline import assign_media, finalize_media_receipts
+from app.content.media.pipeline import (
+    assign_chronology_media,
+    assign_media,
+    finalize_media_receipts,
+)
 from app.content.publish import (
     _events,
     _files,
@@ -51,6 +55,11 @@ def main(argv: list[str] | None = None) -> int:
     media.add_argument("--selection", type=Path, required=True)
     media.add_argument("--workspace", type=Path, required=True)
     media.add_argument(
+        "--offline",
+        action="store_true",
+        help="Use cached image evidence only; never request absent metadata or originals",
+    )
+    media.add_argument(
         "--retry-throttled",
         action="store_true",
         help="Explicitly retry a stopped Commons batch after its retry deadline",
@@ -80,9 +89,7 @@ def main(argv: list[str] | None = None) -> int:
             if (snapshot / "snapshot.json").exists():
                 for request in _json(snapshot, "snapshot.json")["requests"]:
                     _path(snapshot, request["file"])
-            result = asdict(
-                import_snapshot(SelectedSourceAdapter(), snapshot, workspace)
-            )
+            result = asdict(import_snapshot(AdapterRouter(), snapshot, workspace))
         elif args.command == "media":
             selection = _selection(args.selection)
             workspace = _safe_root(args.workspace)
@@ -96,7 +103,10 @@ def main(argv: list[str] | None = None) -> int:
             )
             # Finalization runs only after EVERY current candidate is assigned.
             for event in events:
-                assign_media(event, selection, args.workspace)
+                if not event.identity_key.startswith("onthisday:"):
+                    assign_media(event, selection, args.workspace, offline=args.offline)
+            if any(event.identity_key.startswith("onthisday:") for event in events):
+                assign_chronology_media(selection, args.workspace)
             receipts = finalize_media_receipts(args.workspace)
             result = {
                 "events": len(receipts),

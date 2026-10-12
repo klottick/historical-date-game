@@ -28,9 +28,18 @@ import httpx
 from PIL import Image
 
 from app.content import commons_transport
+from app.content.adapters import router
 from app.content.adapters.base import RawCandidate
+from app.content.adapters.onthisday import (
+    CATALOG_LICENSE,
+    CATALOG_NOTICE,
+    SNAPSHOT_PREFIX,
+    SOURCE_ID,
+    OnThisDayAdapter,
+    snapshot_bytes,
+)
 from app.content.adapters.selected import SelectedSourceAdapter, digest
-from app.content.importer import _jsonl, _sources, _sync_directory, _write
+from app.content.importer import _identity, _jsonl, _sources, _sync_directory, _write
 from app.content.media.download import UA, asset_sha256, download_image, immutable_write
 from app.content.media.prepare import MAX_DIMENSION, MAX_PIXELS, prepare_image
 from app.content.media.rights import (
@@ -127,7 +136,7 @@ def media_rules_digest() -> str:
         content_root / "schemas.py",
         content_root / "validation.py",
         content_root / "importer.py",
-        content_root / "adapters" / "selected.py",
+        *sorted(content_root.joinpath("adapters").glob("*.py")),
     )
     return digest(
         {
@@ -264,9 +273,45 @@ def _event_raws(event: EventRecord, raws: list[RawCandidate]) -> list[RawCandida
     return [
         raw
         for raw in raws
-        if f"wikidata:{raw.payload.get('entity_id')}:{raw.payload.get('milestone')}"
+        if (
+            router.identity(raw)
+            or f"wikidata:{raw.payload.get('entity_id')}:{raw.payload.get('milestone')}"
+        )
         == event.identity_key
     ]
+
+
+def _raw_index(raws: list[RawCandidate]) -> dict[str, list[RawCandidate]]:
+    result: dict[str, list[RawCandidate]] = {}
+    for raw in raws:
+        result.setdefault(_identity(raw), []).append(raw)
+    return result
+
+
+def _recheck_chronology_snapshot(
+    root: Path, raws: list[RawCandidate], *, prefix: str = SNAPSHOT_PREFIX
+) -> set[str]:
+    """Independently prove raw membership against unmodified pinned file bytes."""
+    chronology = [r for r in raws if r.source_id == SOURCE_ID]
+    if not chronology:
+        return set()
+    try:
+        acquired = list(OnThisDayAdapter().fetch(root / prefix))
+
+        def bound(raw: RawCandidate) -> str:
+            return digest(
+                {
+                    "source_id": raw.source_id,
+                    "record_id": raw.record_id,
+                    "payload": raw.payload,
+                }
+            )
+
+        if {bound(r) for r in acquired} != {bound(r) for r in chronology}:
+            return {"source_integrity"}
+    except ValueError, OSError, KeyError, TypeError:
+        return {"source_integrity"}
+    return set()
 
 
 def _titles(raws: list[RawCandidate]) -> tuple[str, ...]:
@@ -649,7 +694,11 @@ def _commit_generation(
 
 
 def assign_media(
-    event: EventRecord, selection: SourceSelection, workspace: Path
+    event: EventRecord,
+    selection: SourceSelection,
+    workspace: Path,
+    *,
+    offline: bool = False,
 ) -> MediaDecision:
     with (
         (workspace / ".import.lock").open("a") as content_lock,
@@ -666,6 +715,7 @@ def assign_media(
         if set(selection.source_ids) != {
             "wikidata",
             "wikipedia_en",
+            SOURCE_ID,
         } or selection.allowed_media_hosts != ("upload.wikimedia.org",):
             raise ValueError("unsupported_media_selection")
         assignments: dict[str, Any] = {}
@@ -697,7 +747,7 @@ def assign_media(
                 "entity_id": event.identity_key.split(":")[1],
             }
             try:
-                data, metadata = _commons_metadata(workspace, title, fetch=True)
+                data, metadata = _commons_metadata(workspace, title, fetch=not offline)
                 attempt["metadata_sha256"] = metadata["sha256"]
                 # Preserve exact mandatory-credit metadata even when rejected.
                 attempt["file_metadata"] = data
@@ -708,6 +758,15 @@ def assign_media(
                 codes = _event_candidate_codes(event, item)
                 if codes:
                     raise ValueError(",".join(codes))
+                if (
+                    offline
+                    and not (
+                        workspace
+                        / "media-cache/originals"
+                        / f"{item.upstream_sha1}.bin"
+                    ).exists()
+                ):
+                    raise ValueError("missing_original_snapshot")
                 item = _acquire(workspace, item, selection)
                 original = (
                     workspace
@@ -731,7 +790,11 @@ def assign_media(
             if selected
             else (
                 ";".join(str(a["reason"]) for a in attempts)
-                or "no_selected_source_image_candidate"
+                or (
+                    "no_source_image_metadata"
+                    if event.identity_key.startswith("onthisday:")
+                    else "no_selected_source_image_candidate"
+                )
             )
         )
         assigned = event.model_copy(
@@ -783,13 +846,96 @@ def assign_media(
         return MediaDecision(media=selected, fallback_key=key, reason=reason)
 
 
+def assign_chronology_media(selection: SourceSelection, workspace: Path) -> None:
+    """Same real event decisions, one atomic draft write for image-less JSONL.
+
+    Does not suppress selected-provider image candidates or fabricate metadata.
+    Finalization independently checks every source, fallback and decision as usual.
+    """
+    with (
+        (workspace / ".import.lock").open("a") as content_lock,
+        (workspace / ".media.lock").open("a") as lock,
+    ):
+        fcntl.flock(content_lock, fcntl.LOCK_EX)
+        fcntl.flock(lock, fcntl.LOCK_EX)
+        content, pointer, events, raws = _inputs(workspace)
+        if set(selection.source_ids) != {
+            "wikidata",
+            "wikipedia_en",
+            SOURCE_ID,
+        } or selection.allowed_media_hosts != ("upload.wikimedia.org",):
+            raise ValueError("unsupported_media_selection")
+        if _recheck_chronology_snapshot(content, raws):
+            raise ValueError("source_integrity")
+        index = _raw_index(raws)
+        rules_sha = media_rules_digest()
+        assignments: dict[str, Any] = {}
+        decisions: dict[str, Any] = {}
+        records: tuple[MediaRecord, ...] = ()
+        fallbacks = install_fallbacks(workspace / "media-assets")
+        if (workspace / "media-staging.json").exists():
+            stage, staged_pointer = _generation(workspace, "media-staging.json")
+            if (
+                staged_pointer["content_generation"] == pointer["generation"]
+                and staged_pointer.get("media_rules_sha256") == rules_sha
+            ):
+                assignments = json.loads((stage / "assignments.json").read_text())
+                decisions = json.loads((stage / "decisions.json").read_text())
+                records = MediaCatalog.model_validate_json(
+                    (stage / "media.json").read_text()
+                ).records
+        for event in events:
+            if not event.identity_key.startswith("onthisday:"):
+                continue
+            event_raws = index.get(event.identity_key, [])
+            if (
+                not event_raws
+                or any(r.source_id != SOURCE_ID for r in event_raws)
+                or _titles(event_raws)
+            ):
+                raise ValueError("chronology_no_image_provenance")
+            key = fallback_key(event)
+            assigned = event.model_copy(
+                update={"media_asset_id": None, "fallback_key": key}
+            )
+            assignments[str(event.event_id)] = assigned.model_dump(mode="json")
+            decisions[str(event.event_id)] = {
+                "event_id": str(event.event_id),
+                "input_candidate_sha256": candidate_digest(event),
+                "candidate_sha256": candidate_digest(assigned),
+                "source_sha256": _sources(event_raws),
+                "policy_version": VALIDATION_POLICY_VERSION,
+                "media_rules_sha256": rules_sha,
+                "selection": selection.model_dump(mode="json"),
+                "attempts": [],
+                "candidate": None,
+                "fallback_key": key,
+                "reason": "no_source_image_metadata",
+            }
+        catalog = MediaCatalog(records=records, fallbacks=fallbacks)
+        _commit_generation(
+            workspace,
+            "media-staging",
+            "media-staging.json",
+            {
+                "assignments.json": json.dumps(assignments, sort_keys=True),
+                "decisions.json": json.dumps(decisions, sort_keys=True),
+                "media.json": catalog.model_dump_json(),
+            },
+            {
+                "content_generation": pointer["generation"],
+                "content_input_sha256": pointer["input_sha256"],
+                "media_rules_sha256": rules_sha,
+            },
+        )
+
+
 def _recheck_content(
     event: EventRecord, raws: list[RawCandidate], sources: dict[str, Any]
 ) -> set[str]:
     codes: set[str] = set()
     if not raws:
         return {"missing_current_sources"}
-    adapter = SelectedSourceAdapter()
     normalized = []
     for raw in raws:
         source_key = json.dumps([raw.source_id, raw.record_id], separators=(",", ":"))
@@ -801,12 +947,13 @@ def _recheck_content(
             }
         ):
             codes.add("source_integrity")
-        result = adapter.normalize(raw)
+        result = router.normalize(raw)
         if isinstance(result, EventRecord):
             normalized.append(result)
         else:
             codes.update(issue.code for issue in result)
-    if adapter.alias_dates_conflict(raws):
+    selected_raws = [raw for raw in raws if raw.source_id != SOURCE_ID]
+    if normalized and SelectedSourceAdapter().alias_dates_conflict(selected_raws):
         codes.add("conflicting_dates")
     if normalized:
         for other in normalized:
@@ -933,7 +1080,7 @@ def _recheck_media(
         )
         if selection.allowed_media_hosts != ("upload.wikimedia.org",) or set(
             selection.source_ids
-        ) != {"wikidata", "wikipedia_en"}:
+        ) != {"wikidata", "wikipedia_en", SOURCE_ID}:
             codes.add("unsupported_media_selection")
         # Re-decode the digest-bound original and independently recompute the
         # derivative record; this also rechecks optional metadata and SHA-1.
@@ -1049,6 +1196,25 @@ def finalize_media_receipts(workspace: Path) -> tuple[ValidationReceipt, ...]:
         )
         sources = json.loads((content / "sources.json").read_text())
         global_codes = _check_assets(catalog, target) | snapshot_codes
+        if any(raw.source_id == SOURCE_ID for raw in raws):
+            try:
+                bodies = snapshot_bytes(content / SNAPSHOT_PREFIX)
+                for name, body in bodies.items():
+                    immutable_write(target / SNAPSHOT_PREFIX / name, body)
+                    private_files[SNAPSHOT_PREFIX + name] = hashlib.sha256(
+                        body
+                    ).hexdigest()
+                immutable_write(
+                    target / "LICENSE.catalog.txt", CATALOG_LICENSE.encode()
+                )
+                immutable_write(target / "NOTICE.catalog.md", CATALOG_NOTICE.encode())
+                for name in ("LICENSE.catalog.txt", "NOTICE.catalog.md"):
+                    private_files[name] = hashlib.sha256(
+                        (target / name).read_bytes()
+                    ).hexdigest()
+                global_codes.update(_recheck_chronology_snapshot(target, raws))
+            except ValueError, OSError:
+                global_codes.add("source_integrity")
         if stage_pointer.get("media_rules_sha256") != rules_sha or any(
             decision.get("media_rules_sha256") != rules_sha
             for decision in decisions.values()
@@ -1062,6 +1228,7 @@ def finalize_media_receipts(workspace: Path) -> tuple[ValidationReceipt, ...]:
         if referenced != {r.asset_id for r in catalog.records}:
             global_codes.add("unreviewed_catalog_record")
         receipts = []
+        raw_index = _raw_index(raws)
         for original, event in zip(originals, events, strict=True):
             codes = set(global_codes)
             # Assignments may change only media references, never event content.
@@ -1075,7 +1242,7 @@ def finalize_media_receipts(workspace: Path) -> tuple[ValidationReceipt, ...]:
                 != original
             ):
                 codes.add("assignment_content_changed")
-            event_raws = _event_raws(event, raws)
+            event_raws = raw_index.get(event.identity_key, [])
             codes.update(
                 issue.code for issue in validate_event(event, taxonomy, now.year)
             )
@@ -1099,9 +1266,11 @@ def finalize_media_receipts(workspace: Path) -> tuple[ValidationReceipt, ...]:
                     continue
                 a = re.sub(r"\W+", " ", event.prompt.casefold()).strip()
                 b = re.sub(r"\W+", " ", other.prompt.casefold()).strip()
-                if (
-                    other.identity_key == event.identity_key
-                    or SequenceMatcher(None, a, b).ratio() >= 0.90
+                matcher = SequenceMatcher(None, a, b)
+                if other.identity_key == event.identity_key or (
+                    matcher.real_quick_ratio() >= 0.90
+                    and matcher.quick_ratio() >= 0.90
+                    and matcher.ratio() >= 0.90
                 ):
                     codes.add("suspected_duplicate")
             receipts.append(

@@ -8,6 +8,13 @@ from uuid import UUID
 from sqlalchemy.orm import object_session
 from sqlmodel import Session
 
+from app.content.adapters.onthisday import (
+    PROJECT_URL,
+    SOURCE_ID,
+    TEXT_CREDIT,
+    TEXT_LICENSE_URL,
+    download_url,
+)
 from app.content.schemas import CategoryRecord, EventRecord, FallbackRecord, MediaRecord
 from app.game.catalog_repository import CatalogError
 from app.game.models import DailyDefinition, GameRun
@@ -70,13 +77,24 @@ def project_media(
     if not isinstance(fallback, FallbackRecord):
         raise CatalogError("catalog_unavailable")
     fallback_url = _asset_url(media_base_url, fallback.filename)
+    text_credits = (
+        [
+            CreditPublic(label=TEXT_CREDIT, url=PROJECT_URL),
+            CreditPublic(
+                label="Catalog text license: CC BY-SA 4.0", url=TEXT_LICENSE_URL
+            ),
+        ]
+        if any(source.source_id == SOURCE_ID for source in event.sources)
+        else []
+    )
     if event.media_asset_id is None:
         return MediaPublic(
             url=fallback_url,
             fallback_url=fallback_url,
             alt_text=fallback.alt_text,
             fit="contain",
-            credits=[
+            credits=text_credits
+            + [
                 CreditPublic(
                     label=f"{fallback.creator} / {fallback.rights_basis}", url=None
                 )
@@ -85,7 +103,9 @@ def project_media(
     asset = assets.get("asset:" + str(event.media_asset_id))
     if not isinstance(asset, MediaRecord):
         raise CatalogError("catalog_unavailable")
-    credits = [CreditPublic(label=asset.attribution, url=safe_url(asset.source_url))]
+    credits = text_credits + [
+        CreditPublic(label=asset.attribution, url=safe_url(asset.source_url))
+    ]
     if asset.license_url is not None:
         credits.append(
             CreditPublic(label=asset.rights_basis, url=safe_url(asset.license_url))
@@ -123,7 +143,17 @@ def revealed_card(event: EventRecord, media: MediaPublic) -> RevealedCard:
         sources=[
             SourcePublic(label=source.source_id, url=safe_url(source.url))
             for source in event.sources
-        ],
+        ]
+        + (
+            [
+                SourcePublic(
+                    label="Pinned chronology dataset download; original lineage retained",
+                    url=download_url("events.jsonl"),
+                )
+            ]
+            if any(source.source_id == SOURCE_ID for source in event.sources)
+            else []
+        ),
     )
 
 

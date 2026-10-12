@@ -79,6 +79,15 @@ def _raw_date(
 ) -> tuple[int | None, bool, str | None, str | None]:
     """Read raw year/era/precision evidence, without deriving a game year index."""
     raw = source.raw_date.strip()
+    if source.calendar == "historical-civil-year":
+        historical = re.fullmatch(r"(\d{4})-(\d{2})-(\d{2})", raw)
+        if historical is None or int(historical[1]) < 1:
+            return None, False, None, "invalid_civil_year"
+        try:
+            date(2000, int(historical[2]), int(historical[3]))
+        except ValueError:
+            return None, False, None, "uncertain_date"
+        return int(historical[1]), False, "year", None
     civil = re.fullmatch(r"(-?\d+)(?:\s+(CE|AD|BCE|BC))?", raw, re.IGNORECASE)
     iso = re.fullmatch(r"(-?\d{4,})-(\d{2})(?:-(\d{2}))?", raw)
     wikibase = re.fullmatch(r"([+-])(\d{4,})-(\d{2})-(\d{2})T00:00:00Z", raw)
@@ -292,7 +301,22 @@ def validate_event(
                 f"{prefix}.url",
                 "Citation requires an HTTP(S) source URL",
             )
-        if source.calendar not in _GREGORIAN_CALENDARS:
+        historical = (
+            source.source_id == "wikipedia_onthisday"
+            and source.calendar == "historical-civil-year"
+            and event.date_precision == "year"
+            and event.year_index > 0
+        )
+        if (
+            source.calendar == "historical-civil-year"
+            and event.date_precision != "year"
+        ):
+            issue(
+                "unsupported_precision",
+                "date_precision",
+                "Chronology reports only a civil year, not a Gregorian instant",
+            )
+        if source.calendar not in _GREGORIAN_CALENDARS and not historical:
             issue(
                 "unresolved_calendar",
                 f"{prefix}.calendar",
@@ -302,10 +326,15 @@ def validate_event(
             f"source-resolved:{calendar}:year_index={event.year_index}"
             for calendar in ("gregorian", "proleptic-gregorian")
         }
+        if historical:
+            supported_resolutions.add(
+                f"source-resolved:historical-civil-year:year_index={event.year_index}"
+            )
         proleptic = f"source-resolved:proleptic-gregorian:year_index={event.year_index}"
         if (
             source.date_resolution not in supported_resolutions
             or source.calendar not in _GREGORIAN_CALENDARS
+            and not historical
             or source.calendar == "proleptic-gregorian"
             and source.date_resolution != proleptic
         ):

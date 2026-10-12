@@ -10,6 +10,71 @@ This does not implement game functionality or public serving.
 
 ## Supported selected-provider snapshots
 
+### Approved offline chronology input — 2026-10-12
+
+The same importer now dispatches `wikipedia_onthisday` snapshots to
+`OnThisDayAdapter`, and routes retained raw candidates by source ID during C4
+finalization and standalone C5 verification. Original `SelectedSourceAdapter`
+date/calendar checks are unchanged. Supply the approved unmodified `events.jsonl`,
+`README.md`, `NOTICE.md` and `download-receipt.json` together. Only the pinned
+repository/commit and three built-in SHA-256 values are accepted; there is no
+generic row-URL fetching or unpinned-source override. Do not edit dataset bodies
+or inject chronology dates into Wikidata-shaped records.
+
+Ingestion checks regular, nonsymlink paths, at most 8 MiB of JSONL, 64 KiB per
+notice/receipt, 4 KiB per line and 20,000 rows. Malformed/duplicate-key/nonfinite
+JSON and failed byte/line/count/lineage bounds halt without advancing the content
+pointer. Row field/type, date-component, exact calendar-page URL, licensing,
+source, uncertainty, future, prompt and category failures are retained as
+machine quarantines. Chronology dates retain their original ISO-looking strings,
+but resolve only the reported **historical civil year**, with `date_precision=year`;
+February 29 is checked as a civil month/day, not a historical Gregorian instant.
+There is no supported BCE or civil year zero in this source.
+
+Identities hash normalized description semantics plus the reported year; line
+number and source ordering are not identities. Exact same-year cross-day repeats
+merge provenance; conflicting semantic years and fuzzy suspicion quarantine,
+not merge. This heuristic does not prove exhaustive semantic deduplication.
+Content fingerprints bind adapter, importer, validation and schema code, plus
+source/taxonomy/policy and the current UTC screening date. C4/C5 fingerprints
+also include every adapter module. Changes require fresh complete receipts.
+
+Chronology has no image metadata: the CLI creates the same per-event no-image
+decisions in one atomic draft batch, then independently finalizes every event
+and all eight original fallback assets. `media --offline` additionally prohibits
+missing Commons metadata/original downloads for selected-provider supplements;
+missing cache evidence gives an honest fallback reason. It does not disable any
+media, rights, credit, byte, receipt or provider-throttle checks.
+
+Chronology releases include integrity-bound `LICENSE.catalog.txt`,
+`NOTICE.catalog.md`, and private `source-snapshots/onthisday/` copies of all four
+original download files. C4 and C5 reparse the pinned file and check the entire
+retained raw membership set, not precomputed normalized years/statuses. Publication
+preserves the original download bytes rather than canonicalizing the source
+JSONL. Do not serve that snapshot or other private artifacts publicly. Readable
+text credits use existing `MediaPublic.credits`; pending cards link only the
+project and text license, and reveal adds actual page/download sources. Catalog
+text is CC BY-SA 4.0 adapted Wikipedia content; application code is separately
+MIT licensed. No blanket legal or historical accuracy guarantee is asserted.
+
+Example (from `backend/`, no database or activation):
+
+```sh
+uv run python -m app.content.cli import --selection ../docs/research/source-selection.json \
+  --snapshot /private/approved-jsonl --workspace /private/combined-workspace
+uv run python -m app.content.cli media --selection ../docs/research/source-selection.json \
+  --workspace /private/combined-workspace --offline
+uv run python -m app.content.cli publish --workspace /private/combined-workspace \
+  --output /private/releases --release-id chronology-trial
+uv run python -m app.content.cli verify --release /private/releases/chronology-trial \
+  --media /private/releases/chronology-trial/media --require-beta
+```
+
+The beta count gate is necessary, not a guarantee of balanced categories, regions,
+recognizability or achievable gaps for every Freeplay interval. The measured
+trial must report these limitations separately. Local publication is not DB
+activation; controller review remains required before changing an active catalog.
+
 `SelectedSourceAdapter` uses only `wikidata` and `wikipedia_en`, as selected in
 `docs/research/source-selection.json`. New missing-cache requests are serial,
 revision-pinned Wikimedia Action API reads (`action=query`, a single `revids`,

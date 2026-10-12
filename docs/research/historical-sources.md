@@ -6,6 +6,39 @@ Select `wikidata` + `wikipedia_en` for structured discovery and revision-pinned 
 
 ## Binding automated-only policy — verbatim approved amendment
 
+### Additional approved offline chronology trial — 2026-10-12
+
+The user subsequently approved the downloadable `mneedham/wikipedia-onthisday`
+JSONL trial with **reported year-level validation and no manual review**.
+`wikipedia_onthisday` is now selected alongside the existing two providers;
+the packaged Daily policy is byte-identical to the research selection. The four
+fixed Daily slugs, shared seed and 1,000 distinct nonfixture-event minimum remain
+unchanged. This amendment does not weaken the original selected-provider adapter.
+
+Only commit `9f30eae49675c8e71453b332f83a6b6b3bb297d4` and the approved
+`events.jsonl` SHA-256 `0fd539accf6ee5f31ddbf374ce24398381f5ac51def4309ce4c93e46daed30db`
+are supported. README, NOTICE and the download receipt are checked too. Wikipedia
+history rows retain their licensed descriptions and calendar-page links; Wikidata
+future/demo and synthetic rows are excluded. The `historical-civil-year` resolution
+means the chronology's explicitly reported positive CE year, **not** a conversion
+of a historical day to proleptic Gregorian time or independent corroboration by
+Wikidata. Uncertain/contradictory years, unsafe or answer-bearing text, unresolved
+categories and suspected duplicates remain machine quarantines.
+
+Text is adapted Wikipedia-contributor content under CC BY-SA 4.0, with dataset
+author/project notice, license link and change marking; it is not relabeled as
+original MIT application code. Releases retain a checked catalog license/notice
+and unmodified private download snapshot. Pending credit links the dataset project
+and license, not an answer-bearing source page; reveal exposes the source page and
+download lineage. Picture licensing remains separate. No legal clearance,
+endorsement, comprehensive duplicate detection or human quality claim is made.
+
+Conservative ordered milestone heuristics are deliberately incomplete. The events
+file does not supply usable human births, geography labels or image metadata.
+Only unchanged previously acquired C6 births may supplement it through the original
+selected-source normalizer. See [measured readiness](../beta/catalog-readiness.md)
+for actual accepted coverage and limitations, not an extrapolated yield guarantee.
+
 1. No human fact/prompt/image approval queue, manual pilot, commissioned art,
    paid curation, compulsory specialist checks, or human recognition study.
    Remove active 394–792-hour/$11.8k–$47.5k budgets and 400-candidate/20–30-tester

@@ -1,5 +1,5 @@
 {
-  "source_ids": ["wikidata", "wikipedia_en"],
+  "source_ids": ["wikidata", "wikipedia_en", "wikipedia_onthisday"],
   "allowed_media_hosts": ["upload.wikimedia.org"],
   "decision_report": "docs/research/historical-sources.md",
   "daily_category_ids": ["battles", "inventions", "exploration", "politics"]

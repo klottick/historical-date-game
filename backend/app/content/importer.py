@@ -16,7 +16,15 @@ from pathlib import Path
 from typing import Any
 from uuid import NAMESPACE_URL, uuid5
 
+from app.content.adapters import router
 from app.content.adapters.base import RawCandidate, SourceAdapter
+from app.content.adapters.onthisday import (
+    SNAPSHOT_PREFIX,
+    SOURCE_ID,
+    OnThisDayAdapter,
+    semantic_text,
+    snapshot_bytes,
+)
 from app.content.adapters.selected import (
     MILESTONES,
     SelectedSourceAdapter,
@@ -49,6 +57,9 @@ def _key(raw: RawCandidate) -> str:
 
 
 def _identity(raw: RawCandidate) -> str:
+    chronology_identity = router.identity(raw)
+    if chronology_identity is not None:
+        return chronology_identity
     qid, milestone = raw.payload.get("entity_id"), raw.payload.get("milestone")
     if (
         isinstance(qid, str)
@@ -115,8 +126,10 @@ def _import_locked(
 ) -> ImportReport:
     pointer = workspace / "current.json"
     previous: dict[str, Any] = {"raw": {}, "aliases": {}, "candidate_digests": {}}
+    previous_generation = ""
     if pointer.exists():
         generation = json.loads(pointer.read_text())["generation"]
+        previous_generation = generation
         previous = json.loads((workspace / generation / "state.json").read_text())
     raw_state = dict(previous["raw"])
     incoming = list(adapter.fetch(snapshot_dir))
@@ -134,9 +147,12 @@ def _import_locked(
             "raw": raw_state,
             "taxonomy": taxonomy_data,
             "current_year_index": datetime.now(UTC).year,
+            "chronology_utc_date": datetime.now(UTC).date().isoformat()
+            if any(data["source_id"] == SOURCE_ID for data in raw_state.values())
+            else None,
             "policy": VALIDATION_POLICY_VERSION,
             # Bump with normalization fixes so unchanged snapshots are rechecked.
-            "adapter_rules": "selected-v7",
+            "adapter_rules": router.rules_digest(),
         }
     )
     if input_digest == previous.get("input_digest"):
@@ -159,12 +175,44 @@ def _import_locked(
         if not value["identity_key"].startswith("unresolved:")
     }
     alias_conflicts: set[str] = set()
+    semantic_years: dict[str, set[int]] = {}
+    for data in raw_state.values():
+        source_row = data["payload"].get("row")
+        if (
+            data["source_id"] == SOURCE_ID
+            and isinstance(source_row, dict)
+            and isinstance(source_row.get("event"), str)
+            and type(source_row.get("year")) is int
+        ):
+            semantic_years.setdefault(semantic_text(source_row["event"]), set()).add(
+                source_row["year"]
+            )
     for key in sorted(raw_state):
         raw = RawCandidate(**raw_state[key])
-        result = adapter.normalize(raw)
+        result = (
+            router.normalize(raw)
+            if isinstance(
+                adapter, (SelectedSourceAdapter, OnThisDayAdapter, router.AdapterRouter)
+            )
+            else adapter.normalize(raw)
+        )
         identity = (
             result.identity_key if isinstance(result, EventRecord) else _identity(raw)
         )
+        source_row = raw.payload.get("row")
+        if (
+            raw.source_id == SOURCE_ID
+            and isinstance(source_row, dict)
+            and isinstance(source_row.get("event"), str)
+            and len(semantic_years.get(semantic_text(source_row["event"]), set())) > 1
+        ):
+            result = (
+                issue(
+                    "conflicting_dates",
+                    "row.year",
+                    "Repeated chronology semantics disagree on reported year",
+                ),
+            )
         if key in aliases and aliases[key]["identity_key"] != identity:
             # Alias retargeting is not proof that two entities are identical.
             result = (
@@ -207,8 +255,23 @@ def _import_locked(
                     "Exact identity aliases disagree on year",
                 )
             )
-        if isinstance(adapter, SelectedSourceAdapter) and adapter.alias_dates_conflict(
-            [raw for raw, result in members if isinstance(result, EventRecord)]
+        if (
+            identity.startswith("onthisday:")
+            and len({event.prompt for event in events}) > 1
+        ):
+            errors.append(
+                issue(
+                    "suspected_duplicate",
+                    "prompt",
+                    "Normalized chronology aliases have different original wording; do not silently choose one",
+                )
+            )
+        if SelectedSourceAdapter().alias_dates_conflict(
+            [
+                raw
+                for raw, result in members
+                if isinstance(result, EventRecord) and raw.source_id != SOURCE_ID
+            ]
         ):
             errors.append(
                 issue(
@@ -229,8 +292,11 @@ def _import_locked(
                     source_key = source.source_id, source.record_id
                     old = citations.get(source_key)
                     same_date = old is None or old.raw_date == source.raw_date
-                    if old is not None and isinstance(adapter, SelectedSourceAdapter):
-                        same_date = adapter.citation_dates_agree(
+                    if old is not None and source.source_id in {
+                        "wikidata",
+                        "wikipedia_en",
+                    }:
+                        same_date = SelectedSourceAdapter.citation_dates_agree(
                             old, source, common_precision
                         )
                     if old is not None and (
@@ -271,7 +337,12 @@ def _import_locked(
                 continue
             a = re.sub(r"\W+", " ", left.prompt.casefold()).strip()
             b = re.sub(r"\W+", " ", right.prompt.casefold()).strip()
-            if SequenceMatcher(None, a, b).ratio() >= 0.90:
+            matcher = SequenceMatcher(None, a, b)
+            if (
+                matcher.real_quick_ratio() >= 0.90
+                and matcher.quick_ratio() >= 0.90
+                and matcher.ratio() >= 0.90
+            ):
                 for suspect in (identity, other):
                     failures[suspect].append(
                         issue(
@@ -366,6 +437,19 @@ def _import_locked(
     )
     target = workspace / generation
     target.mkdir(parents=True)
+    if any(raw.source_id == SOURCE_ID for raw in incoming):
+        bodies = snapshot_bytes(snapshot_dir)
+    elif any(data["source_id"] == SOURCE_ID for data in raw_state.values()):
+        bodies = snapshot_bytes(workspace / previous_generation / SNAPSHOT_PREFIX)
+    else:
+        bodies = {}
+    for name, body in bodies.items():
+        destination = target / SNAPSHOT_PREFIX / name
+        destination.parent.mkdir(parents=True, exist_ok=True)
+        with destination.open("xb") as stream:
+            stream.write(body)
+            stream.flush()
+            os.fsync(stream.fileno())
     files = {
         "state.json": json.dumps(state, sort_keys=True),
         "aliases.json": json.dumps(aliases, sort_keys=True),

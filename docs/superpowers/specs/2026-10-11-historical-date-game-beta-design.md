@@ -10,6 +10,17 @@ review**. Source publication and media selection use automated checks only.
 legally certified. Code review, gameplay tests, and deployment authorization
 remain separate requirements. The previous human-curation workload is removed.
 
+Additional source amendment approved 2026-10-12: the bounded offline Wikipedia
+OnThisDay JSONL trial may use the chronology's explicitly reported civil **YEAR**,
+with automatic source-byte/license/provenance/prompt/category checks and no manual
+review. This is not exact-day Gregorian conversion or a universal Wikidata
+corroboration requirement. Existing Wikidata exact-date/calendar safety is unchanged.
+Adapted catalog text retains Wikipedia-contributor/dataset attribution and
+CC BY-SA 4.0 notices separately from MIT application code and picture credits.
+The eight master slugs, four fixed Daily slugs, shared seed, 1,000 distinct real
+nonfixture-event gate and controller-only activation remain unchanged. Uneven
+measured coverage is a reported limitation, not a human-quality guarantee.
+
 ## 1. Intent and starting point
 
 Build a fun chronological card-placement game for the owner and friends who

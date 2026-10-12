@@ -16,6 +16,13 @@ from tempfile import mkdtemp
 from typing import Any
 
 from app.content.adapters.base import RawCandidate
+from app.content.adapters.onthisday import (
+    CATALOG_LICENSE,
+    CATALOG_NOTICE,
+    SNAPSHOT_FILES,
+    SNAPSHOT_PREFIX,
+    SOURCE_ID,
+)
 from app.content.adapters.selected import digest
 from app.content.importer import _sources, _sync_directory
 from app.content.media import pipeline
@@ -262,6 +269,18 @@ def _check(
         | {"batch.json"}
         | {r.filename for r in pipeline._catalog_assets(catalog)}
     )
+    if any(raw.source_id == SOURCE_ID for raw in raws):
+        expected_files |= {SNAPSHOT_PREFIX + name for name in SNAPSHOT_FILES} | {
+            "LICENSE.catalog.txt",
+            "NOTICE.catalog.md",
+        }
+        if pipeline._recheck_chronology_snapshot(root, raws):
+            raise ValueError("source_integrity")
+        if (
+            _path(root, "LICENSE.catalog.txt").read_bytes() != CATALOG_LICENSE.encode()
+            or _path(root, "NOTICE.catalog.md").read_bytes() != CATALOG_NOTICE.encode()
+        ):
+            raise ValueError("catalog_text_attribution")
     for decision in decisions.values():
         if decision.get("candidate"):
             evidence = MediaCandidate.model_validate_json(
@@ -289,6 +308,7 @@ def _check(
     codes = pipeline._check_assets(catalog, root)
     if codes:
         raise ValueError("asset_validation:" + ",".join(sorted(codes)))
+    raw_index = pipeline._raw_index(raws)
     for event in events:
         original = by_id[event.event_id]
         if (
@@ -308,7 +328,7 @@ def _check(
             or decision.get("selection") != selection.model_dump(mode="json")
         ):
             raise ValueError("stale_media_decision")
-        event_raws = pipeline._event_raws(event, raws)
+        event_raws = raw_index.get(event.identity_key, [])
         current_digests = _sources(event_raws)
         issues = validate_event(event, taxonomy, datetime.now(UTC).year)
         issues += validate_receipt(
@@ -342,7 +362,9 @@ def _beta(count: int, fixture: bool) -> None:
 def _canonical_files(root: Path) -> dict[str, bytes]:
     files = {}
     for name in sorted(_files(root) - {"batch.json"}):
-        if name.endswith(".jsonl"):
+        if name.startswith(SNAPSHOT_PREFIX):
+            files[name] = _path(root, name).read_bytes()
+        elif name.endswith(".jsonl"):
             rows = _rows(root, name)
             if name in {"events.jsonl", "candidates.jsonl"}:
                 rows = [
