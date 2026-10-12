@@ -101,7 +101,7 @@ are declared conservative paths without a real round1 demonstration. Discovery
 remains reserved but has no supported infobox grammar: an invention_year field
 cannot also create a duplicate discovery milestone. Other
 infobox layouts, edition scopes and milestones are **not inferred**. Expand
-rules with source-backed tests and bump `selected-v6` in the fingerprint.
+rules with source-backed tests and bump `selected-v7` in the fingerprint.
 
 Wikitext is parsed with stable `mwparserfromhell` 0.7.2, not searched for field
 lines throughout page text. Only one supported **active top-level** infobox can
@@ -252,6 +252,10 @@ After a parser correction, do not rely on the unchanged-import fast path to
 recheck old decisions. Force revalidation through an updated adapter fingerprint
 or import the retained snapshot into a fresh private workspace; never carry an
 old pass forward without those fresh checks.
+The blank-duplicate correction bumps the fingerprint to `selected-v7`: the next
+import automatically revalidates a prior `selected-v6` workspace even when the
+source snapshot is unchanged. Old duplicate-field passes are revoked into
+quarantine; subsequent unchanged retries retain that failed decision.
 
 A filesystem lock serializes writers. Files and directories are fsynced before
 an atomic pointer rename. Crashes/fetch failures before that rename leave the

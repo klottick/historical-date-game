@@ -135,7 +135,8 @@ def _import_locked(
             "taxonomy": taxonomy_data,
             "current_year_index": datetime.now(UTC).year,
             "policy": VALIDATION_POLICY_VERSION,
-            "adapter_rules": "selected-v6",
+            # Bump with normalization fixes so unchanged snapshots are rechecked.
+            "adapter_rules": "selected-v7",
         }
     )
     if input_digest == previous.get("input_digest"):

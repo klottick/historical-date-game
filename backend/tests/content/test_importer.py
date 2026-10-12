@@ -3,6 +3,7 @@
 import copy
 import hashlib
 import json
+from datetime import UTC, datetime
 from pathlib import Path
 from typing import Any
 
@@ -894,3 +895,81 @@ def test_single_valid_infobox_field_still_passes(tmp_path: Path) -> None:
     assert (report.imported, report.quarantined) == (1, 0)
     assert active(work, "candidates.jsonl")[0]["year_index"] == 1800
     assert active(work, "receipts.jsonl")[0]["passed"]
+
+
+def test_v6_cached_duplicate_pass_revalidates_then_retry_retains_quarantine(
+    tmp_path: Path, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    from app.content.adapters import selected
+
+    data = json.loads(FIXTURE.read_text())
+    data["records"] = data["records"][:1]
+    data["page"]["revisions"][0]["slots"]["main"]["content"] = (
+        "{{Infobox person\n| birth_date = 1800\n| birth_date =\n}}"
+    )
+    root = snapshot(tmp_path, data)
+    source_bytes = {path.name: path.read_bytes() for path in root.iterdir()}
+    work = tmp_path / "work"
+    original_wiki_date = selected._wiki_date
+
+    def legacy_empty_filter(page: dict[str, Any], milestone: str) -> Any:
+        # Reproduce v6's normalization bug only in this fixture. The acquisition
+        # snapshot and retained raw payload still contain the blank duplicate.
+        legacy_page = copy.deepcopy(page)
+        slot = legacy_page["revisions"][0]["slots"]["main"]
+        slot["content"] = slot["content"].replace("| birth_date =\n", "")
+        return original_wiki_date(legacy_page, milestone)
+
+    with monkeypatch.context() as context:
+        context.setattr(selected, "_wiki_date", legacy_empty_filter)
+        assert import_snapshot(SelectedSourceAdapter(), root, work).imported == 1
+    old_event_id = active(work, "candidates.jsonl")[0]["event_id"]
+    assert active(work, "receipts.jsonl")[0]["passed"]
+    pointer = json.loads((work / "current.json").read_text())
+    generation = work / pointer["generation"]
+    state = json.loads((generation / "state.json").read_text())
+    # Independently seed the literal old policy fingerprint, even after the
+    # production importer is bumped; do not derive it from its current version.
+    legacy_input = {
+        "raw": state["raw"],
+        "taxonomy": json.loads(
+            Path(selected.__file__).parents[1].joinpath("taxonomy.json").read_text()
+        ),
+        "current_year_index": datetime.now(UTC).year,
+        "policy": "automated-v1",
+        "adapter_rules": "selected-v6",
+    }
+    legacy_digest = hashlib.sha256(
+        json.dumps(
+            legacy_input,
+            sort_keys=True,
+            separators=(",", ":"),
+            ensure_ascii=False,
+            allow_nan=False,
+        ).encode()
+    ).hexdigest()
+    state["input_digest"] = legacy_digest
+    (generation / "state.json").write_text(json.dumps(state))
+    old_generation = work / "generations" / f"{legacy_digest}-legacy-v6"
+    generation.rename(old_generation)
+    old_pointer = {
+        "generation": str(old_generation.relative_to(work)),
+        "input_sha256": legacy_digest,
+    }
+    (work / "current.json").write_text(json.dumps(old_pointer))
+
+    report = import_snapshot(SelectedSourceAdapter(), root, work)
+    assert (report.imported, report.quarantined) == (0, 1)
+    assert active(work, "candidates.jsonl") == []
+    quarantine = active(work, "quarantine.jsonl")[0]
+    assert quarantine["event_id"] == old_event_id
+    assert "unresolved_wikipedia_date" in quarantine["issue_codes"]
+    receipt = active(work, "receipts.jsonl")[0]
+    assert not receipt["passed"] and receipt["stage"] == "content"
+    new_pointer = (work / "current.json").read_bytes()
+    assert json.loads(new_pointer)["input_sha256"] != legacy_digest
+    retry = import_snapshot(SelectedSourceAdapter(), root, work)
+    assert (retry.imported, retry.quarantined) == (0, 1)
+    assert (work / "current.json").read_bytes() == new_pointer
+    assert active(work, "receipts.jsonl") == [receipt]
+    assert {path.name: path.read_bytes() for path in root.iterdir()} == source_bytes
