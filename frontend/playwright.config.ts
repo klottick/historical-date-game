@@ -46,6 +46,16 @@ export default defineConfig({
       dependencies: ['setup'],
     },
 
+    {
+      name: 'game-mobile',
+      testMatch: '**/game-*.spec.ts',
+      use: {
+        ...devices['Pixel 5'],
+        storageState: 'playwright/.auth/user.json',
+      },
+      dependencies: ['setup'],
+    },
+
     // {
     //   name: 'firefox',
     //   use: {

@@ -1,4 +1,11 @@
-import { createFileRoute, Outlet, redirect } from "@tanstack/react-router"
+import {
+  createFileRoute,
+  Link,
+  Outlet,
+  redirect,
+  useLocation,
+} from "@tanstack/react-router"
+import "@/features/game/game.css"
 
 import { Footer } from "@/components/Common/Footer"
 import AppSidebar from "@/components/Sidebar/AppSidebar"
@@ -24,6 +31,20 @@ export const Route = createFileRoute("/_layout")({
 })
 
 function Layout() {
+  const location = useLocation()
+  if (/^\/play\/[\da-f-]+$/.test(location.pathname))
+    return (
+      <div className="play-layout">
+        <nav className="play-nav" aria-label="Game navigation">
+          <Link to="/">← Home</Link>
+          <strong>Historical Date Game</strong>
+          <Link to="/settings">Account</Link>
+        </nav>
+        <main className="play-main">
+          <Outlet />
+        </main>
+      </div>
+    )
   return (
     <SidebarProvider>
       <AppSidebar />

@@ -1,4 +1,46 @@
-import { expect, test } from "@playwright/test"
+import { test as base, expect } from "@playwright/test"
+
+// Each authenticated mode test owns its account, including across projects.
+// Public enrollment deliberately has no login; the Daily lifecycle below
+// already creates and cleans up its own player.
+const test = base.extend<{ modePlayer: undefined }>({
+  modePlayer: [
+    async ({ page }, use) => {
+      await page.goto("/")
+      const admin = await page.evaluate(() =>
+        localStorage.getItem("access_token"),
+      )
+      const email = `mode-preview-${crypto.randomUUID()}@example.com`
+      const password = "GameBrowser123!"
+      const api = "http://localhost:8000/api/v1"
+      expect(
+        (
+          await page.request.post(`${api}/users/`, {
+            headers: { Authorization: `Bearer ${admin}` },
+            data: { email, password, full_name: "Mode player" },
+          })
+        ).ok(),
+      ).toBeTruthy()
+      const login = await page.request.post(`${api}/login/access-token`, {
+        form: { username: email, password },
+      })
+      const token = (await login.json()).access_token
+      const headers = { Authorization: `Bearer ${token}` }
+      await page.evaluate(
+        (value) => localStorage.setItem("access_token", value),
+        token,
+      )
+      try {
+        await use(undefined)
+      } finally {
+        expect(
+          (await page.request.delete(`${api}/users/me`, { headers })).ok(),
+        ).toBeTruthy()
+      }
+    },
+    { auto: true },
+  ],
+})
 
 test("daily_preview_does_not_start", async ({ page }) => {
   const starts: string[] = []
@@ -21,9 +63,9 @@ test("daily_preview_does_not_start", async ({ page }) => {
   expect((await overview.json()).attempt_run_id).toBeNull()
 })
 
-test.describe("public enrollment", () => {
-  test.use({ storageState: { cookies: [], origins: [] } })
-  test("signup_hidden_when_enrollment_closed", async ({ page }) => {
+base.describe("public enrollment", () => {
+  base.use({ storageState: { cookies: [], origins: [] } })
+  base("signup_hidden_when_enrollment_closed", async ({ page }) => {
     // The public-config seam also exercises closed UI in the open enrollment
     // baseline suite; the U1 closed-backend run supplies this value for real.
     if (!process.env.U1_CLOSED_BACKEND) {
@@ -70,82 +112,87 @@ test("uncertain freeplay start retries the exact operation after reload", async 
   expect(commands[1]).toEqual(commands[0])
 })
 
-test("daily start, resume, result and leaderboard retain the UTC day", async ({
-  page,
-}) => {
-  // A distinct owned account makes this independent of preview and other runs.
-  const adminToken = await (async () => {
-    await page.goto("/")
-    return page.evaluate(() => localStorage.getItem("access_token"))
-  })()
-  const email = `modes-${crypto.randomUUID()}@example.com`
-  const password = "GameBrowser123!"
-  const created = await page.request.post(
-    "http://localhost:8000/api/v1/users/",
-    {
-      headers: { Authorization: `Bearer ${adminToken}` },
-      data: { email, password, full_name: "Daily modes" },
-    },
-  )
-  expect(created.ok()).toBeTruthy()
-  const login = await page.request.post(
-    "http://localhost:8000/api/v1/login/access-token",
-    { form: { username: email, password } },
-  )
-  const token = (await login.json()).access_token
-  await page.evaluate(
-    (value) => localStorage.setItem("access_token", value),
-    token,
-  )
-  const headers = { Authorization: `Bearer ${token}` }
-  try {
-    await page.goto("/daily")
-    await page.getByRole("button", { name: "Start Daily" }).click()
-    await expect(page).toHaveURL(/\/play\/[\da-f-]+$/)
-    const id = page.url().split("/").pop()
-    const url = `http://localhost:8000/api/v1/games/runs/${id}`
-    let run = await (await page.request.get(url, { headers })).json()
-    await expect(
-      page.getByText(`Daily · ${run.daily_date} UTC`, { exact: true }),
-    ).toBeVisible()
-    await page.goto("/daily")
-    await expect(page.getByRole("link", { name: "Resume Daily" })).toBeVisible()
-    // Only public commands are used; no answer data enters the browser fixture.
-    while (run.status === "active") {
-      const response = await page.request.post(`${url}/placements`, {
+base(
+  "daily start, resume, result and leaderboard retain the UTC day",
+  async ({ page }) => {
+    // A distinct owned account makes this independent of preview and other runs.
+    const adminToken = await (async () => {
+      await page.goto("/")
+      return page.evaluate(() => localStorage.getItem("access_token"))
+    })()
+    const email = `modes-${crypto.randomUUID()}@example.com`
+    const password = "GameBrowser123!"
+    const created = await page.request.post(
+      "http://localhost:8000/api/v1/users/",
+      {
+        headers: { Authorization: `Bearer ${adminToken}` },
+        data: { email, password, full_name: "Daily modes" },
+      },
+    )
+    expect(created.ok()).toBeTruthy()
+    const login = await page.request.post(
+      "http://localhost:8000/api/v1/login/access-token",
+      { form: { username: email, password } },
+    )
+    const token = (await login.json()).access_token
+    await page.evaluate(
+      (value) => localStorage.setItem("access_token", value),
+      token,
+    )
+    const headers = { Authorization: `Bearer ${token}` }
+    try {
+      await page.goto("/daily")
+      await page.getByRole("button", { name: "Start Daily" }).click()
+      await expect(page).toHaveURL(/\/play\/[\da-f-]+$/)
+      const id = page.url().split("/").pop()
+      const url = `http://localhost:8000/api/v1/games/runs/${id}`
+      let run = await (await page.request.get(url, { headers })).json()
+      await expect(
+        page.getByText(`Daily · ${run.daily_date} UTC`, { exact: true }),
+      ).toBeVisible()
+      await page.goto("/daily")
+      await expect(
+        page.getByRole("link", { name: "Resume Daily" }),
+      ).toBeVisible()
+      // Only public commands are used; no answer data enters the browser fixture.
+      while (run.status === "active") {
+        const response = await page.request.post(`${url}/placements`, {
+          headers,
+          data: {
+            operation_id: crypto.randomUUID(),
+            expected_revision: run.revision,
+            event_id: run.pending.event_id,
+            slot: 0,
+          },
+        })
+        expect(response.ok()).toBeTruthy()
+        run = await response.json()
+      }
+      await page.reload()
+      await expect(
+        page.getByRole("link", { name: "View Result" }),
+      ).toBeVisible()
+      await expect(
+        page.getByRole("heading", {
+          name: `Leaderboard · ${run.daily_date} UTC`,
+        }),
+      ).toBeVisible()
+      await page.getByRole("link", { name: "View Result" }).click()
+      await expect(
+        page.getByText(`Daily · ${run.daily_date} UTC`, { exact: true }),
+      ).toBeVisible()
+      await expect(
+        page.getByRole("heading", {
+          name: `Leaderboard · ${run.daily_date} UTC`,
+        }),
+      ).toBeVisible()
+    } finally {
+      await page.request.delete("http://localhost:8000/api/v1/users/me", {
         headers,
-        data: {
-          operation_id: crypto.randomUUID(),
-          expected_revision: run.revision,
-          event_id: run.pending.event_id,
-          slot: 0,
-        },
       })
-      expect(response.ok()).toBeTruthy()
-      run = await response.json()
     }
-    await page.reload()
-    await expect(page.getByRole("link", { name: "View Result" })).toBeVisible()
-    await expect(
-      page.getByRole("heading", {
-        name: `Leaderboard · ${run.daily_date} UTC`,
-      }),
-    ).toBeVisible()
-    await page.getByRole("link", { name: "View Result" }).click()
-    await expect(
-      page.getByText(`Daily · ${run.daily_date} UTC`, { exact: true }),
-    ).toBeVisible()
-    await expect(
-      page.getByRole("heading", {
-        name: `Leaderboard · ${run.daily_date} UTC`,
-      }),
-    ).toBeVisible()
-  } finally {
-    await page.request.delete("http://localhost:8000/api/v1/users/me", {
-      headers,
-    })
-  }
-})
+  },
+)
 
 test("freeplay defaults, sparse error, start, and owned resume", async ({
   page,

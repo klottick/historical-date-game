@@ -1,13 +1,27 @@
+import {
+  Accessibility,
+  type DragEndEvent,
+  type DragOverEvent,
+  KeyboardSensor,
+  PointerActivationConstraints,
+  PointerSensor,
+} from "@dnd-kit/dom"
+import { DragDropProvider, DragOverlay, useDraggable } from "@dnd-kit/react"
 import { useQuery, useQueryClient } from "@tanstack/react-query"
 import { Link } from "@tanstack/react-router"
 import { useCallback, useEffect, useRef, useState } from "react"
-import type { PlaceCommand, RunPublic } from "@/client"
+import type { PendingCard, PlaceCommand, RunPublic } from "@/client"
 import { Button } from "@/components/ui/button"
 import useAuth from "@/hooks/useAuth"
 import { extractErrorMessage } from "@/utils"
 import { gameFailure, getRun, placeCard, renewRunLogin } from "./api"
 import { ContentIssueDialog } from "./ContentIssueDialog"
-import { CardDetails, GameResults } from "./GameResults"
+import { formatYear } from "./config"
+import { GameCard } from "./GameCard"
+import { GameResults } from "./GameResults"
+import { SlotLockContext } from "./InsertionSlot"
+import { Timeline } from "./Timeline"
+import "./game.css"
 import {
   acceptRun,
   beginPlacement,
@@ -35,6 +49,8 @@ function OwnedBoard({
   const [state, setState] = useState<PlacementState | null>(null)
   const current = useRef<PlacementState | null>(null)
   const [message, setMessage] = useState<string | null>(null)
+  const [dragMessage, setDragMessage] = useState("")
+  const [dragging, setDragging] = useState(false)
   const mounted = useRef(true)
   const queryClient = useQueryClient()
   const storageKey = `game-placement:${ownerId}:${runId}`
@@ -226,129 +242,333 @@ function OwnedBoard({
       </div>
     )
   const run = state.run
+  const locked = state.phase !== "idle" || run.status !== "active"
+  function preview(slot: number | null, scroll = false) {
+    if (!current.current) return
+    update(selectSlot(current.current, slot))
+    if (scroll && slot !== null)
+      document.querySelector(`[data-slot="${slot}"]`)?.scrollIntoView({
+        block: "nearest",
+        inline: "nearest",
+        behavior: "instant",
+      })
+  }
   return (
-    <div className="space-y-6">
-      <h1 className="font-serif text-3xl">
-        {run.mode === "daily" ? "Daily run" : "Freeplay run"}
-      </h1>
-      <p>
-        {run.mode === "daily" ? `Daily · ${run.daily_date} UTC` : "Freeplay"}
-      </p>
-      <p>Status: {run.status}</p>
-      <p>Streak: {run.streak}</p>
-      <p data-testid="run-revision">Revision: {run.revision}</p>
+    <div className="game-table">
+      <header className="game-heading">
+        <div>
+          <p className="game-eyebrow">A little history. A little instinct.</p>
+          <h1>{run.mode === "daily" ? "Daily run" : "Freeplay run"}</h1>
+          <p>
+            {run.mode === "daily"
+              ? `Daily · ${run.daily_date} UTC`
+              : "Freeplay"}
+          </p>
+        </div>
+        <div className="game-stats">
+          <p>Streak: {run.streak}</p>
+          <p>Status: {run.status}</p>
+          <p data-testid="run-revision">Revision: {run.revision}</p>
+        </div>
+      </header>
       {(message || query.error) && (
         <p role="alert">
           {message ||
             "Server progress is temporarily unavailable. Your history has not been erased."}
         </p>
       )}
-      <section className="space-y-3">
-        <h2 className="text-xl font-semibold">Your timeline</h2>
-        <ol className="space-y-3">
-          {run.timeline.map((card) => (
-            <li key={card.event_id} className="rounded-xl border p-4">
-              <CardDetails card={card} />
-            </li>
-          ))}
-        </ol>
-      </section>
-      {run.status === "active" && run.pending && (
-        <section
-          data-testid="pending-card"
-          className="space-y-4 rounded-xl border border-[#dba64d]/60 p-4"
+      {run.feedback && (
+        <div
+          key={run.revision}
+          data-testid="move-feedback"
+          role="status"
+          aria-live="polite"
+          className={`move-feedback move-feedback-${run.feedback.correct ? "correct" : "wrong"}`}
         >
-          <h2 className="text-xl font-semibold">Next card</h2>
-          <p>{run.pending.prompt}</p>
+          <strong>
+            {run.feedback.correct
+              ? "Correct — beautifully placed!"
+              : `Correct slot ${run.feedback.correct_slot + 1} — this card belongs here.`}
+          </strong>
           <p>
-            Choose a gap, then Lock it in. Selecting a slot only previews your
-            guess; its year stays hidden until the server scores it.
+            {run.feedback.card.prompt} · {formatYear(run.feedback.card.year)}
           </p>
-          <ul className="text-sm text-muted-foreground">
-            {run.pending.media.credits.map((credit) => (
-              <li key={`${credit.label}:${credit.url}`}>
-                {credit.url ? (
-                  <a
-                    className="underline"
-                    href={credit.url}
-                    target="_blank"
-                    rel="noopener noreferrer"
+          <p>{run.feedback.card.explanation}</p>
+          <p>
+            {run.feedback.correct
+              ? `Streak: ${run.streak}`
+              : "Your final streak is preserved."}
+          </p>
+        </div>
+      )}
+      <DragDropProvider
+        sensors={[
+          PointerSensor.configure({
+            activationConstraints: [
+              new PointerActivationConstraints.Distance({ value: 6 }),
+              new PointerActivationConstraints.Delay({
+                value: 200,
+                tolerance: 10,
+              }),
+            ],
+          }),
+          TimelineKeyboardSensor,
+        ]}
+        plugins={(defaults) => [
+          ...defaults.filter((plugin) => plugin !== Accessibility),
+          Accessibility.configure({
+            announcements: {
+              dragstart: () =>
+                "Next card lifted. Choose a numbered slot. Escape cancels. Dropping only previews.",
+              dragover: ({ operation }: DragOverEvent) =>
+                operation.target
+                  ? `Over slot ${Number(operation.target.data.slot) + 1}.`
+                  : "Outside the timeline slots.",
+              dragend: ({ operation, canceled }: DragEndEvent) =>
+                canceled || !operation.target
+                  ? "Drag canceled. No move submitted."
+                  : `Preview slot ${Number(operation.target.data.slot) + 1}. Lock it in to submit.`,
+            },
+          }),
+        ]}
+        onDragStart={() => {
+          setDragging(true)
+          setDragMessage("Card lifted. Drop into a numbered slot to preview.")
+        }}
+        onDragEnd={({ operation, canceled }) => {
+          setDragging(false)
+          const latest = current.current
+          if (
+            latest?.phase !== "idle" ||
+            operation.source?.id !== latest.run.pending?.event_id
+          )
+            return
+          const slot =
+            !canceled && operation.target ? operation.target.data.slot : null
+          preview(typeof slot === "number" ? slot : null)
+          setDragMessage(
+            typeof slot === "number"
+              ? "Drop previewed. No move submitted."
+              : "Drag canceled. No move submitted.",
+          )
+        }}
+      >
+        <SlotLockContext.Provider value={locked}>
+          <div className="game-workspace">
+            {run.status === "active" && run.pending && (
+              <section data-testid="pending-card" className="pending-panel">
+                <h2>Next card</h2>
+                <PendingDraggable card={run.pending} disabled={locked} />
+                <p
+                  className="placement-instructions"
+                  id="placement-instructions"
+                >
+                  Drag or tap a numbered gap, then Lock it in. The year stays
+                  hidden until the server scores your guess. Keyboard: Space to
+                  lift, arrows to move, Space to drop, Escape to cancel.
+                </p>
+                <fieldset
+                  className="slot-shortcuts"
+                  aria-label="Placement shortcuts"
+                >
+                  <button
+                    type="button"
+                    disabled={locked || dragging}
+                    onClick={() => preview(0, true)}
                   >
-                    {credit.label}
-                  </a>
-                ) : (
-                  credit.label
-                )}
-              </li>
-            ))}
-          </ul>
-          <fieldset
-            className="flex flex-wrap gap-2"
-            aria-label="Timeline slots"
-          >
-            {Array.from({ length: run.timeline.length + 1 }, (_, slot) => (
-              <Button
-                key={slot}
-                aria-label={`Slot ${slot + 1}`}
-                aria-pressed={state.selectedSlot === slot}
-                disabled={state.phase !== "idle"}
-                variant={state.selectedSlot === slot ? "default" : "outline"}
-                onClick={() => update(selectSlot(current.current!, slot))}
-              >
-                Slot {slot + 1} ·{" "}
-                {slot === 0
-                  ? "before the first event"
-                  : slot === run.timeline.length
-                    ? "after the last event"
-                    : `between events ${slot} and ${slot + 1}`}
-              </Button>
-            ))}
-          </fieldset>
-          <p role="status">
-            {state.selectedSlot === null
-              ? "No slot selected."
-              : `Preview: slot ${state.selectedSlot + 1}.`}
-            {state.phase === "sending" && " Sending move…"}
-            {state.phase === "reconcile" && " Checking server progress…"}
-          </p>
-          <div className="flex flex-wrap gap-2">
-            <Button
-              onClick={submit}
-              disabled={state.phase !== "idle" || state.selectedSlot === null}
-            >
-              Lock it in
-            </Button>
-            <Button
-              variant="outline"
-              disabled={state.phase !== "idle" || state.selectedSlot === null}
-              onClick={() => update(selectSlot(current.current!, null))}
-            >
-              Cancel preview
-            </Button>
-            {state.phase === "uncertain" && (
-              <Button onClick={submit}>Retry same move</Button>
+                    First slot
+                  </button>
+                  <button
+                    type="button"
+                    disabled={locked || dragging}
+                    onClick={() =>
+                      preview(Math.max(0, (state.selectedSlot ?? 1) - 1), true)
+                    }
+                  >
+                    Previous slot
+                  </button>
+                  <button
+                    type="button"
+                    disabled={locked || dragging}
+                    onClick={() =>
+                      preview(
+                        Math.min(
+                          run.timeline.length,
+                          (state.selectedSlot ?? -1) + 1,
+                        ),
+                        true,
+                      )
+                    }
+                  >
+                    Next slot
+                  </button>
+                  <button
+                    type="button"
+                    disabled={locked || dragging}
+                    onClick={() => preview(run.timeline.length, true)}
+                  >
+                    Last slot
+                  </button>
+                </fieldset>
+                <p role="status" className="preview-status">
+                  {state.selectedSlot === null
+                    ? "No slot selected."
+                    : `Preview: slot ${state.selectedSlot + 1}.`}
+                  {state.phase === "sending" && " Sending move…"}
+                  {state.phase === "reconcile" && " Checking server progress…"}
+                </p>
+                <p className="sr-only" role="status">
+                  {dragMessage}
+                </p>
+                <div className="placement-actions">
+                  <Button
+                    onClick={submit}
+                    disabled={locked || dragging || state.selectedSlot === null}
+                  >
+                    Lock it in
+                  </Button>
+                  <Button
+                    variant="outline"
+                    disabled={locked || dragging || state.selectedSlot === null}
+                    onClick={() => update(selectSlot(current.current!, null))}
+                  >
+                    Cancel preview
+                  </Button>
+                  {state.phase === "uncertain" && (
+                    <Button onClick={submit}>Retry same move</Button>
+                  )}
+                  {(state.phase === "uncertain" ||
+                    state.phase === "reconcile") && (
+                    <Button variant="outline" onClick={reconcile}>
+                      Check server progress
+                    </Button>
+                  )}
+                </div>
+                <ContentIssueDialog
+                  runId={runId}
+                  eventId={run.pending.event_id}
+                />
+              </section>
             )}
-            {(state.phase === "uncertain" || state.phase === "reconcile") && (
-              <Button variant="outline" onClick={reconcile}>
-                Check server progress
-              </Button>
-            )}
+            <Timeline
+              cards={run.timeline}
+              selectedSlot={state.selectedSlot}
+              onSelectSlot={(slot) => preview(slot)}
+            />
           </div>
-          <ContentIssueDialog runId={runId} eventId={run.pending.event_id} />
-        </section>
+          <DragOverlay dropAnimation={null}>
+            {run.pending && (
+              <div className="game-drag-overlay" aria-hidden="true">
+                <GameCard card={run.pending} revealed={false} />
+              </div>
+            )}
+          </DragOverlay>
+        </SlotLockContext.Provider>
+      </DragDropProvider>
+      {run.status !== "active" && (
+        <div
+          className={
+            run.status === "won"
+              ? "game-victory"
+              : "move-feedback move-feedback-wrong"
+          }
+          aria-live="polite"
+        >
+          <GameResults run={run} />
+        </div>
       )}
-      {run.status !== "active" && <GameResults run={run} />}
-      {run.status === "active" && run.mode === "freeplay" && (
-        <p>
-          <Link to="/freeplay" className="underline">
-            New Freeplay
-          </Link>{" "}
-          — this run stays resumable from Home.
-        </p>
-      )}
-      <Link to="/" className="underline">
-        Back to Home
-      </Link>
+      <footer className="game-footer">
+        {run.status === "active" && run.mode === "freeplay" && (
+          <p>
+            <Link to="/freeplay" className="underline">
+              New Freeplay
+            </Link>{" "}
+            — this run stays resumable from Home.
+          </p>
+        )}
+        <Link to="/" className="underline">
+          Back to Home
+        </Link>
+      </footer>
     </div>
   )
+}
+
+function PendingDraggable({
+  card,
+  disabled,
+}: {
+  card: PendingCard
+  disabled: boolean
+}): React.JSX.Element {
+  const { ref, handleRef, isDragging } = useDraggable({
+    id: card.event_id,
+    disabled,
+  })
+  return (
+    <div ref={ref} className="pending-draggable" data-dragging={isDragging}>
+      <GameCard card={card} revealed={false} />
+      <button
+        type="button"
+        ref={handleRef}
+        className="drag-handle"
+        aria-label="Drag next card"
+        aria-describedby="placement-instructions"
+        disabled={disabled}
+      >
+        ⠿ Drag card <span aria-hidden="true">↔</span>
+      </button>
+    </div>
+  )
+}
+
+// Stable 0.5.0's KeyboardSensor moves pixels and disables auto-scroll. Numbered
+// gaps need discrete, reachable navigation instead, while its activation,
+// cancellation, end handling and focus restoration remain intact.
+class TimelineKeyboardSensor extends KeyboardSensor {
+  private slotIndex: number | null = null
+  private frame: number | null = null
+
+  protected override cleanup(): void {
+    this.slotIndex = null
+    if (this.frame !== null) cancelAnimationFrame(this.frame)
+    this.frame = null
+    super.cleanup()
+  }
+
+  protected override handleMove(
+    direction: "up" | "down" | "left" | "right",
+    event: KeyboardEvent,
+  ): void {
+    const workspace =
+      this.manager.dragOperation.source?.element?.closest(".game-workspace")
+    const slots = workspace?.querySelectorAll<HTMLButtonElement>(
+      ".insertion-slot[data-slot]:not(:disabled)",
+    )
+    if (!slots?.length) return
+    event.preventDefault()
+    const forward = direction === "right" || direction === "down"
+    const currentSlot = this.slotIndex
+    const next =
+      typeof currentSlot === "number"
+        ? currentSlot + (forward ? 1 : -1)
+        : forward
+          ? 0
+          : slots.length - 1
+    this.slotIndex = Math.max(0, Math.min(slots.length - 1, next))
+    const slot = slots[this.slotIndex]
+    slot.scrollIntoView({
+      block: "nearest",
+      inline: "nearest",
+      behavior: "instant",
+    })
+    // Keyboard navigation is ordinal, not pixel collision: scrolling a clipped
+    // horizontal table must not redirect the selected gap to another card.
+    if (this.frame !== null) cancelAnimationFrame(this.frame)
+    this.frame = requestAnimationFrame(() => {
+      this.frame = null
+      if (!this.manager.dragOperation.status.dragging) return
+      void this.manager.actions.setDropTarget(`slot-${slot.dataset.slot}`)
+    })
+  }
 }
