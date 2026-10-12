@@ -183,8 +183,17 @@ source-backed templates or retain licensed text with its obligations. Automated
 audits report source coverage and quality heuristics, not human verification of
 truth or recognisability. Reimporting a snapshot must not create duplicates.
 
-Publication requires a versioned validation receipt bound to the candidate and
-source digests. Unknown/missing image rights, incompatible adaptation or credits,
+Publication requires a passed final `content_media` validation receipt under
+`automated-v1`, bound to current candidate/source digests and the canonical digest
+of the complete frozen MediaCatalog, including every media/fallback metadata field
+and asset SHA. C3's `content` receipt with no media digest is never publication-ready,
+even when passed. C4 revalidates content plus media after freezing the full batch;
+any catalog/rights change requires fresh final receipts for all events. C5 independently
+recomputes the current catalog digest and checks actual image/fallback bytes against
+every referenced current record SHA at publication and verification. Changed metadata
+or bytes invalidate final receipt/verification even with unchanged event/media/fallback
+references; a receipt digest alone is not asset integrity. No human approval is added.
+Unknown/missing image rights, incompatible adaptation or credits,
 unsafe/ambiguous date-bearing imagery, or failed downloads use representative
 fallbacks. Automatically check image metadata and conservatively exclude maps,
 documents, title pages, plaques, and other text-heavy media unless automated

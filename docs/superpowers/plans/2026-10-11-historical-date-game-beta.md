@@ -120,9 +120,31 @@ deletion of sample CRUD is required. Generated `frontend/src/client/` and
 - Retain the field name `review_status` for contract stability; `approved` now
   means machine-validated only. `ValidationReceipt(event_id: UUID,
   candidate_sha256: str, source_sha256: tuple[str, ...], policy_version: str,
+  stage: Literal['content','content_media'], media_catalog_sha256: str | None,
   passed: bool, checked_at: datetime, issue_codes: tuple[str, ...])` is defined
-  by C2, emitted by C3/C4, and required by C5. A changed candidate/source digest
-  invalidates a previous receipt. Receipt files remain private in releases.
+  by C2. C3 emits `stage='content'`, `media_catalog_sha256=None`; even a passed
+  content receipt is never publication-ready. C4 revalidates content plus media
+  and emits final `stage='content_media'` receipts only after the complete
+  MediaCatalog batch is frozen. Any catalog/rights change requires C4 to refreeze
+  the batch and recompute receipts for all events, not reuse C3 pass flags.
+- C2 defines `media_catalog_digest(catalog: MediaCatalog) -> str` as SHA-256 of
+  canonical JSON (UTF-8, sorted object keys, compact separators, deterministic
+  typed serialization and records ordered by asset ID). It binds **all MediaRecord/FallbackRecord fields**:
+  rights, creator, credits/attribution, license/adaptation, alt text, fit,
+  source revision/URL/acquisition metadata, keys/IDs, digest filenames and asset SHA
+  fields. `candidate_digest(event: EventRecord) -> str` is unchanged and does not
+  absorb media metadata. C2 defines
+  `validate_receipt(event: EventRecord, receipt: ValidationReceipt, source_digests: tuple[str, ...], media_catalog: MediaCatalog) -> tuple[ValidationIssue, ...]`;
+  publication requires `content_media`, passed, expected `automated-v1`, matching
+  event identity/candidate/source digests and an independently recomputed current
+  media catalog digest, never a digest copied from the receipt.
+- C5 also independently checks actual asset bytes against every referenced
+  current MediaRecord/FallbackRecord SHA at publication and release verification;
+  the receipt digest is **not asset integrity**. Changed media/fallback metadata
+  invalidates final receipts even with unchanged event identity/media_asset_id/
+  fallback_key. Changed asset bytes fail verification even if those references
+  and metadata are unchanged; updating the catalog SHA to match new bytes requires
+  fresh C4 batch receipts. Receipt files remain private in releases. No human review gate.
 - `SourceSelection(source_ids: tuple[str, ...], allowed_media_hosts: tuple[str, ...],
   decision_report: str, daily_category_ids: tuple[str, ...])` is the machine-readable
   result of C1; adapters validate their source-specific configuration themselves.
