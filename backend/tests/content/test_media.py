@@ -65,6 +65,56 @@ def candidate(**changes: Any) -> MediaCandidate:
     return MediaCandidate(**values)
 
 
+def test_throttle_only_hooks_preserve_base_acceptance_fingerprint() -> None:
+    root = Path(pipeline.__file__).parents[1]
+    paths = (
+        *sorted(root.joinpath("media").glob("*.py")),
+        *sorted(root.joinpath("fallbacks").glob("*.svg")),
+        root / "schemas.py",
+        root / "validation.py",
+        root / "importer.py",
+        root / "adapters" / "selected.py",
+    )
+    hashes = {
+        str(path.relative_to(root)): hashlib.sha256(path.read_bytes()).hexdigest()
+        for path in paths
+    }
+    # Exact latest C5 pipeline at BASE 0bc76c7, not the older C4 pipeline.
+    hashes["media/pipeline.py"] = (
+        "2de6c5e27b8a9e6c5b888f637ee0590b9dbf881077bef16beedcbd9e4ea83ea6"
+    )
+    expected = pipeline.digest(
+        {
+            "rules": "commons-media-v2",
+            "source_sha256": hashes,
+            "dependencies": {
+                name: pipeline.package_version(name)
+                for name in ("pillow", "httpx", "pydantic", "mwparserfromhell")
+            },
+            "python": pipeline.python_version(),
+        }
+    )
+    assert pipeline.media_rules_digest() == expected
+
+
+def test_throttle_fingerprint_projection_still_binds_pipeline_acceptance(
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    before = pipeline.media_rules_digest()
+    original = Path.read_bytes
+
+    def changed_acceptance(path: Path) -> bytes:
+        source = original(path)
+        return (
+            source.replace(b"codes = set(check_candidate(item))", b"codes = set()")
+            if path == Path(pipeline.__file__)
+            else source
+        )
+
+    monkeypatch.setattr(Path, "read_bytes", changed_acceptance)
+    assert pipeline.media_rules_digest() != before
+
+
 def batch(tmp_path: Path) -> tuple[Path, list[EventRecord]]:
     workspace = tmp_path / "work"
     import_snapshot(SelectedSourceAdapter(), snapshot(tmp_path), workspace)

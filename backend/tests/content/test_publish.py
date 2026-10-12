@@ -5,10 +5,11 @@ import hashlib
 import json
 import subprocess
 import sys
-from datetime import UTC, datetime
+from datetime import UTC, datetime, timedelta
 from pathlib import Path
 from typing import Any
 
+import httpx
 import pytest
 
 from app.content.adapters.selected import SelectedSourceAdapter, digest
@@ -22,7 +23,13 @@ from app.content.validation import (
     validate_event,
 )
 from tests.content.test_importer import snapshot
-from tests.content.test_media import SELECTION, batch, fake_download, with_image
+from tests.content.test_media import (
+    SELECTION,
+    batch,
+    commons,
+    fake_download,
+    with_image,
+)
 
 
 def final_batch(
@@ -38,6 +45,443 @@ def final_batch(
     assert all(r.passed for r in pipeline.finalize_media_receipts(workspace))
     pointer = json.loads((workspace / "media-current.json").read_text())
     return workspace, workspace / pointer["generation"]
+
+
+def uncached_media_workspace(tmp_path: Path) -> Path:
+    workspace, _ = with_image(tmp_path)
+    for path in (workspace / "media-cache" / "commons").glob("*.json"):
+        path.unlink()
+    return workspace
+
+
+def mock_commons_client(monkeypatch: pytest.MonkeyPatch, handler: Any) -> None:
+    original = httpx.Client
+    monkeypatch.setattr(
+        httpx,
+        "Client",
+        lambda **kwargs: original(**kwargs, transport=httpx.MockTransport(handler)),
+    )
+    monkeypatch.setattr(pipeline.time, "sleep", lambda _: None)
+    monkeypatch.setattr(pipeline, "download_image", fake_download)
+
+
+def media_args(workspace: Path) -> list[str]:
+    return [
+        "media",
+        "--selection",
+        "../docs/research/source-selection.json",
+        "--workspace",
+        str(workspace),
+    ]
+
+
+@pytest.mark.parametrize(
+    "status,body,retry,expected_delay",
+    [
+        (429, {"error": {"code": "ratelimited", "info": "slow down"}}, "120", 120),
+        (429, {"error": {"code": "ratelimited"}}, "Mon, 12 Oct 2026 00:02:00 GMT", 120),
+        (429, {}, None, 300),
+        (429, {}, "nonsense", 300),
+        (429, {}, "-1", 300),
+        (429, {}, "Sun, 11 Oct 2026 00:00:00 GMT", 300),
+        (503, {"error": {"code": "maxlag", "info": "database lag"}}, "60", 60),
+        (200, {"error": {"code": "maxlag", "info": "database lag"}}, "60", 60),
+        (200, {"error": {"code": "ratelimited", "info": "slow down"}}, None, 300),
+    ],
+)
+def test_commons_throttle_stops_cli_before_next_event_and_preserves_retry_evidence(
+    tmp_path: Path,
+    monkeypatch: pytest.MonkeyPatch,
+    capsys: pytest.CaptureFixture[str],
+    status: int,
+    body: dict[str, Any],
+    retry: str | None,
+    expected_delay: int,
+) -> None:
+    from app.content import commons_transport
+    from app.content.cli import main
+
+    monkeypatch.setattr(
+        commons_transport, "utc_now", lambda: datetime(2026, 10, 12, tzinfo=UTC)
+    )
+    workspace = uncached_media_workspace(tmp_path)
+    calls = []
+
+    def response(request: httpx.Request) -> httpx.Response:
+        calls.append(request)
+        headers = {
+            "Date": "Mon, 12 Oct 2026 00:00:00 GMT",
+            "Set-Cookie": "private-token=do-not-save",
+        }
+        if retry is not None:
+            headers["Retry-After"] = retry
+        return httpx.Response(status, json=body, headers=headers)
+
+    mock_commons_client(monkeypatch, response)
+    # Existing code must fail on batch behavior, not importing the new helper.
+    result = main(media_args(workspace))
+    assert len(calls) == 1, "provider throttle must stop before the next CLI event"
+    assert result != 0
+    output = capsys.readouterr()
+    assert not output.out
+    failure = json.loads(output.err)
+    assert failure["error"] == "commons_throttled" and failure["incomplete"] is True
+    state = json.loads((workspace / "commons-throttle.json").read_text())
+    captured_at = datetime.fromisoformat(state["observed_at"])
+    expected = datetime.fromisoformat(state["retry_at"])
+    # HTTP-date is relative to server Date too, never a local skew shortcut.
+    assert expected == captured_at + timedelta(seconds=expected_delay)
+    assert state["http_status"] == status and state["retry_after"] == retry
+    assert state["api_error"] == body.get("error")
+    evidence = json.loads((workspace / state["evidence"]).read_text())
+    assert json.loads(evidence["body"]) == body
+    assert "set-cookie" not in evidence["headers"]
+    assert "private-token" not in json.dumps(evidence)
+    assert state["retry_at"] in output.err and "--retry-throttled" in output.err
+    assert not (workspace / "media-current.json").exists()
+    assert not (workspace / "media-staging.json").exists()
+    assert not list((workspace / "media-cache" / "commons").glob("*.json"))
+    # A future command cannot silently treat a provider failure as image fallback.
+    assert main(media_args(workspace)) != 0
+    assert len(calls) == 1
+
+
+def test_commons_explicit_retry_resumes_only_after_deadline_then_finalizes_and_publishes(
+    tmp_path: Path,
+    monkeypatch: pytest.MonkeyPatch,
+    capsys: pytest.CaptureFixture[str],
+) -> None:
+    from app.content.cli import main
+
+    workspace = uncached_media_workspace(tmp_path)
+    calls = []
+
+    def response(request: httpx.Request) -> httpx.Response:
+        calls.append(request)
+        return (
+            httpx.Response(
+                429,
+                headers={"Retry-After": "120"},
+                json={"error": {"code": "ratelimited"}},
+            )
+            if len(calls) == 1
+            else httpx.Response(200, json=commons())
+        )
+
+    mock_commons_client(monkeypatch, response)
+    assert main(media_args(workspace)) != 0
+    assert len(calls) == 1
+    from app.content import commons_transport
+
+    state = json.loads((workspace / "commons-throttle.json").read_text())
+    evidence_bytes = (workspace / state["evidence"]).read_bytes()
+    with pytest.raises(commons_transport.CommonsThrottle):
+        pipeline.finalize_media_receipts(workspace)
+    retry_at = datetime.fromisoformat(state["retry_at"])
+    monkeypatch.setattr(
+        commons_transport, "utc_now", lambda: retry_at - timedelta(seconds=1)
+    )
+    assert main([*media_args(workspace), "--retry-throttled"]) != 0
+    assert len(calls) == 1
+    monkeypatch.setattr(commons_transport, "utc_now", lambda: retry_at)
+    assert main(media_args(workspace)) != 0  # expiration alone is not consent to retry
+    assert len(calls) == 1
+    capsys.readouterr()
+    assert main([*media_args(workspace), "--retry-throttled"]) == 0
+    assert len(calls) == 2  # second event reuses successful exact-title cache
+    output = json.loads(capsys.readouterr().out)
+    assert output == {"events": 2, "passed": 2, "failed": 0}
+    assert (workspace / state["evidence"]).read_bytes() == evidence_bytes
+    assert not (workspace / "commons-throttle.json").exists()
+    release = publish_release(workspace, tmp_path / "out", "resumed", fixture=True)
+    assert release.event_count == 2
+    assert (
+        verify_release(
+            tmp_path / "out" / "resumed", tmp_path / "out" / "resumed" / "media"
+        )
+        == release
+    )
+
+
+def test_ordinary_one_image_http_failure_still_falls_back_and_continues(
+    tmp_path: Path,
+    monkeypatch: pytest.MonkeyPatch,
+    capsys: pytest.CaptureFixture[str],
+) -> None:
+    from app.content.cli import main
+
+    workspace = uncached_media_workspace(tmp_path)
+    calls = []
+
+    def response(request: httpx.Request) -> httpx.Response:
+        calls.append(request)
+        return (
+            httpx.Response(404, json={"error": {"code": "missingtitle"}})
+            if len(calls) == 1
+            else httpx.Response(200, json=commons())
+        )
+
+    mock_commons_client(monkeypatch, response)
+    assert main(media_args(workspace)) == 0
+    assert len(calls) == 2
+    assert json.loads(capsys.readouterr().out)["passed"] == 2
+    generation = (
+        workspace
+        / json.loads((workspace / "media-current.json").read_text())["generation"]
+    )
+    decisions = json.loads((generation / "decisions.json").read_text())
+    assert sum(decision["candidate"] is None for decision in decisions.values()) == 1
+    assert any(
+        "commons_http_404" in (decision["reason"] or "")
+        for decision in decisions.values()
+    )
+    assert not (workspace / "commons-throttle.json").exists()
+
+
+@pytest.mark.parametrize("status", [429, 503])
+def test_image_download_throttle_is_not_an_individual_image_fallback(
+    tmp_path: Path,
+    monkeypatch: pytest.MonkeyPatch,
+    capsys: pytest.CaptureFixture[str],
+    status: int,
+) -> None:
+    from app.content.cli import main
+
+    workspace, _ = with_image(tmp_path)
+    calls = []
+
+    def throttled_download(
+        url: str, _destination: Path, _allowed_hosts: tuple[str, ...]
+    ) -> Path:
+        calls.append(url)
+        response = httpx.Response(
+            status, headers={"Retry-After": "120"}, request=httpx.Request("GET", url)
+        )
+        response.raise_for_status()
+        raise AssertionError("unreachable")
+
+    monkeypatch.setattr(pipeline, "download_image", throttled_download)
+    assert main(media_args(workspace)) != 0
+    assert len(calls) == 1
+    assert json.loads(capsys.readouterr().err)["error"] == "commons_throttled"
+    assert not (workspace / "media-current.json").exists()
+
+
+def test_throttle_body_read_failure_still_stops_on_known_http_status(
+    tmp_path: Path,
+    monkeypatch: pytest.MonkeyPatch,
+    capsys: pytest.CaptureFixture[str],
+) -> None:
+    from app.content.cli import main
+
+    workspace = uncached_media_workspace(tmp_path)
+    calls = []
+
+    class BrokenBody(httpx.SyncByteStream):
+        def __iter__(self) -> Any:
+            yield b"busy"
+            raise httpx.ReadError("failed response body")
+
+    def response(request: httpx.Request) -> httpx.Response:
+        calls.append(request)
+        return httpx.Response(429, headers={"Retry-After": "120"}, stream=BrokenBody())
+
+    mock_commons_client(monkeypatch, response)
+    assert main(media_args(workspace)) != 0
+    assert len(calls) == 1
+    state = json.loads(capsys.readouterr().err)
+    assert state["http_status"] == 429
+    evidence = json.loads((workspace / state["evidence"]).read_text())
+    assert evidence["body_truncated"] is True
+
+
+@pytest.mark.parametrize(
+    "error", [OSError("disk failure"), ValueError("immutable evidence conflict")]
+)
+def test_throttle_evidence_write_failure_cannot_become_fallback_success(
+    tmp_path: Path,
+    monkeypatch: pytest.MonkeyPatch,
+    capsys: pytest.CaptureFixture[str],
+    error: Exception,
+) -> None:
+    from app.content import commons_transport
+    from app.content.cli import main
+
+    workspace = uncached_media_workspace(tmp_path)
+    calls = []
+
+    def response(request: httpx.Request) -> httpx.Response:
+        calls.append(request)
+        return httpx.Response(429, headers={"Retry-After": "120"})
+
+    mock_commons_client(monkeypatch, response)
+
+    def failed_write(_path: Path, _data: bytes) -> None:
+        raise error
+
+    monkeypatch.setattr(commons_transport, "immutable_write", failed_write)
+    assert main(media_args(workspace)) != 0
+    assert len(calls) == 1
+    assert not capsys.readouterr().out
+    assert not (workspace / "media-current.json").exists()
+    assert not (workspace / "media-staging.json").exists()
+
+
+def test_valid_http_date_survives_malformed_server_date_and_large_seconds_are_honored() -> (
+    None
+):
+    from app.content import commons_transport
+
+    now = datetime(2026, 10, 12, tzinfo=UTC)
+    seconds, basis = commons_transport._retry_seconds(
+        httpx.Headers(
+            {"Retry-After": "Mon, 12 Oct 2026 01:00:00 GMT", "Date": "malformed"}
+        ),
+        now,
+    )
+    assert seconds >= 3600 and basis == "http-date"
+    seconds, basis = commons_transport._retry_seconds(
+        httpx.Headers({"Retry-After": "3153600000"}), now
+    )
+    assert seconds == 3153600000 and basis == "seconds"
+
+
+def test_successful_compressed_metadata_keeps_existing_cache_acceptance(
+    tmp_path: Path,
+    monkeypatch: pytest.MonkeyPatch,
+    capsys: pytest.CaptureFixture[str],
+) -> None:
+    import gzip
+
+    from app.content.cli import main
+
+    workspace = uncached_media_workspace(tmp_path)
+
+    def response(_request: httpx.Request) -> httpx.Response:
+        return httpx.Response(
+            200,
+            content=gzip.compress(json.dumps(commons()).encode()),
+            headers={"Content-Encoding": "gzip"},
+        )
+
+    mock_commons_client(monkeypatch, response)
+    assert main(media_args(workspace)) == 0
+    assert json.loads(capsys.readouterr().out)["passed"] == 2
+    generation = (
+        workspace
+        / json.loads((workspace / "media-current.json").read_text())["generation"]
+    )
+    assert (
+        len(
+            MediaCatalog.model_validate_json(
+                (generation / "media.json").read_text()
+            ).records
+        )
+        == 1
+    )
+
+
+def test_stopped_retry_preserves_existing_frozen_batch_and_success_cache(
+    tmp_path: Path,
+    monkeypatch: pytest.MonkeyPatch,
+    capsys: pytest.CaptureFixture[str],
+) -> None:
+    from app.content.cli import main
+    from app.content.commons_transport import CommonsThrottle
+    from tests.content.test_media import cache
+
+    workspace, _ = with_image(tmp_path)
+    monkeypatch.setattr(pipeline, "download_image", fake_download)
+    assert main(media_args(workspace)) == 0
+    old_pointer = (workspace / "media-current.json").read_bytes()
+    generation = workspace / json.loads(old_pointer)["generation"]
+    frozen_files = {
+        str(path.relative_to(generation)): path.read_bytes()
+        for path in generation.rglob("*")
+        if path.is_file()
+    }
+    source_pointer = (workspace / "current.json").read_bytes()
+    for path in (workspace / "media-cache" / "commons").glob("*.json"):
+        path.unlink()
+    calls = []
+
+    def response(request: httpx.Request) -> httpx.Response:
+        calls.append(request)
+        return httpx.Response(429, headers={"Retry-After": "120"})
+
+    mock_commons_client(monkeypatch, response)
+    capsys.readouterr()
+    assert main(media_args(workspace)) != 0
+    assert not capsys.readouterr().out
+    with pytest.raises(CommonsThrottle):
+        pipeline.finalize_media_receipts(
+            workspace
+        )  # an old complete stage is not new success
+    assert (workspace / "media-current.json").read_bytes() == old_pointer
+    assert (workspace / "current.json").read_bytes() == source_pointer
+    assert {
+        str(path.relative_to(generation)): path.read_bytes()
+        for path in generation.rglob("*")
+        if path.is_file()
+    } == frozen_files
+    cache(workspace, "File:Synthetic Ada.png", commons())
+    # Cache-only lookup remains available and doesn't clear cooldown or issue HTTP.
+    assert (
+        pipeline._commons_metadata(workspace, "File:Synthetic Ada.png", fetch=True)[0]
+        == commons()
+    )
+    assert len(calls) == 1
+
+
+def test_huge_throttle_body_is_bounded_private_evidence_not_success_cache(
+    tmp_path: Path,
+    monkeypatch: pytest.MonkeyPatch,
+    capsys: pytest.CaptureFixture[str],
+) -> None:
+    from app.content import commons_transport
+    from app.content.cli import main
+
+    workspace = uncached_media_workspace(tmp_path)
+
+    def response(_request: httpx.Request) -> httpx.Response:
+        return httpx.Response(
+            503,
+            headers={"Retry-After": "999999999999999999999999999999"},
+            content=b"x" * (2 * 1024 * 1024),
+        )
+
+    mock_commons_client(monkeypatch, response)
+    assert main(media_args(workspace)) != 0
+    state = json.loads(capsys.readouterr().err)
+    evidence = json.loads((workspace / state["evidence"]).read_text())
+    assert evidence["body_truncated"] is True
+    assert len(evidence["body"].encode()) == commons_transport.MAX_RESPONSE_BYTES
+    assert (
+        state["retry_at"] is None
+    )  # unrepresentable wait must never become an early retry
+    assert main([*media_args(workspace), "--retry-throttled"]) != 0
+    assert not (workspace / "media-current.json").exists()
+
+
+def test_corrupt_private_throttle_state_fails_closed_without_provider_request(
+    tmp_path: Path,
+    monkeypatch: pytest.MonkeyPatch,
+    capsys: pytest.CaptureFixture[str],
+) -> None:
+    from app.content.cli import main
+
+    workspace = uncached_media_workspace(tmp_path)
+    (workspace / "commons-throttle.json").write_text("not-json")
+
+    def response(_request: httpx.Request) -> httpx.Response:
+        raise AssertionError("stopped workspace must not request provider")
+
+    mock_commons_client(monkeypatch, response)
+    assert main(media_args(workspace)) != 0
+    assert (
+        json.loads(capsys.readouterr().err)["reason"]
+        == "invalid_private_throttle_state"
+    )
 
 
 def refresh(root: Path, filename: str = "manifest.json") -> None:

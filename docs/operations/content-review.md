@@ -297,6 +297,62 @@ No C1 research screen is promoted to media approval. Cached snapshot bytes never
 silently refresh or overwrite; a new metadata acquisition must be supplied as
 a new private snapshot/workspace rather than replacing an authoritative batch.
 
+### Provider throttling: incomplete batch, explicit retry
+
+Commons HTTP **429/503** (including pinned upload downloads), and HTTP-200
+MediaWiki `maxlag`/`ratelimited`/`rate-limited`/`throttled`/`actionthrottled`
+errors **stop the batch**, not select image fallback. No later uncached metadata
+or image request runs in that stopped workspace. The CLI exits nonzero, writes
+structured `commons_throttled`/`incomplete` retry information to stderr, and
+emits no successful summary or new final receipts. Individual missing-image,
+unsupported-rights and ordinary request failures still use reasoned fallback.
+
+Private `commons-throttle.json` records status, API error, original Retry-After,
+observation/deadline/basis and an evidence reference. Private digest-named
+`media-failures/commons/*.json` captures the bounded response body/hash and only
+Retry-After, Date, Content-Type and X-Database-Lag response headers; never cookies,
+authorization or request tokens. HTTP errors are **not** installed as successful
+Commons cache snapshots. Partial body failures retain the known throttle status;
+body limits are 1 MiB / 20s between reads. Upload body streams already closed by
+`raise_for_status` are not reopened; their status/headers remain available and
+body evidence explicitly says truncated/unavailable. Persistence errors also
+stop rather than fall back; a successful marker write protects future commands
+even if the detailed evidence write subsequently fails.
+
+Retry-After accepts integer seconds and timezone-aware HTTP-date; server Date
+can extend (never shorten) the interval for clock skew. Missing, invalid,
+negative or past declarations default to **300 seconds**; zero seconds means
+at least one second. Unrepresentably long explicit intervals remain blocked
+(`retry_at: null`), not shortened. No long sleep or automatic retry is added.
+After a finite deadline, rerun explicitly:
+
+```sh
+cd backend
+uv run python -m app.content.cli media \
+  --selection ../docs/research/source-selection.json \
+  --workspace /private/workspace --retry-throttled
+```
+
+Early retry and ordinary reruns after expiration both remain nonzero without
+requests. Explicit retry clears only the expired operational marker under the
+media lock, retaining immutable failure evidence and successful caches. It
+revisits current candidates and reuses successful cached metadata/originals;
+finalization still requires a complete, independently revalidated current batch.
+A stopped finalizer cannot reuse an older complete stage as a new pass. Already
+frozen final generations/receipts/assets and C3 source normalization remain
+untouched. Cache-only metadata reads remain usable while stopped, but cannot
+finalize the incomplete batch. This is a workspace/batch stop, not a distributed
+quota coordinator across independently operated workspaces.
+
+Throttling does **not** relax media/license/date/safety acceptance or bump the
+acceptance policy fingerprint. `commons_transport.fingerprint_source` narrowly
+projects only the exact operational hook spellings to the BASE `0bc76c7` source
+before hashing; every other pipeline byte, all other media modules and policy/
+provenance checks remain bound. Tests verify equality to that C5 base fingerprint
+and that actual pipeline acceptance changes still invalidate it. Acquisition-only
+stop/retry implementation is outside the media-policy source set, so previously
+valid frozen batches do not require a pointless refresh for this fix.
+
 Supported per-file rights are CC0, CC BY / CC BY-SA 2.0, 3.0 and 4.0, and explicit
 `PD-self`, `PD-author`, `PD-old-100-expired` or
 `PD-Art (PD-old-100-expired)` bases. A generic PD label alone is insufficient.

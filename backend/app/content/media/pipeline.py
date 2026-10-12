@@ -27,6 +27,7 @@ from xml.etree import ElementTree
 import httpx
 from PIL import Image
 
+from app.content import commons_transport
 from app.content.adapters.base import RawCandidate
 from app.content.adapters.selected import SelectedSourceAdapter, digest
 from app.content.importer import _jsonl, _sources, _sync_directory, _write
@@ -133,7 +134,7 @@ def media_rules_digest() -> str:
             "rules": "commons-media-v2",
             "source_sha256": {
                 str(path.relative_to(content_root)): hashlib.sha256(
-                    path.read_bytes()
+                    commons_transport.fingerprint_source(path)
                 ).hexdigest()
                 for path in sources
             },
@@ -329,8 +330,8 @@ def _commons_metadata(
         # Selected, exact P18 titles only. Serial, at most three per event; no
         # broad search, retry storm, redirects or credentials.
         time.sleep(1)
-        with httpx.Client(
-            timeout=10, follow_redirects=False, trust_env=False
+        with commons_transport.client(
+            workspace, title, timeout=10, follow_redirects=False, trust_env=False
         ) as client:
             data = bytearray()
             with client.stream(
@@ -591,6 +592,7 @@ def _acquire(
     original = root / f"{candidate.upstream_sha1}.bin"
     meta_path = original.with_suffix(".meta.json")
     if not original.exists():
+        commons_transport.ensure_commons_ready(workspace)
         acquired_at = datetime.now(UTC)
         download_image(candidate.download_url, original, selection.allowed_media_hosts)
         if hashlib.sha1(original.read_bytes()).hexdigest() != candidate.upstream_sha1:
@@ -719,6 +721,7 @@ def assign_media(
                 attempts.append(attempt)
                 break
             except (ValueError, KeyError, TypeError, OSError, httpx.HTTPError) as exc:
+                commons_transport.check_http_failure(workspace, title, exc)
                 attempt["outcome"] = "fallback"
                 attempt["reason"] = str(exc) or type(exc).__name__
                 attempts.append(attempt)
@@ -971,6 +974,7 @@ def finalize_media_receipts(workspace: Path) -> tuple[ValidationReceipt, ...]:
     ):
         fcntl.flock(content_lock, fcntl.LOCK_EX)
         fcntl.flock(lock, fcntl.LOCK_EX)
+        commons_transport.ensure_commons_ready(workspace)
         content, pointer, originals, raws = _inputs(workspace)
         stage, stage_pointer = _generation(workspace, "media-staging.json")
         assignments = json.loads((stage / "assignments.json").read_text())

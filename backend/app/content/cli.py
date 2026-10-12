@@ -7,6 +7,11 @@ from dataclasses import asdict
 from pathlib import Path
 
 from app.content.adapters.selected import SelectedSourceAdapter
+from app.content.commons_transport import (
+    CommonsThrottle,
+    ensure_commons_ready,
+    retry_commons,
+)
 from app.content.importer import import_snapshot
 from app.content.media.pipeline import assign_media, finalize_media_receipts
 from app.content.publish import (
@@ -45,6 +50,11 @@ def main(argv: list[str] | None = None) -> int:
     media = commands.add_parser("media")
     media.add_argument("--selection", type=Path, required=True)
     media.add_argument("--workspace", type=Path, required=True)
+    media.add_argument(
+        "--retry-throttled",
+        action="store_true",
+        help="Explicitly retry a stopped Commons batch after its retry deadline",
+    )
     publishing = commands.add_parser("publish")
     publishing.add_argument("--workspace", type=Path, required=True)
     publishing.add_argument("--output", type=Path, required=True)
@@ -77,6 +87,9 @@ def main(argv: list[str] | None = None) -> int:
             selection = _selection(args.selection)
             workspace = _safe_root(args.workspace)
             _files(workspace)
+            if args.retry_throttled:
+                retry_commons(workspace)
+            ensure_commons_ready(workspace)
             root, _ = _pointer(workspace, "current.json", "generations")
             events = sorted(
                 _events(root, "candidates.jsonl"), key=lambda e: str(e.event_id)
@@ -115,6 +128,20 @@ def main(argv: list[str] | None = None) -> int:
             ).model_dump(mode="json")
         sys.stdout.write(json.dumps(result, sort_keys=True) + "\n")
         return 0
+    except CommonsThrottle as exc:
+        sys.stderr.write(
+            json.dumps(
+                {
+                    "error": "commons_throttled",
+                    "incomplete": True,
+                    "retry": "Rerun content media with --retry-throttled at or after retry_at; no automatic retry.",
+                    **exc.details,
+                },
+                sort_keys=True,
+            )
+            + "\n"
+        )
+        return 1
     except (ValueError, OSError, KeyError, TypeError) as exc:
         sys.stderr.write(f"content {args.command} failed: {exc}\n")
         return 1
