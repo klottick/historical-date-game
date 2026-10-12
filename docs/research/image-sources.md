@@ -75,3 +75,39 @@ For rough sizing only, 0.5–2 MB per original plus 0.1–0.3 MB per derivative 
 ## Current policy status and residual limitations
 
 The user approved automated-only Commons/original-SVG fallbacks and unchanged download hosts; no additional human image/content approval is required. Relevant pictures remain preferred, not guaranteed by metadata, and a direct event photograph for every card is unsupported. C4/C5 must enforce rights, relevance, safety, credits, versioned receipts and fallback coverage before publication; no assets or accepted catalog are produced here. Preserve mandatory attribution, no unanswered-year leakage, accessibility and immutable releases. Prior NASA restrictions and territorial/GFDL exclusions stand. No human-verified truth, legal clearance or machine-perfect recognition/safety detection is claimed.
+
+## 2026-10-12 F3 — measured accepted-catalog matching, no policy change
+
+Historical C1 research screens above are preserved, **not automatic picture
+acceptances**. A fresh deterministic category-round-robin sample over sorted UUIDs
+contains 100 distinct accepted identities: births 5, deaths/battles/inventions/
+literature 14 each, arts/exploration/politics 13 each. The five births are the
+actual available records, not substituted leads.
+
+Only **5/100 have source-proven exact subjects; 95/100 remain unknown**. Exactly
+two have supported source-P18 candidates with genuine cached Commons payloads;
+three birth subjects have no supported P18 candidate. Re-running existing C4
+metadata/credit checks rejects both as `unsafe_required_credit_link`. Their
+public-domain labels do not establish safe credits or worldwide underlying rights.
+No mandatory link was stripped, metadata weakened or image downloaded.
+**Usable images: 0/100; required fallbacks: 100/100.** The whole unchanged release
+still has zero external images and 1,276 fallback events, backed by eight checked
+original CC0 SVGs (5,431 bytes).
+
+Calendar-page citations do not supply exact subject identities. One bounded
+official Wikipedia XML export retained real linked birth targets and BCE leads,
+but none establishes an additional sampled identity/image match; the sample has
+no October 12 chronology row. No fuzzy title, prose keyword or invented Wikidata
+field was used to associate images. Those export leads are not image approvals.
+
+F3 made **zero Commons/Wikidata/image requests**; the single new Wikipedia
+selected-page export retained original bytes, status and headers. Inherited
+Wikidata maxlag and Commons 429 stops were not retried or cleared. Historical
+Commons failure bodies/headers remain incomplete; no new receipt is invented.
+Existing provider-wide stop, credit, date-leak, source mismatch and whole-raw
+regressions pass in the 366-test pure content run. Byte/download checks remain
+mandatory for any later eligible candidate; no human image curation occurred.
+
+See [bounded expansion evidence](catalog-expansion.md) and its private F3 report
+for per-identity/file digests, automatic dispositions, source-access limits and
+the next owner review gate. No production media, policy or release changed.

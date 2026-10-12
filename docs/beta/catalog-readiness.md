@@ -220,3 +220,43 @@ The earlier `-final` release is immutable and now correctly fails with
 Private round-1 evidence: `jsonl-pilot/review-fix/` beside the existing private
 `task-JSONL-report.md`. Controller followup remains scoped to the Important finding
 and `dd52c87..` fix diff; no merge, push or activation is authorized here.
+
+## 2026-10-12 F3 bounded research — EXPANSION BLOCKED, LOCAL CATALOG USABLE
+
+Prior checkpoints remain intact. F3 independently reconciled the selected
+`jsonl-trial-2026-10-12-review-r1` manifest
+`804ec52ccfc3e19cd955913b05cbfd59158f562408e45c1916fa8626d3ac50d3`:
+**19,865 raw / 1,276 accepted / 18,589 quarantined**, all 1,276 whole-raw content
+audits, historical first-100/all-event audits, 27 bound files and all fallback
+bytes. No release, selected DB catalog, service or UI changed in F3; the live
+F1/F2 real-catalog/private-UI environment was left running untouched.
+
+Actual category counts remain **5/171/544/23/65/32/145/291** in taxonomy order;
+**569 years, 9–2025 CE, no BCE; 1,271 region-unclassified**. Daily remains
+1,003 events / 492 years, gap-1/5/10/25/50 capacity 492/194/116/59/34.
+Images remain **0; fallbacks 1,276**, eight CC0 SVGs totaling 5,431 bytes.
+
+A new round-robin 100-accepted-identity sample includes all five real births:
+**5 exact subjects / 95 unknown; 2 exact P18 candidates / 0 usable pictures /
+100 needed fallbacks**. Both cached metadata attempts fail unchanged mandatory
+credit-link safety. No fictitious article/image queries were created for the 95
+subjectless chronology records.
+
+The three route probes found no additional passing births/inventions/BCE in the
+unchanged C1/C6 checks; 13 conservative JSONL grammar leads (5 inventions, 8 arts),
+not accepted events; and one genuine 137,326-byte official XML export containing
+253 structurally screened linked birth leads and 118 structurally screened BCE
+leads in the ancient timeline. These are discovery counts, not accepted facts,
+deduplicated additions, pinned target subjects or image yields. **New accepted
+events and new usable images: both zero.** One serial Wikipedia request; zero
+retries, Wikidata/Commons/image requests or paid costs; inherited stops respected.
+
+The named pure content safety regressions pass **366 tests, four existing
+warnings**, with no full backend/DB suite. Expansion is blocked pending review
+of the discovery producer/date contract and provider readiness, **not a finding
+that the existing local catalog or all followup work is broken**. Any direct XML
+birth/BCE acceptance is a material contract decision requiring owner review;
+no implementation, new release or go/no-go waiver is inferred.
+See [catalog expansion](../research/catalog-expansion.md). Complete private
+evidence/commands and selected proposal:
+`.superpowers/sdd/2026-10-12-historical-date-game-beta-followup/F3-continuation/task-F3-report.md`.
