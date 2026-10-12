@@ -1,4 +1,4 @@
-import { mkdir, readFile, writeFile } from "node:fs/promises"
+import { mkdir, writeFile } from "node:fs/promises"
 import { test as base, expect, type Page } from "@playwright/test"
 import type { PlaceCommand, RunPublic } from "../src/client/types.gen"
 
@@ -55,18 +55,16 @@ const test = base.extend<{ run: RunPublic; headers: Record<string, string> }>({
     })
     expect(response.ok()).toBeTruthy()
     const run: RunPublic = await response.json()
-    // The shared DB's synthetic release has no mounted assets (404). Serve
-    // checked-in CC0 artwork at the unchanged public opaque URLs, test-only.
+    // Normal imagery must come from real verified/mounted backend assets.
+    // Only the explicit failure tests below intercept image requests.
     for (const card of [...run.timeline, run.pending!]) {
-      const kind =
-        card.media.alt_text.match(/Representative (\w+)/i)?.[1] || "art"
-      const artwork = await readFile(
-        `../backend/app/content/fallbacks/${kind}.svg`,
-      )
       for (const url of new Set([card.media.url, card.media.fallback_url])) {
-        await page.route(`http://localhost:8000${url}`, (r) =>
-          r.fulfill({ contentType: "image/svg+xml", body: artwork }),
-        )
+        expect(
+          (
+            await page.request.get(new URL(url, "http://localhost:8000").href)
+          ).status(),
+          `Actual backend media: ${url}`,
+        ).toBe(200)
       }
     }
     await use(run)
