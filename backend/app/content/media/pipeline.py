@@ -18,6 +18,7 @@ from html.parser import HTMLParser
 from importlib.metadata import version as package_version
 from pathlib import Path
 from platform import python_version
+from tempfile import TemporaryDirectory
 from typing import Any
 from urllib.parse import unquote, urlsplit
 from uuid import NAMESPACE_URL, uuid5
@@ -911,6 +912,8 @@ def _recheck_media(
         return codes
     try:
         evidence = MediaCandidate.model_validate_json(json.dumps(decision["candidate"]))
+        if not re.fullmatch(r"[0-9a-f]{40}", evidence.upstream_sha1):
+            raise ValueError("invalid_original_digest")
         codes.update(_event_candidate_codes(event, evidence))
         if (
             evidence.title not in _titles(raws)
@@ -947,7 +950,8 @@ def _recheck_media(
             != evidence.acquired_at
         ):
             codes.add("original_acquisition_mismatch")
-        regenerated = prepare_image(original_path, workspace / "media-assets", evidence)
+        with TemporaryDirectory(prefix="media-recheck-") as temporary:
+            regenerated = prepare_image(original_path, Path(temporary), evidence)
         if record != regenerated:
             codes.add("media_record_mismatch")
     except ValueError, KeyError, TypeError, OSError, StopIteration:
@@ -1005,6 +1009,34 @@ def finalize_media_receipts(workspace: Path) -> tuple[ValidationReceipt, ...]:
             if source.exists() and not source.is_symlink():
                 asset_sha256(source)  # bounds before the read/copy
                 immutable_write(target / record.filename, source.read_bytes())
+        # C5 must reconstruct rights/provenance from this frozen generation,
+        # never from the mutable acquisition cache. Snapshot only selected files.
+        private_files: dict[str, str] = {}
+        snapshot_codes: set[str] = set()
+        for decision in decisions.values():
+            if not decision.get("candidate"):
+                continue
+            try:
+                evidence = MediaCandidate.model_validate_json(
+                    json.dumps(decision["candidate"])
+                )
+                if not re.fullmatch(r"[0-9a-f]{40}", evidence.upstream_sha1):
+                    raise ValueError("invalid_original_digest")
+                stem = hashlib.sha256(evidence.title.encode()).hexdigest()
+                for name in (
+                    f"media-cache/commons/{stem}.json",
+                    f"media-cache/commons/{stem}.meta.json",
+                    f"media-cache/originals/{evidence.upstream_sha1}.bin",
+                    f"media-cache/originals/{evidence.upstream_sha1}.meta.json",
+                ):
+                    source = workspace / name
+                    if any(p.is_symlink() for p in (source, *source.parents)):
+                        raise ValueError("unsafe_private_snapshot")
+                    data = source.read_bytes()
+                    immutable_write(target / name, data)
+                    private_files[name] = hashlib.sha256(data).hexdigest()
+            except ValueError, OSError:
+                snapshot_codes.add("incomplete_private_media_snapshot")
         taxonomy_data = json.loads(
             Path(__file__).parents[1].joinpath("taxonomy.json").read_text()
         )
@@ -1012,7 +1044,7 @@ def finalize_media_receipts(workspace: Path) -> tuple[ValidationReceipt, ...]:
             CategoryRecord.model_validate_json(json.dumps(row)) for row in taxonomy_data
         )
         sources = json.loads((content / "sources.json").read_text())
-        global_codes = _check_assets(catalog, target)
+        global_codes = _check_assets(catalog, target) | snapshot_codes
         if stage_pointer.get("media_rules_sha256") != rules_sha or any(
             decision.get("media_rules_sha256") != rules_sha
             for decision in decisions.values()
@@ -1046,7 +1078,7 @@ def finalize_media_receipts(workspace: Path) -> tuple[ValidationReceipt, ...]:
             codes.update(_recheck_content(event, event_raws, sources))
             codes.update(
                 _recheck_media(
-                    workspace,
+                    target,
                     event,
                     original,
                     event_raws,
@@ -1098,6 +1130,7 @@ def finalize_media_receipts(workspace: Path) -> tuple[ValidationReceipt, ...]:
             "sources.json": (content / "sources.json").read_text(),
             "raw.jsonl": (content / "raw.jsonl").read_text(),
             "aliases.json": (content / "aliases.json").read_text(),
+            "candidates.jsonl": (content / "candidates.jsonl").read_text(),
         }
         for name, text in files.items():
             _write(target / name, text)
@@ -1112,6 +1145,7 @@ def finalize_media_receipts(workspace: Path) -> tuple[ValidationReceipt, ...]:
                 if (target / r.filename).exists()
             }
         )
+        file_hashes.update(private_files)
         _write(
             target / "batch.json",
             json.dumps(

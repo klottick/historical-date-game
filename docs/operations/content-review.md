@@ -5,7 +5,8 @@ content/image review, approval queue, or manual publication gate**. C3 imports
 private facts only. A passed `content` receipt is **never publication-ready**;
 C4 must independently revalidate content and the frozen complete MediaCatalog,
 then C5 verifies final receipts and actual asset bytes. C4's Python media API is
-described below; publisher, CLI and game functionality remain separate work.
+described below; the private publisher/CLI workflow is documented at the end.
+This does not implement game functionality or public serving.
 
 ## Supported selected-provider snapshots
 
@@ -202,7 +203,8 @@ uv run ruff check app
 uv run mypy app
 ```
 
-This is a Python API invocation, not a new CLI. No human review command exists.
+The Python API above remains available; equivalent CLI commands appear below.
+No human review command exists.
 Quarantine is the final machine outcome for unsupported data, not a work queue.
 Later supported source updates may resolve it through fresh automated checks.
 
@@ -379,7 +381,8 @@ MediaRecord, FallbackRecord, MediaCatalog and ValidationReceipt types:
 | `media-assets/media/<digest>.<webp\|svg>` | Shared immutable prepared assets; many events may reference identical physical bytes |
 | `media-current.json` → `media-generations/<batch-id>/` | **Only C4 handoff commit point**, bound to exact C3 generation/input digest and canonical whole-media-catalog digest |
 | Final `events.jsonl`, `media.json`, `validation.json`, `receipts.jsonl` | Assigned events, complete frozen MediaCatalog and all fresh final receipts (`validation.json` is an array; JSONL contains the same receipts) |
-| Final `raw.jsonl`, `sources.json`, `aliases.json`, `taxonomy.json`, `source-selection.json`, `decisions.json` | Coherent private source snapshot and event-specific lookup/rights/relevance/fallback evidence |
+| Final `raw.jsonl`, `sources.json`, `aliases.json`, `candidates.jsonl`, `taxonomy.json`, `source-selection.json`, `decisions.json` | Coherent private source snapshot, unchanged C3 candidates and event-specific lookup/rights/relevance/fallback evidence |
+| Final `media-cache/commons/*.{json,meta.json}`, `media-cache/originals/*.{bin,meta.json}` | Independent private copies of **selected** cached Commons metadata/originals and acquisition receipts; hashed in `batch.json`, never public assets |
 | Final `media/<digest>.<webp\|svg>` | Independent byte copies, **frozen before validation**, never hardlinks to mutable/corrupted draft cache |
 | Final `batch.json` | Private recovery/integrity summary: artifact byte hashes, source generation/input digest, catalog digest, event count and aggregate pass; **not a publisher CatalogManifest** |
 
@@ -435,5 +438,116 @@ Automated verification, from `backend/` (no database required):
 uv run pytest tests/content/test_media.py -q
 uv run pytest tests/content tests/safety -q
 uv run ruff check app tests/content/test_media.py
+uv run mypy app
+```
+
+## C5 immutable publication and executable CLI
+
+From `backend/`, use private local POSIX paths and the committed selection:
+
+```bash
+uv run python -m app.content.cli import \
+  --selection ../docs/research/source-selection.json \
+  --snapshot /private/pinned-snapshot --workspace /private/content-workspace
+uv run python -m app.content.cli media \
+  --selection ../docs/research/source-selection.json \
+  --workspace /private/content-workspace
+uv run python -m app.content.cli publish \
+  --workspace /private/content-workspace --output /private/catalog-releases \
+  --release-id beta-immutable-1
+uv run python -m app.content.cli verify \
+  --release /private/catalog-releases/beta-immutable-1 \
+  --media /private/catalog-releases/beta-immutable-1/media --require-beta
+```
+
+Commands emit JSON on stdout, diagnostics on stderr, and nonzero exit on failure.
+Import reports `imported`, `duplicates`, and `quarantined` counts; quarantine is
+excluded from candidates/publication, not a human queue. Approved adapters and
+the committed machine selection are required. Cached imports/media do not need
+the database; missing-cache acquisition follows the bounded C3/C4 policies above.
+The media command assigns **every** current candidate in UUID order, then invokes
+`finalize_media_receipts` once for the whole batch. Partial/stale batches or failed
+final receipts cannot publish. There is no approve/review/override command.
+
+For small, explicitly synthetic smoke catalogs, add `--fixture` to `publish` and
+omit `--require-beta` from `verify`. This is not a way to label a beta corpus:
+normal publication and beta verification require at least **1,000 independently
+accepted events**, unique by both UUID and private identity, and `fixture=false`.
+Pending/quarantined events, duplicate memberships, failed/missing receipts and
+supplied manifest/report counts cannot inflate that gate. Tests cover 999/1,000
+accepted synthetic shapes; that is not evidence of 1,000 real historical events.
+
+### Acceptance is recomputed, not a report flag
+
+Publication holds the C3/C4 reader locks and resolves each current pointer once.
+It requires the C4 pointer/batch to match the current C3 generation/input and the
+independently recomputed current `media_rules_digest()`. Frozen raw/source/alias/
+candidate snapshots must match that C3 generation. Every final decision must have
+the same current rules fingerprint and approved selection. All declared batch
+file hashes are checked; an orphan/draft generation is never a publication input.
+
+Both publisher and verifier independently load typed events, receipts, taxonomy
+and MediaCatalog. They enforce the current taxonomy/selection, unique UUIDs and
+identities, exact candidate/source/catalog/policy receipt bindings using C2's
+four-argument `validate_receipt`, plus current source normalization and media
+rights/relevance/provenance checks. Only passed `content_media`/`automated-v1`
+receipts without issues qualify; C3 content passes never do. Per-event source
+digests come from the retained **private raw acquisition evidence and source
+receipts**, not `ValidationReceipt.source_sha256`. Raw canonical digests, evidence,
+aliases and source metadata are checked again, and source licensing/attribution
+obligations remain in citations, raw records and private rights decisions.
+
+Selected Commons metadata, original-image bytes and acquisition receipts are now
+frozen by C4 into the final batch. Independent checks reconstruct mandatory
+credits/rights from those snapshots and regenerate derivatives in temporary
+storage, not from the mutable workspace cache. Missing or inconsistent private
+rights/original provenance fails closed. Every actual image **and every fallback**
+is independently hashed/decoded/checked, including unused packaged fallbacks and
+fallbacks for events with images. Filenames must be the record's content digest;
+changing bytes does not become valid by refreshing manifest/batch hash entries.
+Changed catalog metadata invalidates all old final receipts; C4 must reassign and
+refreeze/revalidate the complete batch under current rules.
+
+### Release layout and integrity boundary
+
+Each create-only `/private/catalog-releases/<release-id>/` contains:
+
+- `manifest.json` — C2 `CatalogManifest`; its declared release identity must equal
+  the directory basename, independently of the file digest map.
+- `events.jsonl`, `media.json`, `taxonomy.json`, `source-selection.json`.
+- Private `validation.json`, `receipts.jsonl`, `candidates.jsonl`, `raw.jsonl`,
+  `sources.json`, `aliases.json`, `decisions.json`, `batch.json`, and the selected
+  `media-cache/` provenance snapshots. Never publicly serve these files.
+- `coverage.json` — recomputed review status, CE/BCE era, region/category counts,
+  distinct years/range, image counts and fallback coverage. Verification compares
+  it to actual typed events/catalog, not to supplied summary assertions.
+- `media/<sha256>.webp` and `media/<sha256>.svg` — the **only** directory eligible
+  for future B5 public serving. No raw encyclopedia prose, snapshots, private
+  identity keys or reports may enter public assets.
+
+The manifest hashes every required artifact, selected private snapshot, image and
+fallback. Unexpected/unhashed files, missing records/assets, absolute or traversing
+artifact paths and symlinks (including parent directories) are rejected. The
+explicit `verify --media` directory is checked against all current record SHAs in
+addition to the release's frozen copies; it may be a separate digest asset store.
+
+Records are canonically serialized with sorted JSON keys, events/receipts by UUID,
+raw records by persistent source key, media by asset ID and taxonomy by slug.
+Publishing the same frozen batch under different IDs preserves every artifact
+digest; manifest identity/`created_at` differ. Reusing an ID always fails, even
+for identical bytes. Cooperating local writers are serialized with a publication
+lock; files/directories are fsynced and the complete private temporary directory
+is atomically renamed only after validation. A write failure exposes no partial
+release. Trusted local filesystem writers are assumed: these are integrity
+hashes, **not signatures** against malicious replacement of an entire corpus.
+Code/dependency rule changes require new C4 batches; current-rule verification
+may reject an older release without modifying its already-frozen assets.
+
+DB-free verification:
+
+```bash
+uv run pytest tests/content/test_publish.py -q
+uv run pytest tests/content tests/safety -q
+uv run ruff check app tests/content/test_publish.py tests/content/test_media.py
 uv run mypy app
 ```

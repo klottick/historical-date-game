@@ -304,6 +304,51 @@ def test_per_event_commons_lookup_and_safe_download(
     )
 
 
+def test_final_batch_owns_private_rights_and_original_snapshots(
+    tmp_path: Path, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    workspace, events = with_image(tmp_path)
+    monkeypatch.setattr(pipeline, "download_image", fake_download)
+    for event in events:
+        pipeline.assign_media(event, SELECTION, workspace)
+    assert all(r.passed for r in pipeline.finalize_media_receipts(workspace))
+    generation = (
+        workspace
+        / json.loads((workspace / "media-current.json").read_text())["generation"]
+    )
+    summary = json.loads((generation / "batch.json").read_text())
+    private = list((generation / "media-cache").rglob("*"))
+    assert len([p for p in private if p.is_file()]) == 4
+    for path in private:
+        if path.is_file():
+            assert (
+                summary["files"][str(path.relative_to(generation))]
+                == hashlib.sha256(path.read_bytes()).hexdigest()
+            )
+
+
+def test_private_snapshot_digest_cannot_escape_generation(
+    tmp_path: Path, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    workspace, events = with_image(tmp_path)
+    monkeypatch.setattr(pipeline, "download_image", fake_download)
+    for event in events:
+        pipeline.assign_media(event, SELECTION, workspace)
+    stage = (
+        workspace
+        / json.loads((workspace / "media-staging.json").read_text())["generation"]
+    )
+    decisions = json.loads((stage / "decisions.json").read_text())
+    for decision in decisions.values():
+        decision["candidate"]["upstream_sha1"] = "../../../private"
+    (stage / "decisions.json").write_text(json.dumps(decisions))
+    (tmp_path / "private.bin").write_bytes(pixels())
+    (tmp_path / "private.meta.json").write_text("{}")
+    receipts = pipeline.finalize_media_receipts(workspace)
+    assert all(not r.passed for r in receipts)
+    assert not (workspace / "media-generations/private.bin").exists()
+
+
 def test_failed_download_has_reasoned_fallback(
     tmp_path: Path, monkeypatch: pytest.MonkeyPatch
 ) -> None:
