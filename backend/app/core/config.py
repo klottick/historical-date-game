@@ -56,6 +56,7 @@ class Settings(BaseSettings):
     POSTGRES_PASSWORD: str = ""
     POSTGRES_DB: str = ""
     GAME_DATA_DIR: Path = Path("../data/game")
+    PUBLIC_REGISTRATION_ENABLED: bool = True
 
     @computed_field  # type: ignore[prop-decorator]
     @property

@@ -128,6 +128,10 @@ class GameOptions(PublicModel):
     registration_open: bool
 
 
+class PublicConfig(PublicModel):
+    registration_open: bool
+
+
 class DailyOverview(PublicModel):
     day: date
     reset_at: datetime

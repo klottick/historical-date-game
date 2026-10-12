@@ -1,6 +1,7 @@
 import uuid
 from unittest.mock import patch
 
+import pytest
 from fastapi.testclient import TestClient
 from sqlmodel import Session, select
 
@@ -9,6 +10,44 @@ from app.core.config import settings
 from app.core.security import verify_password
 from app.models import User, UserCreate
 from tests.utils.utils import random_email, random_lower_string
+
+
+def test_signup_gate_preserves_admin_enrollment(
+    client: TestClient,
+    superuser_token_headers: dict[str, str],
+    db: Session,
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    monkeypatch.setattr(settings, "PUBLIC_REGISTRATION_ENABLED", False)
+    data = {"email": random_email(), "password": random_lower_string()}
+    response = client.post(f"{settings.API_V1_STR}/users/signup", json=data)
+    assert response.status_code == 403
+    assert crud.get_user_by_email(session=db, email=data["email"]) is None
+    created = client.post(
+        f"{settings.API_V1_STR}/users/", headers=superuser_token_headers, json=data
+    )
+    assert created.status_code == 200
+    assert created.json()["email"] == data["email"]
+    login = client.post(
+        f"{settings.API_V1_STR}/login/access-token",
+        data={"username": data["email"], "password": data["password"]},
+    )
+    assert login.status_code == 200
+    assert (
+        client.get(
+            f"{settings.API_V1_STR}/users/me",
+            headers={"Authorization": f"Bearer {login.json()['access_token']}"},
+        ).status_code
+        == 200
+    )
+    monkeypatch.setattr(settings, "PUBLIC_REGISTRATION_ENABLED", True)
+    assert (
+        client.post(
+            f"{settings.API_V1_STR}/users/signup",
+            json={**data, "email": random_email()},
+        ).status_code
+        == 200
+    )
 
 
 def test_get_users_superuser_me(

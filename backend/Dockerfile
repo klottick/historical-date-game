@@ -2,7 +2,8 @@
 # Install the stable runtime through uv on a stable Debian base instead.
 FROM debian:trixie-slim
 
-RUN apt-get update && apt-get install -y --no-install-recommends ca-certificates curl \
+# mwparserfromhell's Python 3.15 tokenizer currently builds from source.
+RUN apt-get update && apt-get install -y --no-install-recommends ca-certificates curl build-essential \
     && rm -rf /var/lib/apt/lists/*
 
 ENV PYTHONUNBUFFERED=1

@@ -202,6 +202,62 @@ active. Shut down the host backend when finished and stop only owned services
 with `docker compose -p hdg-beta-baseline stop db mailcatcher`. Never use broad
 `docker compose down -v` cleanup or touch unrelated stacks/volumes.
 
+## Game API, beta enrollment, and immutable media
+
+All `/api/v1/games` endpoints require the existing bearer authentication. Commands
+accept only the public DTO fields; answers, scores, seeds, pools, and ordering
+remain server-side. Daily always uses the server's timezone-aware UTC date;
+client day/seed/config inputs cannot select a scored attempt. Game service errors
+use `detail: {code, message}` with 404 for missing/foreign runs, 409 for conflicting
+operations or stale revisions, 422 for invalid commands, and 503 for unavailable
+catalog/Daily policy. Missing credentials return 401.
+
+`PUBLIC_REGISTRATION_ENABLED` defaults to `true` for local development and existing
+tests. **Explicitly set `PUBLIC_REGISTRATION_ENABLED=false` for the friends beta.**
+This disables only public `/users/signup` (403); administrator enrollment, login,
+account management, and password recovery remain unchanged. Unauthenticated
+`GET /api/v1/utils/public-config` contains only `registration_open`; authenticated
+game options mirror that same flag and do not expose private catalog fields.
+
+`GAME_DATA_DIR/media/<release_id>/<sha256>.svg` and `.webp` are the only served
+paths under `/media`. Provision each release's retained public assets into this
+tree as real files, not symlinks, and mount the tree read-only. Keep catalogs,
+manifests, release metadata, answers, and importer workspaces outside it. No
+directory listings, index files, named-year assets, or symlinks (including in-tree
+aliases and mount-root symlinks) are served. A missing local media directory is
+allowed at startup and returns 404. A missing active catalog returns 503 on use.
+Public card credits and original source/license URLs must be preserved by clients.
+
+### Packaged Daily policy and client generation
+
+`docs/research/source-selection.json` is the versioned machine-approved source
+policy. Daily's runtime copy is `backend/app/game/source-selection.json`, included
+by the existing backend-only Docker context and Python package. When the source
+policy intentionally changes, produce the runtime copy from the policy, never
+edit the copy independently:
+
+```bash
+cp docs/research/source-selection.json backend/app/game/source-selection.json
+cd backend
+POSTGRES_DB=historical_date_game_test POSTGRES_PORT=5433 \
+  uv run pytest tests/api/routes/test_game_api.py -q
+```
+
+The equality regression compares exact bytes, executes the copied backend package
+without root `docs`, and verifies missing/unknown policy fails closed. The Daily
+integration regression checks the four approved categories yield the proper
+selected pool rather than all events. There is no mutable public policy override;
+existing date definitions remain frozen. The Docker build installs build tools
+because `mwparserfromhell` currently compiles its tokenizer for Python 3.15.
+
+From the repository root, with Node 26.11.1 and `backend/.venv/bin` on `PATH`, run
+`bash scripts/generate-client.sh` twice and compare checksums of
+`frontend/openapi.json` and every `frontend/src/client/` file. Never manually edit
+generated API files. Only public DTOs belong in OpenAPI/client schemas; private
+event/source records, seed, pool/order, and account identity must not appear in
+game responses. Run backend tests/lint/types and frontend units/lint/types/build
+after regeneration; no game UI is included in B5.
+
 ## Pre-commits and code linting
 
 we are using a tool called [pre-commit](https://pre-commit.com/) for code linting and formatting.

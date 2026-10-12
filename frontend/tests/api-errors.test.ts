@@ -46,3 +46,26 @@ test("Network error displays its message", () => {
 
   assert.equal(message, "Network Error")
 })
+
+test("Game errors display structured detail.message", () => {
+  const error = new AxiosError(
+    "Request failed",
+    "ERR_BAD_REQUEST",
+    undefined,
+    undefined,
+    {
+      data: {
+        detail: { code: "stale_revision", message: "Game command rejected" },
+      },
+      status: 409,
+      statusText: "Conflict",
+      headers: {},
+      config: { headers: new AxiosHeaders() },
+    },
+  )
+  let message = ""
+  handleError.call((value) => {
+    message = value
+  }, error)
+  assert.equal(message, "Game command rejected")
+})

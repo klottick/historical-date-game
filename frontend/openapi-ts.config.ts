@@ -32,7 +32,7 @@ export default defineConfig({
         nesting: "operationId",
         methodName: (name) => {
           const method = name.replace(
-            /^(items|users|login|private|utils)[-_]?/i,
+            /^(games|items|users|login|private|utils)[-_]?/i,
             "",
           )
           return method.charAt(0).toLowerCase() + method.slice(1)

@@ -9,3 +9,5 @@ cd ..
 mv openapi.json frontend/
 cd frontend
 npm run generate-client
+# Keep the generated specification compatible with the frontend lint contract.
+npx biome format --write openapi.json

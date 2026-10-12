@@ -1,7 +1,7 @@
 """Fixed, machine-approved Daily selection; never infer an all-category default."""
 
 from dataclasses import dataclass
-from pathlib import Path
+from importlib.resources import files
 
 from app.content.schemas import CATEGORY_IDS, SourceSelection
 
@@ -28,10 +28,6 @@ class DailyConfig:
 
 def load_daily_config() -> DailyConfig:
     selection = SourceSelection.model_validate_json(
-        Path(__file__)
-        .resolve()
-        .parents[3]
-        .joinpath("docs/research/source-selection.json")
-        .read_bytes()
+        files("app.game").joinpath("source-selection.json").read_bytes()
     )
     return DailyConfig(tuple(selection.daily_category_ids), min_gap=1)

@@ -10,6 +10,27 @@ import {
   urlSearchParamsBodySerializer,
 } from "./client/index.ts"
 import type {
+  GamesPlaceCardData,
+  GamesPlaceCardErrors,
+  GamesPlaceCardResponses,
+  GamesReadActiveRunsData,
+  GamesReadActiveRunsResponses,
+  GamesReadDailyData,
+  GamesReadDailyResponses,
+  GamesReadLeaderboardData,
+  GamesReadLeaderboardErrors,
+  GamesReadLeaderboardResponses,
+  GamesReadOptionsData,
+  GamesReadOptionsResponses,
+  GamesReadRunData,
+  GamesReadRunErrors,
+  GamesReadRunResponses,
+  GamesStartDailyData,
+  GamesStartDailyErrors,
+  GamesStartDailyResponses,
+  GamesStartFreeplayData,
+  GamesStartFreeplayErrors,
+  GamesStartFreeplayResponses,
   ItemsCreateItemData,
   ItemsCreateItemErrors,
   ItemsCreateItemResponses,
@@ -72,6 +93,8 @@ import type {
   UsersUpdateUserResponses,
   UtilsHealthCheckData,
   UtilsHealthCheckResponses,
+  UtilsPublicConfigData,
+  UtilsPublicConfigResponses,
   UtilsTestEmailData,
   UtilsTestEmailErrors,
   UtilsTestEmailResponses,
@@ -476,6 +499,23 @@ export class UsersService {
 
 export class UtilsService {
   /**
+   * Public Config
+   */
+  public static publicConfig<ThrowOnError extends boolean = false>(
+    options?: Options<UtilsPublicConfigData, ThrowOnError>,
+  ): RequestResult<UtilsPublicConfigResponses, unknown, ThrowOnError> {
+    return (options?.client ?? client).get<
+      UtilsPublicConfigResponses,
+      unknown,
+      ThrowOnError
+    >({
+      responseType: "json",
+      url: "/api/v1/utils/public-config",
+      ...options,
+    })
+  }
+
+  /**
    * Test Email
    *
    * Test emails.
@@ -639,6 +679,180 @@ export class ItemsService {
         "Content-Type": "application/json",
         ...options.headers,
       },
+    })
+  }
+}
+
+export class GamesService {
+  /**
+   * Read Options
+   */
+  public static readOptions<ThrowOnError extends boolean = false>(
+    options?: Options<GamesReadOptionsData, ThrowOnError>,
+  ): RequestResult<GamesReadOptionsResponses, unknown, ThrowOnError> {
+    return (options?.client ?? client).get<
+      GamesReadOptionsResponses,
+      unknown,
+      ThrowOnError
+    >({
+      responseType: "json",
+      security: [{ scheme: "bearer", type: "http" }],
+      url: "/api/v1/games/options",
+      ...options,
+    })
+  }
+
+  /**
+   * Start Freeplay
+   */
+  public static startFreeplay<ThrowOnError extends boolean = false>(
+    options: Options<GamesStartFreeplayData, ThrowOnError>,
+  ): RequestResult<
+    GamesStartFreeplayResponses,
+    GamesStartFreeplayErrors,
+    ThrowOnError
+  > {
+    return (options.client ?? client).post<
+      GamesStartFreeplayResponses,
+      GamesStartFreeplayErrors,
+      ThrowOnError
+    >({
+      responseType: "json",
+      security: [{ scheme: "bearer", type: "http" }],
+      url: "/api/v1/games/freeplay",
+      ...options,
+      headers: {
+        "Content-Type": "application/json",
+        ...options.headers,
+      },
+    })
+  }
+
+  /**
+   * Read Active Runs
+   */
+  public static readActiveRuns<ThrowOnError extends boolean = false>(
+    options?: Options<GamesReadActiveRunsData, ThrowOnError>,
+  ): RequestResult<GamesReadActiveRunsResponses, unknown, ThrowOnError> {
+    return (options?.client ?? client).get<
+      GamesReadActiveRunsResponses,
+      unknown,
+      ThrowOnError
+    >({
+      responseType: "json",
+      security: [{ scheme: "bearer", type: "http" }],
+      url: "/api/v1/games/active-runs",
+      ...options,
+    })
+  }
+
+  /**
+   * Read Run
+   */
+  public static readRun<ThrowOnError extends boolean = false>(
+    options: Options<GamesReadRunData, ThrowOnError>,
+  ): RequestResult<GamesReadRunResponses, GamesReadRunErrors, ThrowOnError> {
+    return (options.client ?? client).get<
+      GamesReadRunResponses,
+      GamesReadRunErrors,
+      ThrowOnError
+    >({
+      responseType: "json",
+      security: [{ scheme: "bearer", type: "http" }],
+      url: "/api/v1/games/runs/{run_id}",
+      ...options,
+    })
+  }
+
+  /**
+   * Place Card
+   */
+  public static placeCard<ThrowOnError extends boolean = false>(
+    options: Options<GamesPlaceCardData, ThrowOnError>,
+  ): RequestResult<
+    GamesPlaceCardResponses,
+    GamesPlaceCardErrors,
+    ThrowOnError
+  > {
+    return (options.client ?? client).post<
+      GamesPlaceCardResponses,
+      GamesPlaceCardErrors,
+      ThrowOnError
+    >({
+      responseType: "json",
+      security: [{ scheme: "bearer", type: "http" }],
+      url: "/api/v1/games/runs/{run_id}/placements",
+      ...options,
+      headers: {
+        "Content-Type": "application/json",
+        ...options.headers,
+      },
+    })
+  }
+
+  /**
+   * Read Daily
+   */
+  public static readDaily<ThrowOnError extends boolean = false>(
+    options?: Options<GamesReadDailyData, ThrowOnError>,
+  ): RequestResult<GamesReadDailyResponses, unknown, ThrowOnError> {
+    return (options?.client ?? client).get<
+      GamesReadDailyResponses,
+      unknown,
+      ThrowOnError
+    >({
+      responseType: "json",
+      security: [{ scheme: "bearer", type: "http" }],
+      url: "/api/v1/games/daily",
+      ...options,
+    })
+  }
+
+  /**
+   * Start Daily
+   */
+  public static startDaily<ThrowOnError extends boolean = false>(
+    options: Options<GamesStartDailyData, ThrowOnError>,
+  ): RequestResult<
+    GamesStartDailyResponses,
+    GamesStartDailyErrors,
+    ThrowOnError
+  > {
+    return (options.client ?? client).post<
+      GamesStartDailyResponses,
+      GamesStartDailyErrors,
+      ThrowOnError
+    >({
+      responseType: "json",
+      security: [{ scheme: "bearer", type: "http" }],
+      url: "/api/v1/games/daily",
+      ...options,
+      headers: {
+        "Content-Type": "application/json",
+        ...options.headers,
+      },
+    })
+  }
+
+  /**
+   * Read Leaderboard
+   */
+  public static readLeaderboard<ThrowOnError extends boolean = false>(
+    options: Options<GamesReadLeaderboardData, ThrowOnError>,
+  ): RequestResult<
+    GamesReadLeaderboardResponses,
+    GamesReadLeaderboardErrors,
+    ThrowOnError
+  > {
+    return (options.client ?? client).get<
+      GamesReadLeaderboardResponses,
+      GamesReadLeaderboardErrors,
+      ThrowOnError
+    >({
+      responseType: "json",
+      security: [{ scheme: "bearer", type: "http" }],
+      url: "/api/v1/games/daily/{day}/leaderboard",
+      ...options,
     })
   }
 }

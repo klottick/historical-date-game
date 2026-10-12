@@ -35,6 +35,117 @@ export type BodyLoginLoginAccessToken = {
 }
 
 /**
+ * CategoryRecord
+ */
+export type CategoryRecord = {
+  /**
+   * Id
+   */
+  id: string
+  /**
+   * Label
+   */
+  label: string
+}
+
+/**
+ * CreditPublic
+ */
+export type CreditPublic = {
+  /**
+   * Label
+   */
+  label: string
+  /**
+   * Url
+   */
+  url: string | null
+}
+
+/**
+ * DailyOverview
+ */
+export type DailyOverview = {
+  /**
+   * Day
+   */
+  day: string
+  /**
+   * Reset At
+   */
+  reset_at: string
+  /**
+   * Category Ids
+   */
+  category_ids: Array<string>
+  /**
+   * Attempt Run Id
+   */
+  attempt_run_id: string | null
+}
+
+/**
+ * DailyStart
+ */
+export type DailyStart = {
+  /**
+   * Operation Id
+   */
+  operation_id: string
+}
+
+/**
+ * FreeplayStart
+ */
+export type FreeplayStart = {
+  /**
+   * Operation Id
+   */
+  operation_id: string
+  /**
+   * Catalog Release Id
+   */
+  catalog_release_id: string
+  config: GameConfig
+}
+
+/**
+ * GameConfig
+ */
+export type GameConfig = {
+  /**
+   * Category Ids
+   */
+  category_ids: Array<string>
+  start: YearInput
+  end: YearInput
+  /**
+   * Min Gap
+   */
+  min_gap: number
+}
+
+/**
+ * GameOptions
+ */
+export type GameOptions = {
+  /**
+   * Catalog Release Id
+   */
+  catalog_release_id: string
+  /**
+   * Categories
+   */
+  categories: Array<CategoryRecord>
+  start: YearInput
+  end: YearInput
+  /**
+   * Registration Open
+   */
+  registration_open: boolean
+}
+
+/**
  * HTTPValidationError
  */
 export type HttpValidationError = {
@@ -109,6 +220,68 @@ export type ItemsPublic = {
 }
 
 /**
+ * LeaderboardEntry
+ */
+export type LeaderboardEntry = {
+  /**
+   * Display Name
+   */
+  display_name: string
+  /**
+   * Streak
+   */
+  streak: number
+  /**
+   * Status
+   */
+  status: "lost" | "won"
+  /**
+   * Rank
+   */
+  rank: number
+}
+
+/**
+ * LeaderboardPublic
+ */
+export type LeaderboardPublic = {
+  /**
+   * Day
+   */
+  day: string
+  /**
+   * Entries
+   */
+  entries: Array<LeaderboardEntry>
+}
+
+/**
+ * MediaPublic
+ */
+export type MediaPublic = {
+  /**
+   * Url
+   */
+  url: string
+  /**
+   * Fallback Url
+   */
+  fallback_url: string
+  /**
+   * Alt Text
+   */
+  alt_text: string
+  /**
+   * Fit
+   */
+  fit: string
+  /**
+   * Credits
+   */
+  credits: Array<CreditPublic>
+}
+
+/**
  * Message
  */
 export type Message = {
@@ -116,6 +289,21 @@ export type Message = {
    * Message
    */
   message: string
+}
+
+/**
+ * MoveFeedback
+ */
+export type MoveFeedback = {
+  /**
+   * Correct
+   */
+  correct: boolean
+  card: RevealedCard
+  /**
+   * Correct Slot
+   */
+  correct_slot: number
 }
 
 /**
@@ -130,6 +318,47 @@ export type NewPassword = {
    * New Password
    */
   new_password: string
+}
+
+/**
+ * PendingCard
+ */
+export type PendingCard = {
+  /**
+   * Event Id
+   */
+  event_id: string
+  /**
+   * Prompt
+   */
+  prompt: string
+  /**
+   * Category Ids
+   */
+  category_ids: Array<string>
+  media: MediaPublic
+}
+
+/**
+ * PlaceCommand
+ */
+export type PlaceCommand = {
+  /**
+   * Operation Id
+   */
+  operation_id: string
+  /**
+   * Expected Revision
+   */
+  expected_revision: number
+  /**
+   * Event Id
+   */
+  event_id: string
+  /**
+   * Slot
+   */
+  slot: number
 }
 
 /**
@@ -152,6 +381,103 @@ export type PrivateUserCreate = {
    * Is Verified
    */
   is_verified?: boolean
+}
+
+/**
+ * PublicConfig
+ */
+export type PublicConfig = {
+  /**
+   * Registration Open
+   */
+  registration_open: boolean
+}
+
+/**
+ * RevealedCard
+ */
+export type RevealedCard = {
+  /**
+   * Event Id
+   */
+  event_id: string
+  /**
+   * Prompt
+   */
+  prompt: string
+  /**
+   * Category Ids
+   */
+  category_ids: Array<string>
+  media: MediaPublic
+  year: YearInput
+  /**
+   * Explanation
+   */
+  explanation: string
+  /**
+   * Sources
+   */
+  sources: Array<SourcePublic>
+}
+
+/**
+ * RunPublic
+ */
+export type RunPublic = {
+  /**
+   * Run Id
+   */
+  run_id: string
+  /**
+   * Mode
+   */
+  mode: "daily" | "freeplay"
+  /**
+   * Daily Date
+   */
+  daily_date: string | null
+  /**
+   * Catalog Release Id
+   */
+  catalog_release_id: string
+  config: GameConfig
+  /**
+   * Categories
+   */
+  categories: Array<CategoryRecord>
+  /**
+   * Status
+   */
+  status: "active" | "lost" | "won"
+  /**
+   * Streak
+   */
+  streak: number
+  /**
+   * Revision
+   */
+  revision: number
+  /**
+   * Timeline
+   */
+  timeline: Array<RevealedCard>
+  pending: PendingCard | null
+  feedback: MoveFeedback | null
+}
+
+/**
+ * SourcePublic
+ */
+export type SourcePublic = {
+  /**
+   * Label
+   */
+  label: string
+  /**
+   * Url
+   */
+  url: string
 }
 
 /**
@@ -332,6 +658,20 @@ export type ValidationError = {
   ctx?: {
     [key: string]: unknown
   }
+}
+
+/**
+ * YearInput
+ */
+export type YearInput = {
+  /**
+   * Value
+   */
+  value: number
+  /**
+   * Era
+   */
+  era: "BCE" | "CE"
 }
 
 export type LoginLoginAccessTokenData = {
@@ -743,6 +1083,23 @@ export type UsersUpdateUserResponses = {
 export type UsersUpdateUserResponse =
   UsersUpdateUserResponses[keyof UsersUpdateUserResponses]
 
+export type UtilsPublicConfigData = {
+  body?: never
+  path?: never
+  query?: never
+  url: "/api/v1/utils/public-config"
+}
+
+export type UtilsPublicConfigResponses = {
+  /**
+   * Successful Response
+   */
+  200: PublicConfig
+}
+
+export type UtilsPublicConfigResponse =
+  UtilsPublicConfigResponses[keyof UtilsPublicConfigResponses]
+
 export type UtilsTestEmailData = {
   body?: never
   path?: never
@@ -951,6 +1308,208 @@ export type ItemsUpdateItemResponses = {
 
 export type ItemsUpdateItemResponse =
   ItemsUpdateItemResponses[keyof ItemsUpdateItemResponses]
+
+export type GamesReadOptionsData = {
+  body?: never
+  path?: never
+  query?: never
+  url: "/api/v1/games/options"
+}
+
+export type GamesReadOptionsResponses = {
+  /**
+   * Successful Response
+   */
+  200: GameOptions
+}
+
+export type GamesReadOptionsResponse =
+  GamesReadOptionsResponses[keyof GamesReadOptionsResponses]
+
+export type GamesStartFreeplayData = {
+  body: FreeplayStart
+  path?: never
+  query?: never
+  url: "/api/v1/games/freeplay"
+}
+
+export type GamesStartFreeplayErrors = {
+  /**
+   * Validation Error
+   */
+  422: HttpValidationError
+}
+
+export type GamesStartFreeplayError =
+  GamesStartFreeplayErrors[keyof GamesStartFreeplayErrors]
+
+export type GamesStartFreeplayResponses = {
+  /**
+   * Successful Response
+   */
+  200: RunPublic
+}
+
+export type GamesStartFreeplayResponse =
+  GamesStartFreeplayResponses[keyof GamesStartFreeplayResponses]
+
+export type GamesReadActiveRunsData = {
+  body?: never
+  path?: never
+  query?: never
+  url: "/api/v1/games/active-runs"
+}
+
+export type GamesReadActiveRunsResponses = {
+  /**
+   * Response Games-Read Active Runs
+   *
+   * Successful Response
+   */
+  200: Array<RunPublic>
+}
+
+export type GamesReadActiveRunsResponse =
+  GamesReadActiveRunsResponses[keyof GamesReadActiveRunsResponses]
+
+export type GamesReadRunData = {
+  body?: never
+  path: {
+    /**
+     * Run Id
+     */
+    run_id: string
+  }
+  query?: never
+  url: "/api/v1/games/runs/{run_id}"
+}
+
+export type GamesReadRunErrors = {
+  /**
+   * Validation Error
+   */
+  422: HttpValidationError
+}
+
+export type GamesReadRunError = GamesReadRunErrors[keyof GamesReadRunErrors]
+
+export type GamesReadRunResponses = {
+  /**
+   * Successful Response
+   */
+  200: RunPublic
+}
+
+export type GamesReadRunResponse =
+  GamesReadRunResponses[keyof GamesReadRunResponses]
+
+export type GamesPlaceCardData = {
+  body: PlaceCommand
+  path: {
+    /**
+     * Run Id
+     */
+    run_id: string
+  }
+  query?: never
+  url: "/api/v1/games/runs/{run_id}/placements"
+}
+
+export type GamesPlaceCardErrors = {
+  /**
+   * Validation Error
+   */
+  422: HttpValidationError
+}
+
+export type GamesPlaceCardError =
+  GamesPlaceCardErrors[keyof GamesPlaceCardErrors]
+
+export type GamesPlaceCardResponses = {
+  /**
+   * Successful Response
+   */
+  200: RunPublic
+}
+
+export type GamesPlaceCardResponse =
+  GamesPlaceCardResponses[keyof GamesPlaceCardResponses]
+
+export type GamesReadDailyData = {
+  body?: never
+  path?: never
+  query?: never
+  url: "/api/v1/games/daily"
+}
+
+export type GamesReadDailyResponses = {
+  /**
+   * Successful Response
+   */
+  200: DailyOverview
+}
+
+export type GamesReadDailyResponse =
+  GamesReadDailyResponses[keyof GamesReadDailyResponses]
+
+export type GamesStartDailyData = {
+  body: DailyStart
+  path?: never
+  query?: never
+  url: "/api/v1/games/daily"
+}
+
+export type GamesStartDailyErrors = {
+  /**
+   * Validation Error
+   */
+  422: HttpValidationError
+}
+
+export type GamesStartDailyError =
+  GamesStartDailyErrors[keyof GamesStartDailyErrors]
+
+export type GamesStartDailyResponses = {
+  /**
+   * Successful Response
+   */
+  200: RunPublic
+}
+
+export type GamesStartDailyResponse =
+  GamesStartDailyResponses[keyof GamesStartDailyResponses]
+
+export type GamesReadLeaderboardData = {
+  body?: never
+  path: {
+    /**
+     * Day
+     */
+    day: string
+  }
+  query?: never
+  url: "/api/v1/games/daily/{day}/leaderboard"
+}
+
+export type GamesReadLeaderboardErrors = {
+  /**
+   * Validation Error
+   */
+  422: HttpValidationError
+}
+
+export type GamesReadLeaderboardError =
+  GamesReadLeaderboardErrors[keyof GamesReadLeaderboardErrors]
+
+export type GamesReadLeaderboardResponses = {
+  /**
+   * Successful Response
+   */
+  200: LeaderboardPublic
+}
+
+export type GamesReadLeaderboardResponse =
+  GamesReadLeaderboardResponses[keyof GamesReadLeaderboardResponses]
 
 export type PrivateCreateUserData = {
   body: PrivateUserCreate

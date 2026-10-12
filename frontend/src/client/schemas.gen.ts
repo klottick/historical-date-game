@@ -57,6 +57,190 @@ export const Body_login_login_access_tokenSchema = {
   title: "Body_login-login_access_token",
 } as const
 
+export const CategoryRecordSchema = {
+  properties: {
+    id: {
+      type: "string",
+      minLength: 1,
+      pattern: "\\S",
+      title: "Id",
+    },
+    label: {
+      type: "string",
+      minLength: 1,
+      pattern: "\\S",
+      title: "Label",
+    },
+  },
+  additionalProperties: false,
+  type: "object",
+  required: ["id", "label"],
+  title: "CategoryRecord",
+} as const
+
+export const CreditPublicSchema = {
+  properties: {
+    label: {
+      type: "string",
+      title: "Label",
+    },
+    url: {
+      anyOf: [
+        {
+          type: "string",
+        },
+        {
+          type: "null",
+        },
+      ],
+      title: "Url",
+    },
+  },
+  additionalProperties: false,
+  type: "object",
+  required: ["label", "url"],
+  title: "CreditPublic",
+} as const
+
+export const DailyOverviewSchema = {
+  properties: {
+    day: {
+      type: "string",
+      format: "date",
+      title: "Day",
+    },
+    reset_at: {
+      type: "string",
+      format: "date-time",
+      title: "Reset At",
+    },
+    category_ids: {
+      items: {
+        type: "string",
+      },
+      type: "array",
+      title: "Category Ids",
+    },
+    attempt_run_id: {
+      anyOf: [
+        {
+          type: "string",
+          format: "uuid",
+        },
+        {
+          type: "null",
+        },
+      ],
+      title: "Attempt Run Id",
+    },
+  },
+  additionalProperties: false,
+  type: "object",
+  required: ["day", "reset_at", "category_ids", "attempt_run_id"],
+  title: "DailyOverview",
+} as const
+
+export const DailyStartSchema = {
+  properties: {
+    operation_id: {
+      type: "string",
+      format: "uuid",
+      title: "Operation Id",
+    },
+  },
+  additionalProperties: false,
+  type: "object",
+  required: ["operation_id"],
+  title: "DailyStart",
+} as const
+
+export const FreeplayStartSchema = {
+  properties: {
+    operation_id: {
+      type: "string",
+      format: "uuid",
+      title: "Operation Id",
+    },
+    catalog_release_id: {
+      type: "string",
+      maxLength: 128,
+      minLength: 1,
+      title: "Catalog Release Id",
+    },
+    config: {
+      $ref: "#/components/schemas/GameConfig",
+    },
+  },
+  additionalProperties: false,
+  type: "object",
+  required: ["operation_id", "catalog_release_id", "config"],
+  title: "FreeplayStart",
+} as const
+
+export const GameConfigSchema = {
+  properties: {
+    category_ids: {
+      items: {
+        type: "string",
+      },
+      type: "array",
+      minItems: 1,
+      title: "Category Ids",
+    },
+    start: {
+      $ref: "#/components/schemas/YearInput",
+    },
+    end: {
+      $ref: "#/components/schemas/YearInput",
+    },
+    min_gap: {
+      type: "integer",
+      minimum: 1,
+      title: "Min Gap",
+    },
+  },
+  additionalProperties: false,
+  type: "object",
+  required: ["category_ids", "start", "end", "min_gap"],
+  title: "GameConfig",
+} as const
+
+export const GameOptionsSchema = {
+  properties: {
+    catalog_release_id: {
+      type: "string",
+      title: "Catalog Release Id",
+    },
+    categories: {
+      items: {
+        $ref: "#/components/schemas/CategoryRecord",
+      },
+      type: "array",
+      title: "Categories",
+    },
+    start: {
+      $ref: "#/components/schemas/YearInput",
+    },
+    end: {
+      $ref: "#/components/schemas/YearInput",
+    },
+    registration_open: {
+      type: "boolean",
+      title: "Registration Open",
+    },
+  },
+  additionalProperties: false,
+  type: "object",
+  required: [
+    "catalog_release_id",
+    "categories",
+    "start",
+    "end",
+    "registration_open",
+  ],
+  title: "GameOptions",
+} as const
+
 export const HTTPValidationErrorSchema = {
   properties: {
     detail: {
@@ -184,6 +368,85 @@ export const ItemsPublicSchema = {
   title: "ItemsPublic",
 } as const
 
+export const LeaderboardEntrySchema = {
+  properties: {
+    display_name: {
+      type: "string",
+      title: "Display Name",
+    },
+    streak: {
+      type: "integer",
+      title: "Streak",
+    },
+    status: {
+      type: "string",
+      enum: ["lost", "won"],
+      title: "Status",
+    },
+    rank: {
+      type: "integer",
+      title: "Rank",
+    },
+  },
+  additionalProperties: false,
+  type: "object",
+  required: ["display_name", "streak", "status", "rank"],
+  title: "LeaderboardEntry",
+} as const
+
+export const LeaderboardPublicSchema = {
+  properties: {
+    day: {
+      type: "string",
+      format: "date",
+      title: "Day",
+    },
+    entries: {
+      items: {
+        $ref: "#/components/schemas/LeaderboardEntry",
+      },
+      type: "array",
+      title: "Entries",
+    },
+  },
+  additionalProperties: false,
+  type: "object",
+  required: ["day", "entries"],
+  title: "LeaderboardPublic",
+} as const
+
+export const MediaPublicSchema = {
+  properties: {
+    url: {
+      type: "string",
+      title: "Url",
+    },
+    fallback_url: {
+      type: "string",
+      title: "Fallback Url",
+    },
+    alt_text: {
+      type: "string",
+      title: "Alt Text",
+    },
+    fit: {
+      type: "string",
+      title: "Fit",
+    },
+    credits: {
+      items: {
+        $ref: "#/components/schemas/CreditPublic",
+      },
+      type: "array",
+      title: "Credits",
+    },
+  },
+  additionalProperties: false,
+  type: "object",
+  required: ["url", "fallback_url", "alt_text", "fit", "credits"],
+  title: "MediaPublic",
+} as const
+
 export const MessageSchema = {
   properties: {
     message: {
@@ -194,6 +457,26 @@ export const MessageSchema = {
   type: "object",
   required: ["message"],
   title: "Message",
+} as const
+
+export const MoveFeedbackSchema = {
+  properties: {
+    correct: {
+      type: "boolean",
+      title: "Correct",
+    },
+    card: {
+      $ref: "#/components/schemas/RevealedCard",
+    },
+    correct_slot: {
+      type: "integer",
+      title: "Correct Slot",
+    },
+  },
+  additionalProperties: false,
+  type: "object",
+  required: ["correct", "card", "correct_slot"],
+  title: "MoveFeedback",
 } as const
 
 export const NewPasswordSchema = {
@@ -212,6 +495,62 @@ export const NewPasswordSchema = {
   type: "object",
   required: ["token", "new_password"],
   title: "NewPassword",
+} as const
+
+export const PendingCardSchema = {
+  properties: {
+    event_id: {
+      type: "string",
+      format: "uuid",
+      title: "Event Id",
+    },
+    prompt: {
+      type: "string",
+      title: "Prompt",
+    },
+    category_ids: {
+      items: {
+        type: "string",
+      },
+      type: "array",
+      title: "Category Ids",
+    },
+    media: {
+      $ref: "#/components/schemas/MediaPublic",
+    },
+  },
+  additionalProperties: false,
+  type: "object",
+  required: ["event_id", "prompt", "category_ids", "media"],
+  title: "PendingCard",
+} as const
+
+export const PlaceCommandSchema = {
+  properties: {
+    operation_id: {
+      type: "string",
+      format: "uuid",
+      title: "Operation Id",
+    },
+    expected_revision: {
+      type: "integer",
+      minimum: 0,
+      title: "Expected Revision",
+    },
+    event_id: {
+      type: "string",
+      format: "uuid",
+      title: "Event Id",
+    },
+    slot: {
+      type: "integer",
+      title: "Slot",
+    },
+  },
+  additionalProperties: false,
+  type: "object",
+  required: ["operation_id", "expected_revision", "event_id", "slot"],
+  title: "PlaceCommand",
 } as const
 
 export const PrivateUserCreateSchema = {
@@ -237,6 +576,184 @@ export const PrivateUserCreateSchema = {
   type: "object",
   required: ["email", "password", "full_name"],
   title: "PrivateUserCreate",
+} as const
+
+export const PublicConfigSchema = {
+  properties: {
+    registration_open: {
+      type: "boolean",
+      title: "Registration Open",
+    },
+  },
+  additionalProperties: false,
+  type: "object",
+  required: ["registration_open"],
+  title: "PublicConfig",
+} as const
+
+export const RevealedCardSchema = {
+  properties: {
+    event_id: {
+      type: "string",
+      format: "uuid",
+      title: "Event Id",
+    },
+    prompt: {
+      type: "string",
+      title: "Prompt",
+    },
+    category_ids: {
+      items: {
+        type: "string",
+      },
+      type: "array",
+      title: "Category Ids",
+    },
+    media: {
+      $ref: "#/components/schemas/MediaPublic",
+    },
+    year: {
+      $ref: "#/components/schemas/YearInput",
+    },
+    explanation: {
+      type: "string",
+      title: "Explanation",
+    },
+    sources: {
+      items: {
+        $ref: "#/components/schemas/SourcePublic",
+      },
+      type: "array",
+      title: "Sources",
+    },
+  },
+  additionalProperties: false,
+  type: "object",
+  required: [
+    "event_id",
+    "prompt",
+    "category_ids",
+    "media",
+    "year",
+    "explanation",
+    "sources",
+  ],
+  title: "RevealedCard",
+} as const
+
+export const RunPublicSchema = {
+  properties: {
+    run_id: {
+      type: "string",
+      format: "uuid",
+      title: "Run Id",
+    },
+    mode: {
+      type: "string",
+      enum: ["daily", "freeplay"],
+      title: "Mode",
+    },
+    daily_date: {
+      anyOf: [
+        {
+          type: "string",
+          format: "date",
+        },
+        {
+          type: "null",
+        },
+      ],
+      title: "Daily Date",
+    },
+    catalog_release_id: {
+      type: "string",
+      title: "Catalog Release Id",
+    },
+    config: {
+      $ref: "#/components/schemas/GameConfig",
+    },
+    categories: {
+      items: {
+        $ref: "#/components/schemas/CategoryRecord",
+      },
+      type: "array",
+      title: "Categories",
+    },
+    status: {
+      type: "string",
+      enum: ["active", "lost", "won"],
+      title: "Status",
+    },
+    streak: {
+      type: "integer",
+      title: "Streak",
+    },
+    revision: {
+      type: "integer",
+      title: "Revision",
+    },
+    timeline: {
+      items: {
+        $ref: "#/components/schemas/RevealedCard",
+      },
+      type: "array",
+      title: "Timeline",
+    },
+    pending: {
+      anyOf: [
+        {
+          $ref: "#/components/schemas/PendingCard",
+        },
+        {
+          type: "null",
+        },
+      ],
+    },
+    feedback: {
+      anyOf: [
+        {
+          $ref: "#/components/schemas/MoveFeedback",
+        },
+        {
+          type: "null",
+        },
+      ],
+    },
+  },
+  additionalProperties: false,
+  type: "object",
+  required: [
+    "run_id",
+    "mode",
+    "daily_date",
+    "catalog_release_id",
+    "config",
+    "categories",
+    "status",
+    "streak",
+    "revision",
+    "timeline",
+    "pending",
+    "feedback",
+  ],
+  title: "RunPublic",
+} as const
+
+export const SourcePublicSchema = {
+  properties: {
+    label: {
+      type: "string",
+      title: "Label",
+    },
+    url: {
+      type: "string",
+      title: "Url",
+    },
+  },
+  additionalProperties: false,
+  type: "object",
+  required: ["label", "url"],
+  title: "SourcePublic",
 } as const
 
 export const TokenSchema = {
@@ -532,4 +1049,23 @@ export const ValidationErrorSchema = {
   type: "object",
   required: ["loc", "msg", "type"],
   title: "ValidationError",
+} as const
+
+export const YearInputSchema = {
+  properties: {
+    value: {
+      type: "integer",
+      exclusiveMinimum: 0,
+      title: "Value",
+    },
+    era: {
+      type: "string",
+      enum: ["BCE", "CE"],
+      title: "Era",
+    },
+  },
+  additionalProperties: false,
+  type: "object",
+  required: ["value", "era"],
+  title: "YearInput",
 } as const

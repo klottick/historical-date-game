@@ -1,10 +1,13 @@
 import sentry_sdk
-from fastapi import FastAPI
+from fastapi import FastAPI, Request
+from fastapi.responses import JSONResponse
 from fastapi.routing import APIRoute
 from starlette.middleware.cors import CORSMiddleware
 
 from app.api.main import api_router
 from app.core.config import settings
+from app.game.run_service import GameServiceError
+from app.media import GameMediaFiles
 
 
 def custom_generate_unique_id(route: APIRoute) -> str:
@@ -31,3 +34,14 @@ if settings.all_cors_origins:
     )
 
 app.include_router(api_router, prefix=settings.API_V1_STR)
+
+
+@app.exception_handler(GameServiceError)
+async def game_service_error(_request: Request, exc: GameServiceError) -> JSONResponse:
+    return JSONResponse(
+        status_code=exc.status_code,
+        content={"detail": {"code": exc.code, "message": exc.message}},
+    )
+
+
+app.mount("/media", GameMediaFiles(settings.GAME_DATA_DIR / "media"), name="game-media")

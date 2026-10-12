@@ -5,7 +5,14 @@ function extractErrorMessage(err: Error): string {
   if (Array.isArray(errDetail) && errDetail.length > 0) {
     return errDetail[0].msg
   }
-  return errDetail || err.message || "Something went wrong."
+  if (typeof errDetail === "object" && typeof errDetail?.message === "string") {
+    return errDetail.message
+  }
+  return (
+    (typeof errDetail === "string" && errDetail) ||
+    err.message ||
+    "Something went wrong."
+  )
 }
 
 export const handleError = function (this: (msg: string) => void, err: Error) {

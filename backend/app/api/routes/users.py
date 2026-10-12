@@ -145,6 +145,8 @@ def register_user(session: SessionDep, user_in: UserRegister) -> Any:
     """
     Create new user without the need to be logged in.
     """
+    if not settings.PUBLIC_REGISTRATION_ENABLED:
+        raise HTTPException(status_code=403, detail="Public registration is closed")
     user = crud.get_user_by_email(session=session, email=user_in.email)
     if user:
         raise HTTPException(
