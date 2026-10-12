@@ -510,3 +510,345 @@ def test_missing_english_label_uses_exact_linked_article_title(tmp_path: Path) -
         "Synthetic Ada is born",
         "Synthetic Ada dies",
     }
+
+
+@pytest.mark.parametrize("initial", ["unsupported-milestone", "missing-entity"])
+def test_unresolved_alias_promotes_to_proven_exact_and_migrates_legacy_state(
+    tmp_path: Path, initial: str
+) -> None:
+    data = json.loads(FIXTURE.read_text())
+    data["records"] = data["records"][:1]
+    unresolved = copy.deepcopy(data)
+    if initial == "unsupported-milestone":
+        unresolved["records"][0]["milestone"] = "unsupported-research-milestone"
+    else:
+        unresolved["records"][0]["entity_id"] = ""
+    work = tmp_path / "work"
+    assert (
+        import_snapshot(
+            SelectedSourceAdapter(), snapshot(tmp_path, unresolved), work
+        ).quarantined
+        == 1
+    )
+    # Model an existing 618bca1 workspace, even after the new writer stops saving
+    # unresolved aliases: the read boundary must migrate this legacy state.
+    pointer = json.loads((work / "current.json").read_text())
+    state_path = work / pointer["generation"] / "state.json"
+    state = json.loads(state_path.read_text())
+    key = '["wikidata","synthetic-birth"]'
+    state["aliases"][key] = {
+        "identity_key": "unresolved:" + key,
+        "event_id": "00000000-0000-0000-0000-000000000001",
+    }
+    state_path.write_text(json.dumps(state))
+    report = import_snapshot(SelectedSourceAdapter(), snapshot(tmp_path, data), work)
+    assert (report.imported, report.quarantined) == (1, 0)
+    event = active(work, "candidates.jsonl")[0]
+    assert event["identity_key"] == "wikidata:Q900001:birth"
+    pointer = json.loads((work / "current.json").read_text())
+    aliases = json.loads((work / pointer["generation"] / "aliases.json").read_text())
+    assert aliases[key] == {
+        "identity_key": event["identity_key"],
+        "event_id": event["event_id"],
+    }
+    assert (
+        import_snapshot(
+            SelectedSourceAdapter(), snapshot(tmp_path, data), work
+        ).imported
+        == 0
+    )
+
+
+@pytest.mark.parametrize(
+    "text",
+    [
+        "{{Infobox person\n| name = Synthetic Ada\n}}\n<!-- obsolete example\n| birth_date = 1800\n-->",
+        "{{Unrelated example\n| birth_date = 1800\n}}",
+        "{{Infobox person\n| notes = {{Unrelated example\n| birth_date = 1800\n}}\n}}",
+        "<nowiki>{{Infobox person\n| birth_date = 1800\n}}</nowiki>",
+        "{{Documentation\n| example = {{Infobox person\n| birth_date = 1800\n}}\n}}",
+    ],
+)
+def test_inactive_or_unrelated_wiki_fields_cannot_substantiate_birth(
+    tmp_path: Path, text: str
+) -> None:
+    data = json.loads(FIXTURE.read_text())
+    data["records"] = data["records"][:1]
+    data["page"]["revisions"][0]["slots"]["main"]["content"] = text
+    work = tmp_path / "work"
+    report = import_snapshot(SelectedSourceAdapter(), snapshot(tmp_path, data), work)
+    assert (report.imported, report.quarantined) == (0, 1)
+    quarantined = active(work, "quarantine.jsonl")[0]
+    assert "unresolved_wikipedia_date" in quarantined["issue_codes"]
+    assert (
+        quarantined["raw"][0]["payload"]["page"]["revisions"][0]["slots"]["main"][
+            "content"
+        ]
+        == text
+    )
+
+
+@pytest.mark.parametrize(
+    "scope",
+    ["wikidata-day", "wikipedia-day", "wikidata-month", "day-conflict-with-year-wiki"],
+)
+def test_same_year_finer_date_conflicts_quarantine(tmp_path: Path, scope: str) -> None:
+    data = json.loads(FIXTURE.read_text())
+    data["records"] = data["records"][:1]
+    claim = data["entity"]["claims"]["P569"][0]
+    value = claim["mainsnak"]["datavalue"]["value"]
+    value["time"] = "+00000001800-01-02T00:00:00Z"
+    value["precision"] = 11
+    wiki = "1800-01-02"
+    if scope == "wikipedia-day":
+        wiki = "1800-11-12"
+    else:
+        other = copy.deepcopy(claim)
+        other["id"] += "-second"
+        other["mainsnak"]["datavalue"]["value"]["time"] = "+00000001800-02-03T00:00:00Z"
+        if scope == "wikidata-month":
+            value["precision"] = 10
+            value["time"] = "+00000001800-01-00T00:00:00Z"
+            other["mainsnak"]["datavalue"]["value"].update(
+                time="+00000001800-02-00T00:00:00Z", precision=10
+            )
+            wiki = "1800-01"
+        elif scope == "day-conflict-with-year-wiki":
+            wiki = "1800"
+        data["entity"]["claims"]["P569"].append(other)
+    data["page"]["revisions"][0]["slots"]["main"]["content"] = (
+        f"{{{{Infobox person\n| birth_date = {wiki}\n}}}}"
+    )
+    work = tmp_path / "work"
+    report = import_snapshot(SelectedSourceAdapter(), snapshot(tmp_path, data), work)
+    assert (report.imported, report.quarantined) == (0, 1)
+    assert "conflicting_dates" in active(work, "quarantine.jsonl")[0]["issue_codes"]
+
+
+def test_common_year_precision_is_not_overstated(tmp_path: Path) -> None:
+    data = json.loads(FIXTURE.read_text())
+    data["records"] = data["records"][:1]
+    value = data["entity"]["claims"]["P569"][0]["mainsnak"]["datavalue"]["value"]
+    value.update(time="+00000001800-01-02T00:00:00Z", precision=11)
+    work = tmp_path / "work"
+    assert (
+        import_snapshot(
+            SelectedSourceAdapter(), snapshot(tmp_path, data), work
+        ).imported
+        == 1
+    )
+    assert active(work, "candidates.jsonl")[0]["date_precision"] == "year"
+
+
+def test_date_template_cannot_hide_a_conflicting_day(tmp_path: Path) -> None:
+    data = json.loads(FIXTURE.read_text())
+    data["records"] = data["records"][:1]
+    data["entity"]["claims"]["P569"][0]["mainsnak"]["datavalue"]["value"].update(
+        time="+00000001800-01-02T00:00:00Z", precision=11
+    )
+    data["page"]["revisions"][0]["slots"]["main"]["content"] = (
+        "{{Infobox person\n| birth_date = {{birth date|1800|2|3}}\n}}"
+    )
+    work = tmp_path / "work"
+    assert (
+        import_snapshot(
+            SelectedSourceAdapter(), snapshot(tmp_path, data), work
+        ).quarantined
+        == 1
+    )
+    assert "conflicting_dates" in active(work, "quarantine.jsonl")[0]["issue_codes"]
+
+
+FIELD_EXAMPLES = json.loads(
+    (FIXTURE.parent / "selected-provider-fields.json").read_text()
+)["examples"]
+
+
+def modeled_fields(example: dict[str, Any]) -> dict[str, Any]:
+    data = json.loads(FIXTURE.read_text())
+    data["records"] = data["records"][:1]
+    data["records"][0].update(
+        milestone=example["milestone"], category_ids=[example["category"]]
+    )
+    claim = data["entity"]["claims"]["P569"][0]
+    claim["mainsnak"]["property"] = example["property"]
+    claim["mainsnak"]["datavalue"]["value"].update(
+        time=example["time"], precision=example["precision"]
+    )
+    data["entity"]["claims"] = {example["property"]: [claim]}
+    data["page"]["revisions"][0]["slots"]["main"]["content"] = (
+        f"{{{{{example['infobox']}\n| {example['field']} = {example['value']}\n}}}}"
+    )
+    return data
+
+
+@pytest.mark.parametrize(
+    "example", FIELD_EXAMPLES, ids=[e["category"] for e in FIELD_EXAMPLES]
+)
+def test_evidenced_ordinary_infobox_category_paths(
+    tmp_path: Path, example: dict[str, Any]
+) -> None:
+    data = modeled_fields(example)
+    work = tmp_path / "work"
+    report = import_snapshot(SelectedSourceAdapter(), snapshot(tmp_path, data), work)
+    assert (report.imported, report.quarantined) == (1, 0)
+    event = active(work, "candidates.jsonl")[0]
+    assert event["year_index"] == example["year_index"]
+    assert event["category_ids"] == [example["category"]]
+    assert event["prompt"] == "Synthetic Ada " + example["verb"]
+    assert event["date_precision"] == "year"  # truthful C2 raw-year citation cap
+
+
+@pytest.mark.parametrize(
+    "value,start,end",
+    [
+        ("4–7 June 1942", "+1942-06-04T00:00:00Z", "+1942-06-07T00:00:00Z"),
+        (
+            "23 August 1942 – 2 February 1943",
+            "+1942-08-23T00:00:00Z",
+            "+1943-02-02T00:00:00Z",
+        ),
+    ],
+)
+@pytest.mark.parametrize("milestone", ["start", "end"])
+def test_conflict_date_field_selects_exact_endpoint(
+    tmp_path: Path, value: str, start: str, end: str, milestone: str
+) -> None:
+    example = dict(
+        FIELD_EXAMPLES[2],
+        value=value,
+        milestone=milestone,
+        property="P580" if milestone == "start" else "P582",
+        time=start if milestone == "start" else end,
+    )
+    work = tmp_path / "work"
+    assert (
+        import_snapshot(
+            SelectedSourceAdapter(), snapshot(tmp_path, modeled_fields(example)), work
+        ).imported
+        == 1
+    )
+    event = active(work, "candidates.jsonl")[0]
+    assert event["year_index"] == (
+        1943 if milestone == "end" and end.startswith("+1943") else 1942
+    )
+    assert event["prompt"] == "Synthetic Ada " + (
+        "begins" if milestone == "start" else "ends"
+    )
+
+
+@pytest.mark.parametrize(
+    "value",
+    [
+        "c. 4–7 June 1942",
+        "1942–1943",
+        "7–4 June 1942",
+        "4–7 June 1942 (Old Style)",
+        "4–7 June 1942 or 1943",
+        "{{Example|date=4–7 June 1942}}",
+    ],
+)
+def test_ambiguous_or_inactive_conflict_dates_quarantine(
+    tmp_path: Path, value: str
+) -> None:
+    example = dict(FIELD_EXAMPLES[2], value=value)
+    work = tmp_path / "work"
+    assert (
+        import_snapshot(
+            SelectedSourceAdapter(), snapshot(tmp_path, modeled_fields(example)), work
+        ).quarantined
+        == 1
+    )
+
+
+def test_persistent_aliases_cannot_hide_exact_day_conflict_with_year_citations(
+    tmp_path: Path,
+) -> None:
+    data = json.loads(FIXTURE.read_text())
+    data["records"] = data["records"][:1]
+    claim = data["entity"]["claims"]["P569"][0]
+    claim["mainsnak"]["datavalue"]["value"].update(
+        time="+1800-01-02T00:00:00Z", precision=11
+    )
+    work = tmp_path / "work"
+    assert (
+        import_snapshot(
+            SelectedSourceAdapter(), snapshot(tmp_path, data), work
+        ).imported
+        == 1
+    )
+    data["records"][0]["record_id"] = "second-exact-alias"
+    claim["id"] = "Q900001$another-statement"
+    claim["mainsnak"]["datavalue"]["value"]["time"] = "+1800-02-03T00:00:00Z"
+    report = import_snapshot(SelectedSourceAdapter(), snapshot(tmp_path, data), work)
+    assert report.quarantined == 2
+    assert "conflicting_dates" in active(work, "quarantine.jsonl")[0]["issue_codes"]
+
+
+def test_compatible_alias_dates_reduce_to_common_year_precision(tmp_path: Path) -> None:
+    data = json.loads(FIXTURE.read_text())
+    data["records"] = data["records"][:1]
+    data["entity"]["claims"]["P569"][0]["mainsnak"]["datavalue"]["value"].update(
+        time="+1800-01-02T00:00:00Z", precision=11
+    )
+    data["page"]["revisions"][0]["slots"]["main"]["content"] = (
+        "{{Infobox person\n| birth_date = 1800-01-02\n}}"
+    )
+    work = tmp_path / "work"
+    assert (
+        import_snapshot(
+            SelectedSourceAdapter(), snapshot(tmp_path, data), work
+        ).imported
+        == 1
+    )
+    data["records"][0]["record_id"] = "year-only-alias"
+    data["page"]["revisions"][0]["slots"]["main"]["content"] = (
+        "{{Infobox person\n| birth_date = 1800\n}}"
+    )
+    report = import_snapshot(SelectedSourceAdapter(), snapshot(tmp_path, data), work)
+    assert report.quarantined == 0
+    assert active(work, "candidates.jsonl")[0]["date_precision"] == "year"
+
+
+def test_spaceflight_clock_without_source_utc_is_unresolved(tmp_path: Path) -> None:
+    example = dict(
+        FIELD_EXAMPLES[6], value="{{start-date|April 12, 1961, 06:07|timezone=yes}}"
+    )
+    work = tmp_path / "work"
+    assert (
+        import_snapshot(
+            SelectedSourceAdapter(), snapshot(tmp_path, modeled_fields(example)), work
+        ).quarantined
+        == 1
+    )
+
+
+def test_invention_field_is_not_a_second_discovery_milestone(tmp_path: Path) -> None:
+    example = dict(FIELD_EXAMPLES[3], milestone="discovery")
+    work = tmp_path / "work"
+    assert (
+        import_snapshot(
+            SelectedSourceAdapter(), snapshot(tmp_path, modeled_fields(example)), work
+        ).quarantined
+        == 1
+    )
+
+
+@pytest.mark.parametrize(
+    "value", ["18<!-- inactive example -->00", "18<ref>citation</ref>00"]
+)
+def test_inactive_nodes_do_not_manufacture_a_raw_year_token(
+    tmp_path: Path, value: str
+) -> None:
+    data = json.loads(FIXTURE.read_text())
+    data["records"] = data["records"][:1]
+    data["page"]["revisions"][0]["slots"]["main"]["content"] = (
+        f"{{{{Infobox person\n| birth_date = {value}\n}}}}"
+    )
+    work = tmp_path / "work"
+    assert (
+        import_snapshot(
+            SelectedSourceAdapter(), snapshot(tmp_path, data), work
+        ).quarantined
+        == 1
+    )

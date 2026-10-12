@@ -17,7 +17,12 @@ from typing import Any
 from uuid import NAMESPACE_URL, uuid5
 
 from app.content.adapters.base import RawCandidate, SourceAdapter
-from app.content.adapters.selected import MILESTONES, digest, issue
+from app.content.adapters.selected import (
+    MILESTONES,
+    SelectedSourceAdapter,
+    digest,
+    issue,
+)
 from app.content.schemas import (
     CategoryRecord,
     EventRecord,
@@ -130,7 +135,7 @@ def _import_locked(
             "taxonomy": taxonomy_data,
             "current_year_index": datetime.now(UTC).year,
             "policy": VALIDATION_POLICY_VERSION,
-            "adapter_rules": "selected-v3",
+            "adapter_rules": "selected-v6",
         }
     )
     if input_digest == previous.get("input_digest"):
@@ -145,7 +150,13 @@ def _import_locked(
     groups: dict[
         str, list[tuple[RawCandidate, EventRecord | tuple[ValidationIssue, ...]]]
     ] = {}
-    aliases = dict(previous["aliases"])
+    # Migrate 618bca1 placeholders: an unresolved disposition was never proof
+    # of canonical identity and must not prevent later machine-only recovery.
+    aliases = {
+        key: value
+        for key, value in previous["aliases"].items()
+        if not value["identity_key"].startswith("unresolved:")
+    }
     alias_conflicts: set[str] = set()
     for key in sorted(raw_state):
         raw = RawCandidate(**raw_state[key])
@@ -164,10 +175,11 @@ def _import_locked(
             )
             alias_conflicts.update((identity, aliases[key]["identity_key"]))
         groups.setdefault(identity, []).append((raw, result))
-        aliases.setdefault(
-            key,
-            {"identity_key": identity, "event_id": str(uuid5(NAMESPACE_URL, identity))},
-        )
+        if isinstance(result, EventRecord):
+            aliases.setdefault(
+                key,
+                {"identity_key": identity, "event_id": str(result.event_id)},
+            )
     normalized: dict[str, EventRecord] = {}
     failures: dict[str, list[ValidationIssue]] = {}
     for identity, members in groups.items():
@@ -194,15 +206,34 @@ def _import_locked(
                     "Exact identity aliases disagree on year",
                 )
             )
+        if isinstance(adapter, SelectedSourceAdapter) and adapter.alias_dates_conflict(
+            [raw for raw, result in members if isinstance(result, EventRecord)]
+        ):
+            errors.append(
+                issue(
+                    "conflicting_dates",
+                    "sources",
+                    "Exact source aliases disagree at common supported date precision",
+                )
+            )
         if events:
             base = events[0]
+            ranks = {"year": 1, "month": 2, "day": 3}
+            common_precision = min(
+                (event.date_precision for event in events), key=ranks.__getitem__
+            )
             citations: dict[tuple[str, str], SourceCitation] = {}
             for source_event in events:
                 for source in source_event.sources:
                     source_key = source.source_id, source.record_id
                     old = citations.get(source_key)
+                    same_date = old is None or old.raw_date == source.raw_date
+                    if old is not None and isinstance(adapter, SelectedSourceAdapter):
+                        same_date = adapter.citation_dates_agree(
+                            old, source, common_precision
+                        )
                     if old is not None and (
-                        old.raw_date != source.raw_date
+                        not same_date
                         or old.calendar != source.calendar
                         or old.date_resolution != source.date_resolution
                     ):
@@ -216,6 +247,7 @@ def _import_locked(
                     citations[source_key] = source
             merged = base.model_copy(
                 update={
+                    "date_precision": common_precision,
                     "sources": tuple(citations[k] for k in sorted(citations)),
                     "category_ids": tuple(
                         sorted({c for e in events for c in e.category_ids})

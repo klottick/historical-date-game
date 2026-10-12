@@ -76,23 +76,68 @@ fail closed. No credentials, host expansion, IP rotation or unbounded downloads.
 
 ### Exact normalization, not prose reconstruction
 
-Supported explicit milestones map directly to provider statements/infobox
-fields: birth `P569/birth_date`, death `P570/death_date`, publication
-`P577/published`, inception `P571/established`, start `P580/start_date`, end
-`P582/end_date`, launch `P619/launch_date`, landing `P620/landing_date`, discovery
-`P575/discovery_date`, premiere `P1191/premiere`. Category memberships use the
-eight C2 taxonomy slugs. Other infobox layouts, edition scopes and milestones
-are **not inferred**. Expand the parser with source-backed rules and tests,
-and bump `selected-v3` in the import fingerprint before reprocessing.
+Supported milestones map directly to actual provider statements and supported
+infobox types/active parameters:
+
+| Milestone | Wikidata property | Supported outer infobox / ordinary fields |
+| --- | --- | --- |
+| birth / death | P569 / P570 | person, officeholder: birth_date / death_date |
+| publication | P577 | book: published, pub_date, publication_date, release_date |
+| creation | P571 | artwork: year |
+| invention | P575 | electronic component: invention_year |
+| start / end | P580 / P582 | military conflict: start_date / end_date, or exact endpoint of date |
+| occurrence | P585 | event, military conflict: date (one exact date, not an interval) |
+| launch / landing | P619 / P620 | spaceflight: launch_date / landing_date |
+| inception | P571 | organization: established / formation; company: foundation / founded |
+| premiere | P1191 | musical composition: premiere |
+
+Category memberships use the eight C2 taxonomy slugs. Ordinary active fields
+have real retained source-backed examples across all eight categories: Bolívar
+birth, Mandela death, Midway start, transistor invention, Pride and Prejudice
+publication, Guernica creation, Vostok 1 launch, Indonesian proclamation
+occurrence. This demonstrates these particular normalization paths, not broad
+automatic coverage of every article/type or historical truth. Inception/premiere
+are declared conservative paths without a real round1 demonstration. Discovery
+remains reserved but has no supported infobox grammar: an invention_year field
+cannot also create a duplicate discovery milestone. Other
+infobox layouts, edition scopes and milestones are **not inferred**. Expand
+rules with source-backed tests and bump `selected-v6` in the fingerprint.
+
+Wikitext is parsed with stable `mwparserfromhell` 0.7.2, not searched for field
+lines throughout page text. Only one supported **active top-level** infobox can
+substantiate the requested milestone. Comments, nowiki/tag-wrapped examples,
+unrelated/nested templates and duplicate milestone fields cannot supply facts.
+Date fields are bounded (16 KiB before footnote/comment exclusion; 512 characters
+of active date grammar); the original bytes/templates/annotations stay private
+and unchanged. Footnote refs/comments are excluded from date interpretation,
+not treated as event fields; their exclusion never concatenates separated digits
+into an invented raw year. Unsupported active markup remains quarantined.
 
 All claims for the selected property are checked, not just preferred rank.
 Unknown/non-time values, deprecated claims, any qualifiers, uncertainty bounds,
-unsupported calendars/precision and conflicting years quarantine the entire
+unsupported calendars/precision and conflicting exact dates quarantine the entire
 identity. The policy is intentionally stricter than C1's research screen.
-Exact Wikipedia civil/ISO fields and a small explicit date-template grammar
-corroborate the same entity/year; unresolved annotation/ranges/calendar strings
-are rejected, not rewritten. Template citations retain the exact source year
-substring; the full untouched template and provider payload remain in raw data.
+Exact civil/ISO fields, full English dates and supported parsed date templates
+corroborate the same entity/milestone. A military-conflict `date` can resolve
+ordered exact day endpoints, including shared month/year (`4–7 June 1942` or
+`4–{{start date and age|1942|06|7|df=y}}`) and explicit full cross-year endpoints.
+The start/end prompt names the selected milestone, not the whole interval.
+Vague year ranges, circa/alternative/reversed dates or calendar annotations are
+rejected. Spaceflight clocks require explicit source UTC; unsupported time zones
+are never silently converted. English/template citations retain the actual
+source year substring, not manufactured ISO evidence.
+
+All statements and both providers are compared **pairwise at their common
+supported exact precision**, including persistent exact aliases. A year-only
+source cannot hide conflicting finer dates elsewhere. Declared Wikibase
+precision governs filled placeholder month/day components. Conflicting
+months/days quarantine even when years agree. Event precision is the minimum of
+all semantically supported source dates and C2-supported raw citation precision:
+year-only citations stay year, ISO day citations can establish day when all
+sources agree. English/template raw year substrings intentionally cap emitted
+events at year **after** full source-date conflict checks. C2 contracts/validation
+were not broadened. Raw provider envelopes retain full date components and
+precision; a content receipt is not a finer-date historical truth guarantee.
 Wikipedia's unannotated civil-year grammar is supported only when corroborated
 by the exact Gregorian-family Wikibase milestone; calendar annotations are not
 silently converted. Its citation labels that supported convention
@@ -111,8 +156,11 @@ Prompts are original deterministic milestone templates using the English source
 label (or the exact entity-linked Wikipedia title if that label is absent),
 not copied Wikipedia extracts or C1 judgments. C2 rejects answer-bearing labels
 without erasing historical names. Exact entity + milestone identities merge
-citations/categories; birth/death stay separate. Conflicting source aliases
-quarantine both old and new identities. Similar same-milestone wording at
+citations/categories; birth/death stay separate. Exact-to-different-exact source
+aliases quarantine both old and new identities. Unresolved placeholders are
+dispositions, not exact aliases: older unresolved alias entries are migrated
+away, and the same source key can promote to proven exact identity through new
+automated source evidence. Similar same-milestone wording at
 similarity ≥0.90 quarantines both candidates and never creates fuzzy aliases.
 This is a conservative duplicate heuristic, not proof of universal detection.
 
@@ -175,6 +223,14 @@ its `candidate_sha256` instead binds the canonical ordered raw group, as recorde
 in quarantine/decisions. **Never** reinterpret that failed receipt as an event
 pass. IDs derive deterministically from exact identity, never year/prompt; aliases
 and IDs survive updates and retries.
+
+`aliases.json` contains only proven exact identities. An unresolved quarantine
+UUID is per source key and is not a canonical event ID. Recovery replaces that
+placeholder disposition/failed receipt with the proven identity's deterministic
+UUID, updates aliases and regenerates checks atomically. It does not retarget a
+previously proven exact identity or authorize fuzzy identity inference. Legacy
+`unresolved:` entries in `state.json` are removed during the next revalidation;
+the adapter-version change forces migration even for unchanged source inputs.
 
 Imports upsert persistent source keys. Partial batches do not silently delete
 previous keys; unsupported corrections revoke old passes. There is no deletion

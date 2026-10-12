@@ -12,6 +12,7 @@ import json
 import re
 import time
 from collections.abc import Callable, Iterable
+from dataclasses import dataclass
 from datetime import UTC, date, datetime
 from email.utils import parsedate_to_datetime
 from pathlib import Path
@@ -20,6 +21,7 @@ from urllib.parse import urlencode
 from uuid import NAMESPACE_URL, uuid5
 
 import httpx
+import mwparserfromhell
 
 from app.content.adapters.base import RawCandidate
 from app.content.schemas import (
@@ -47,6 +49,37 @@ MILESTONES = {
     "landing": ("P620", "landing_date", "{title} lands", "exploration"),
     "discovery": ("P575", "discovery_date", "{title} is discovered", "inventions"),
     "premiere": ("P1191", "premiere", "{title} premieres", "arts"),
+    "invention": ("P575", "invention_year", "{title} is invented", "inventions"),
+    "creation": ("P571", "year", "{title} is created", "arts"),
+    "occurrence": ("P585", "date", "{title} takes place", "politics"),
+}
+# Only an active outer infobox of a supported entity type can provide fields.
+# Unrelated templates, examples, tags, comments and nested infoboxes are not facts.
+INFOBOX_FIELDS: dict[str, dict[str, tuple[str, ...]]] = {
+    "birth": {
+        "infobox person": ("birth_date",),
+        "infobox officeholder": ("birth_date",),
+    },
+    "death": {
+        "infobox person": ("death_date",),
+        "infobox officeholder": ("death_date",),
+    },
+    "publication": {
+        "infobox book": ("published", "pub_date", "publication_date", "release_date")
+    },
+    "inception": {
+        "infobox organization": ("established", "formation"),
+        "infobox company": ("foundation", "founded"),
+    },
+    "start": {"infobox military conflict": ("start_date", "date")},
+    "end": {"infobox military conflict": ("end_date", "date")},
+    "launch": {"infobox spaceflight": ("launch_date",)},
+    "landing": {"infobox spaceflight": ("landing_date",)},
+    "discovery": {},  # invention_year proves invention, not a second milestone
+    "premiere": {"infobox musical composition": ("premiere",)},
+    "invention": {"infobox electronic component": ("invention_year",)},
+    "creation": {"infobox artwork": ("year",)},
+    "occurrence": {"infobox event": ("date",), "infobox military conflict": ("date",)},
 }
 UA = "HistoricalDateGame/0.1 (https://github.com/klottick/historical-date-game) bounded-content-import"
 MAX_BYTES = 8 * 1024 * 1024
@@ -102,32 +135,241 @@ def _year(raw: str) -> tuple[int, Literal["year", "month", "day"]]:
     raise ValueError("unsupported exact date")
 
 
-def _wiki_date(page: dict[str, Any], milestone: str) -> str:
+@dataclass(frozen=True)
+class _SourceDate:
+    raw_date: str
+    parts: tuple[int, ...]
+
+
+def _source_date(raw: str, precision: str | None = None) -> _SourceDate:
+    year, actual = _year(raw)
+    rank = {"year": 1, "month": 2, "day": 3}
+    count = min(rank[actual], rank[precision or actual])
+    match = re.fullmatch(r"[+-]?\d{4,}-(\d{2})(?:-(\d{2}))?(?:T00:00:00Z)?", raw)
+    parts: tuple[int, ...] = (year,)
+    if count > 1 and match:
+        parts += (int(match[1]),)
+        if count > 2:
+            parts += (int(match[2]),)
+    return _SourceDate(raw, parts)
+
+
+def _dates_conflict(dates: list[tuple[int, ...]]) -> bool:
+    # Pairwise common precision prevents a year-only source from concealing
+    # contradictory day/month claims elsewhere in the same identity.
+    return any(
+        left[: min(len(left), len(right))] != right[: min(len(left), len(right))]
+        for i, left in enumerate(dates)
+        for right in dates[i + 1 :]
+    )
+
+
+_MONTHS = {
+    name.casefold(): number
+    for number, name in enumerate(
+        (
+            "January",
+            "February",
+            "March",
+            "April",
+            "May",
+            "June",
+            "July",
+            "August",
+            "September",
+            "October",
+            "November",
+            "December",
+        ),
+        1,
+    )
+}
+
+
+def _clean_value(value: str) -> str:
+    """Ignore inactive comments/footnotes, not arbitrary markup or field text."""
+    if len(value.encode()) > 16384:
+        raise ValueError("Infobox field exceeds bounded date grammar")
+    output = []
+    for node in mwparserfromhell.parse(value).nodes:
+        if isinstance(node, mwparserfromhell.nodes.Comment):
+            output.append(" ")  # never join separated digits into invented raw dates
+            continue
+        if (
+            isinstance(node, mwparserfromhell.nodes.Tag)
+            and str(node.tag).casefold() == "ref"
+        ):
+            output.append(" ")
+            continue
+        if isinstance(node, mwparserfromhell.nodes.HTMLEntity) and str(node) in {
+            "&nbsp;",
+            "&#160;",
+        }:
+            output.append(" ")
+        elif (
+            isinstance(node, mwparserfromhell.nodes.Wikilink)
+            and str(node.title).strip() == "UTC"
+            and (node.text is None or str(node.text).strip() == "UTC")
+        ):
+            output.append("UTC")
+        elif isinstance(
+            node, (mwparserfromhell.nodes.Text, mwparserfromhell.nodes.Template)
+        ):
+            output.append(str(node))
+        else:
+            raise ValueError("Unsupported active date-field markup")
+    cleaned = "".join(output).strip()
+    if len(cleaned) > 512:
+        raise ValueError("Infobox date is not a bounded supported grammar")
+    return cleaned
+
+
+def _english_date(value: str, *, utc_time: bool = False) -> _SourceDate:
+    tail = r"(?:,\s*(?P<hour>\d{2}):(?P<minute>\d{2}))?" if utc_time else ""
+    match = re.fullmatch(
+        r"(?P<day>\d{1,2})\s+(?P<month>[A-Za-z]+)\s+(?P<year>\d{1,4})" + tail, value
+    ) or re.fullmatch(
+        r"(?P<month>[A-Za-z]+)\s+(?P<day>\d{1,2}),\s*(?P<year>\d{1,4})" + tail, value
+    )
+    if match is None or match["month"].casefold() not in _MONTHS:
+        raise ValueError("Unsupported exact English date")
+    parts = int(match["year"]), _MONTHS[match["month"].casefold()], int(match["day"])
+    date(*parts)
+    if (
+        utc_time
+        and match["hour"] is not None
+        and (int(match["hour"]) > 23 or int(match["minute"]) > 59)
+    ):
+        raise ValueError("Invalid UTC time")
+    return _SourceDate(match["year"], parts)
+
+
+def _wiki_value(value: str) -> _SourceDate:
+    """Finite exact literal/date-template grammar, never a search through prose."""
+    try:
+        return _source_date(value)
+    except ValueError:
+        pass
+    code = mwparserfromhell.parse(value)
+    templates = code.filter_templates(recursive=False)
+    if not templates:
+        return _english_date(value)
+    if len(templates) != 1:
+        raise ValueError("Ambiguous date templates")
+    template = templates[0]
+    extra = "".join(str(node) for node in code.nodes if node is not template).strip()
+    name = str(template.name).strip().casefold().replace("_", " ")
+    params = {str(p.name).strip(): str(p.value).strip() for p in template.params}
+    if len(params) != len(template.params) or any(
+        not all(isinstance(n, mwparserfromhell.nodes.Text) for n in p.value.nodes)
+        for p in template.params
+    ):
+        raise ValueError("Duplicate/nested date template parameters")
+    if name in {"start-date", "end-date"}:
+        if (
+            set(params) != {"1", "timezone"}
+            or params["timezone"] != "yes"
+            or extra not in {"", "UTC"}
+        ):
+            raise ValueError("Unresolved time/calendar convention")
+        if re.search(r",\s*\d{2}:\d{2}$", params["1"]) and extra != "UTC":
+            raise ValueError("Source clock requires an explicit UTC label")
+        return _english_date(params["1"], utc_time=True)
+    names = {
+        "birth date",
+        "birth date and age",
+        "death date",
+        "death date and age",
+        "start date",
+        "start date and age",
+        "end date",
+        "end date and age",
+    }
+    if name not in names or extra:
+        raise ValueError("Unsupported active date template")
+    keys = {"1", "2", "3", "df", "mf"}
+    if name == "death date and age":
+        keys.update(("4", "5", "6"))
+    if (
+        not set(params) <= keys
+        or not {"1", "2", "3"} <= set(params)
+        or any(
+            params[k] not in {"y", "yes", "n", "no"}
+            for k in ("df", "mf")
+            if k in params
+        )
+    ):
+        raise ValueError("Unsupported date template arguments")
+    if not all(re.fullmatch(r"\d{1,4}", params[k]) for k in ("1", "2", "3")):
+        raise ValueError("Date components are not exact civil numbers")
+    parts = tuple(int(params[k]) for k in ("1", "2", "3"))
+    date(*parts)
+    if set(params) & {"4", "5", "6"}:
+        if not {"4", "5", "6"} <= set(params) or not all(
+            re.fullmatch(r"\d{1,4}", params[k]) for k in ("4", "5", "6")
+        ):
+            raise ValueError("Invalid supporting birth date")
+        date(*(int(params[k]) for k in ("4", "5", "6")))
+    return _SourceDate(params["1"], parts)
+
+
+def _conflict_endpoint(value: str, milestone: str) -> _SourceDate:
+    """Resolve exact ordered day endpoints only; vague year ranges are rejected."""
+    shared = re.fullmatch(r"(\d{1,2})\s*[–—]\s*(.+)", value)
+    if shared:
+        end = _wiki_value(shared[2])
+        if len(end.parts) != 3:
+            raise ValueError("Conflict endpoint lacks an exact shared day/month/year")
+        start = _SourceDate(end.raw_date, (*end.parts[:2], int(shared[1])))
+        date(*start.parts)
+    else:
+        endpoints = re.split(r"\s*[–—]\s*", value)
+        if len(endpoints) == 1:
+            result = _wiki_value(value)
+            if len(result.parts) != 3:
+                raise ValueError("Conflict date is not an exact day")
+            return result
+        if len(endpoints) != 2:
+            raise ValueError("Ambiguous conflict interval")
+        start, end = (_wiki_value(part) for part in endpoints)
+        if len(start.parts) != 3 or len(end.parts) != 3:
+            raise ValueError("Conflict interval lacks exact endpoints")
+    if start.parts > end.parts:
+        raise ValueError("Reversed conflict interval")
+    return start if milestone == "start" else end
+
+
+def _wiki_date(page: dict[str, Any], milestone: str) -> _SourceDate:
     """Return an exact raw date/positive civil-year substring, not rewritten prose."""
     revision = page.get("revisions", [{}])[0]
     text = revision.get("slots", {}).get("main", {}).get("content")
     if text is not None:
-        field = MILESTONES[milestone][1]
-        values = re.findall(rf"^\s*\|\s*{field}\s*=\s*([^\n]+)", text, re.M | re.I)
+        if len(text.encode()) > MAX_BYTES:
+            raise ValueError("Wikitext exceeds bounded parse input")
+        boxes = [
+            box
+            for box in mwparserfromhell.parse(text).filter_templates(recursive=False)
+            if str(box.name).strip().casefold().replace("_", " ")
+            in INFOBOX_FIELDS[milestone]
+        ]
+        if len(boxes) != 1:
+            raise ValueError("missing/ambiguous supported top-level infobox")
+        box = boxes[0]
+        fields = INFOBOX_FIELDS[milestone][
+            str(box.name).strip().casefold().replace("_", " ")
+        ]
+        values = [
+            (str(param.name).strip().casefold(), str(param.value).strip())
+            for param in box.params
+            if str(param.name).strip().casefold() in fields and str(param.value).strip()
+        ]
         if len(values) != 1:
             raise ValueError("missing/ambiguous exact infobox milestone")
-        value = values[0].strip()
-        try:
-            _year(value)
-            return str(value)
-        except ValueError:
-            # Parse only explicit date templates; retain the template in raw payload.
-            template = re.fullmatch(
-                r"\{\{(?:birth date|death date|start date|end date)(?: and age)?\s*\|(?:df=(?:yes|no)\s*\|)?\s*(\d+)\s*\|\s*(\d+)\s*\|\s*(\d+)\s*\}\}",
-                value,
-                re.I,
-            )
-            if template:
-                date(int(template[1]), int(template[2]), int(template[3]))
-                return template[
-                    1
-                ]  # Exact source year substring; do not invent ISO evidence.
-            raise ValueError("unsupported Wikipedia date grammar")
+        field, value = values[0]
+        value = _clean_value(value)
+        if field == "date" and milestone in {"start", "end"}:
+            return _conflict_endpoint(value, milestone)
+        return _wiki_value(value)
     # C1 cache-only extract support is intentionally limited to an exact lifespan.
     # Require the first parentheses after the title: never take unrelated years.
     if milestone not in {"birth", "death"}:
@@ -153,7 +395,7 @@ def _wiki_date(page: dict[str, Any], milestone: str) -> str:
         and not re.search(r"\b(?:BCE|BC)\b", parts[0])
     ):
         raise ValueError("implicit shared era remains unresolved")
-    return match_date[1]
+    return _wiki_value(part)
 
 
 class SelectedSourceAdapter:
@@ -165,6 +407,34 @@ class SelectedSourceAdapter:
     ) -> None:
         self.client = client
         self.sleep = sleep
+
+    def alias_dates_conflict(self, raws: list[RawCandidate]) -> bool:
+        """Compare semantically precise evidence across already normalized aliases.
+
+        Event/citation precision may be capped at year by C2's supported raw
+        citation grammar. That cap must not hide conflicting source day facts.
+        """
+        dates = []
+        for raw in raws:
+            payload: dict[str, Any] = raw.payload
+            prop = MILESTONES[payload["milestone"]][0]
+            for claim in payload["entity"]["claims"][prop]:
+                value = claim["mainsnak"]["datavalue"]["value"]
+                precision = {9: "year", 10: "month", 11: "day"}[value["precision"]]
+                dates.append(_source_date(value["time"], precision).parts)
+            dates.append(_wiki_date(payload["page"], payload["milestone"]).parts)
+        return _dates_conflict(dates)
+
+    @staticmethod
+    def citation_dates_agree(
+        left: SourceCitation, right: SourceCitation, precision: str
+    ) -> bool:
+        return not _dates_conflict(
+            [
+                _source_date(left.raw_date, precision).parts,
+                _source_date(right.raw_date, precision).parts,
+            ]
+        )
 
     def _download(self, spec: dict[str, Any]) -> tuple[bytes, dict[str, object]]:
         source = spec["source_id"]
@@ -466,6 +736,7 @@ class SelectedSourceAdapter:
             )
         issues: list[ValidationIssue] = []
         resolved: list[tuple[dict[str, Any], int, str]] = []
+        dates: list[tuple[int, ...]] = []
         for claim in claims:
             value = claim.get("mainsnak", {}).get("datavalue", {}).get("value", {})
             if claim.get("qualifiers") or claim.get("rank") == "deprecated":
@@ -528,27 +799,28 @@ class SelectedSourceAdapter:
                         )
                     )
                 resolved.append((claim, year, expected or precision))
+                dates.append(_source_date(value["time"], expected or precision).parts)
             except ValueError, TypeError:
                 issues.append(
                     issue("uncertain_date", "claims", "Unsupported exact civil date")
                 )
-        if len({r[1] for r in resolved}) > 1:
+        if _dates_conflict(dates):
             issues.append(
                 issue(
                     "conflicting_dates",
                     "claims",
-                    "Conflicting years remain quarantined regardless of rank",
+                    "Conflicting exact dates at common precision remain quarantined regardless of rank",
                 )
             )
         try:
-            wiki_raw = _wiki_date(page, milestone)
-            wiki_year, wiki_precision = _year(wiki_raw)
-            if resolved and any(r[1] != wiki_year for r in resolved):
+            wiki_date = _wiki_date(page, milestone)
+            wiki_raw = wiki_date.raw_date
+            if _dates_conflict([*dates, wiki_date.parts]):
                 issues.append(
                     issue(
                         "conflicting_dates",
                         "sources",
-                        "Selected providers disagree about the milestone year",
+                        "Selected providers disagree at their common supported exact precision",
                     )
                 )
         except ValueError, KeyError, TypeError:
@@ -564,6 +836,14 @@ class SelectedSourceAdapter:
         if not resolved:
             return (issue("missing_date", "claims", "No exact dates resolved"),)
         year = resolved[0][1]
+        # Source year substrings from date templates are truthful raw citations,
+        # not manufactured ISO strings. Their C2-supported citation precision
+        # caps the emitted event, AFTER full exact source-date conflict checks.
+        precision_rank = min(
+            *(len(parts) for parts in dates),
+            len(wiki_date.parts),
+            {"year": 1, "month": 2, "day": 3}[_year(wiki_raw)[1]],
+        )
         citations = []
         for claim, _, _ in resolved:
             value = claim["mainsnak"]["datavalue"]["value"]
@@ -607,13 +887,7 @@ class SelectedSourceAdapter:
             region_ids=tuple(p.get("region_ids", ())),
             explanation=f"The {milestone} milestone of {title} is dated by the retained selected-source snapshots.",
             sources=tuple(citations),
-            date_precision="year"
-            if wiki_precision == "year"
-            else "month"
-            if any(r[2] == "month" for r in resolved)
-            else "day"
-            if all(r[2] == "day" for r in resolved)
-            else "year",
+            date_precision=("year", "month", "day")[precision_rank - 1],
             review_status="approved",
             media_asset_id=None,
             fallback_key=categories[0],
