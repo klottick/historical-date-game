@@ -12,7 +12,9 @@
 
 **Execution approval:** On 2026-10-12 the user chose Subagent-driven execution
 and authorized separate modernization/planning commits plus an isolated beta
-worktree. Source/media, hosting/cost, and launch approval gates remain in force.
+worktree. On 2026-10-12 the user approved source/image/Daily choices with **no
+manual content or image review**. Hosting/cost and launch authorization remain
+in force; human curation/pilots/labor budgets are not beta requirements.
 
 ## Global Constraints
 
@@ -23,6 +25,7 @@ worktree. Source/media, hosting/cost, and launch approval gates remain in force.
 - A dropped card previews its position; **Lock it in** submits the guess. No arbitrary round cap. Win only when the frozen run-specific pool has no eligible unused event.
 - Prefer a relevant picture for every event. Research feasibility/rights; representative fallback artwork must cover every event when a usable picture is unavailable.
 - Preserve mandatory attribution, hide unanswered years/seeds, provide touch/keyboard alternatives, and respect reduced motion.
+- No manual content/image review or human publication queue. Accepted/approved means versioned automated validation passed; quarantine unresolved dates/duplicates and use fallbacks for unsupported or unsafe media. Do not claim human verification or legal clearance.
 - No displayed civil year zero: CE `n -> n`, BCE `n -> 1 - n`. Keep catalog/media releases immutable for existing runs.
 - Use current stable tooling, preserve existing modernization work, and follow repository conventions. No implementation, provisioning, merge, push, or task commits before plan/execution approval.
 - Sound, chat, real-time multiplayer, friend groups, exact-date difficulty, full CMS, achievements, and monetization are outside beta scope.
@@ -114,6 +117,12 @@ deletion of sample CRUD is required. Generated `frontend/src/client/` and
   review_status: Literal['pending','quarantined','approved'], media_asset_id:
   UUID | None, fallback_key: str)`. Identities are opaque UUIDs; corrections keep
   event identity and create a new release revision. `identity_key` is private.
+- Retain the field name `review_status` for contract stability; `approved` now
+  means machine-validated only. `ValidationReceipt(event_id: UUID,
+  candidate_sha256: str, source_sha256: tuple[str, ...], policy_version: str,
+  passed: bool, checked_at: datetime, issue_codes: tuple[str, ...])` is defined
+  by C2, emitted by C3/C4, and required by C5. A changed candidate/source digest
+  invalidates a previous receipt. Receipt files remain private in releases.
 - `SourceSelection(source_ids: tuple[str, ...], allowed_media_hosts: tuple[str, ...],
   decision_report: str, daily_category_ids: tuple[str, ...])` is the machine-readable
   result of C1; adapters validate their source-specific configuration themselves.
@@ -121,7 +130,7 @@ deletion of sample CRUD is required. Generated `frontend/src/client/` and
   event_count: int, fixture: bool, files: dict[str, str])`; `files` maps relative
   artifact paths to SHA-256 digests. Paths cannot escape the release directory.
 - Release layout: `manifest.json`, `taxonomy.json`, `events.jsonl`, `media.json`,
-  `source-selection.json`, and review/coverage reports. Image bytes live separately
+  `validation.json`, `source-selection.json`, and validation/coverage reports. Image bytes live separately
   at `media/<sha256>.webp`; generic fallbacks live at `media/<sha256>.svg`.
 - Runtime root: `GAME_DATA_DIR` (default `../data/game` when running in backend;
   containers set `/app/data/game`). Releases/rights reports remain private;
@@ -207,8 +216,9 @@ deletion of sample CRUD is required. Generated `frontend/src/client/` and
 - Each code task has a red/green test cycle and a scoped commit checkpoint after
   approval. Research/content/operations tasks use documentary/runtime evidence,
   not fabricated failing unit tests for external facts.
-- Source/rights decisions and image fallback feasibility require owner review
-  at C1; fixture-based implementation must not quietly replace those decisions.
+- Source/rights decisions and the fixed Daily categories were approved at C1
+  with automated-only publication. Fixture development cannot satisfy the real
+  catalog gate. No additional human content/media approval is required.
 - New dependencies were checked against registry/documentation during planning:
   dnd-kit 0.5.0 supports React 19; Pillow 12.3.0 is stable. Recheck compatible
   stable versions at execution; preserve TypeScript 6's generator-only pin.
@@ -245,6 +255,6 @@ before any implementation task starts.
 Self-review checked all ten sections, producer/consumer type names, task
 dependencies, the five Review Focus tests, explicit commit boundaries, and
 proportion. Shared schemas have one owner; fixtures cannot satisfy launch.
-Source providers, initial Daily category identifiers, hosting/domain/budget,
-and real content/media approval are evidence-based execution checkpoints,
+Source providers and initial Daily categories are selected; hosting/domain/budget
+and real automated content/media validation are evidence-based execution checkpoints,
 not unresolved placeholders an implementer may silently decide.

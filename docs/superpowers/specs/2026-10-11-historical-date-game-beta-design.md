@@ -4,6 +4,12 @@ Date: 2026-10-11
 Status: written specification and implementation plan approved; subagent-driven execution authorized.
 Scope: product and technical specification only, not authorization to implement.
 
+Amendment approved 2026-10-12: the user requires **no manual content or image
+review**. Source publication and media selection use automated checks only.
+"Approved" content/assets below means machine-validated, not human-curated or
+legally certified. Code review, gameplay tests, and deployment authorization
+remain separate requirements. The previous human-curation workload is removed.
+
 ## 1. Intent and starting point
 
 Build a fun chronological card-placement game for the owner and friends who
@@ -59,8 +65,8 @@ can manage enrollment, with public registration disabled in the beta deployment.
 
 ## 2. Content sourcing and publication
 
-Use **source-assisted curation**, rather than hand-writing a small launch
-catalog or accepting a large unreviewed import. Small fixtures may support
+Use **automated source-assisted publication**, rather than hand-writing a small
+launch catalog or accepting an unchecked import. Small fixtures may support
 development, but cannot satisfy the initial 1,000-event requirement.
 
 ### Source-discovery deliverable
@@ -93,7 +99,7 @@ a count shortfall.
 
 Include image matching in the representative audit. Report event-specific or
 subject-specific image coverage by category, quality, rights suitability,
-manual-review effort, acquisition cost, and the remaining fallback need. The
+automated-processing effort, acquisition cost, and the remaining fallback need. The
 image source can differ from the historical fact source. Make the feasibility
 finding explicit rather than silently substituting icons for all events.
 
@@ -165,14 +171,26 @@ automatically show the representative fallback without changing game state.
 ### Reproducible pipeline
 
 Acquisition -> normalized/categorized candidates -> deduplication -> automated
-checks -> content and media review/approval -> versioned published catalog and
-associated assets.
+fact/prompt/provenance and media/rights checks -> machine-validated publication
+-> versioned published catalog and associated assets. No human approval queue.
 
 Keep rejected/quarantined records and reasons separate from playable content.
-Validate every published record and retain traceable source metadata. Human
-review resolves flagged ambiguity, checks prompt quality and recognisability,
-and approves publication; a representative audit also checks accepted records.
-Reimporting the same source snapshot must not create duplicate events.
+Validate every published record and retain traceable source metadata. Conflicting
+or uncertain dates and suspected fuzzy duplicates remain quarantined; do not
+invent a resolution or require a person to clear the queue. Accept deterministic
+source identity/milestone matches only. Generate concise original prompts from
+source-backed templates or retain licensed text with its obligations. Automated
+audits report source coverage and quality heuristics, not human verification of
+truth or recognisability. Reimporting a snapshot must not create duplicates.
+
+Publication requires a versioned validation receipt bound to the candidate and
+source digests. Unknown/missing image rights, incompatible adaptation or credits,
+unsafe/ambiguous date-bearing imagery, or failed downloads use representative
+fallbacks. Automatically check image metadata and conservatively exclude maps,
+documents, title pages, plaques, and other text-heavy media unless automated
+analysis establishes answer-safe presentation. Do not label the resulting
+catalog human-reviewed or legally cleared. Report actual automated acceptance
+and picture/fallback yield; no manual pilot or labor budget is a release gate.
 
 Publish immutable catalog releases with a manifest and integrity digest,
 including category membership, media references, credits, and fallback mappings.
