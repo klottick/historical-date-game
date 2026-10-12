@@ -138,6 +138,70 @@ Depending on your workflow, you could want to exclude it from Git, for example i
 
 One way to do it could be to add each environment variable to your CI/CD system, and updating the `docker-compose.yml` file to read that specific env var instead of reading the `.env` file.
 
+## Isolated test environment
+
+Backend integration tests initialize the superuser and delete users/items at
+session teardown. Never run them against development, staging, or production
+data. The session fixture refuses database names that do not end in `_test`.
+Backend and browser CI both use `historical_date_game_test` at job level so
+Compose, migrations, and tests agree on the database.
+
+Use a dedicated, execution-owned Compose project for local verification. For
+the beta execution this project is `hdg-beta-baseline`; reuse its existing DB
+and Mailcatcher rather than starting competing containers on the same ports.
+On a fresh environment (with ports available), start only its test services:
+
+```bash
+POSTGRES_DB=historical_date_game_test docker compose -p hdg-beta-baseline up -d db mailcatcher
+```
+
+An existing PostgreSQL volume is not reinitialized by changing `POSTGRES_DB`.
+Ensure the dedicated database exists in the execution-owned project before
+migrating. Do not modify unrelated databases or delete volumes to create it.
+Host commands use port `5433`; backend/prestart containers use `db:5432`.
+Use the approved Python 3.15/uv toolchain and Node 26.11.1 for frontend checks.
+
+```bash
+cd backend
+uv sync --frozen
+# Safety tests override the destructive DB fixture; no PostgreSQL is needed.
+uv run pytest tests/safety/test_db_guard.py -q
+POSTGRES_DB=historical_date_game_test POSTGRES_PORT=5433 uv run bash scripts/prestart.sh
+POSTGRES_DB=historical_date_game_test POSTGRES_PORT=5433 uv run bash scripts/test.sh
+```
+
+Run browser tests only after the backend test session has finished cleanup.
+Seed the superuser again, then start a host backend against the same isolated
+database with localhost Mailcatcher settings:
+
+```bash
+# From backend/, after backend tests have exited:
+POSTGRES_DB=historical_date_game_test POSTGRES_PORT=5433 uv run python app/initial_data.py
+POSTGRES_DB=historical_date_game_test POSTGRES_PORT=5433 \
+  SMTP_HOST=localhost SMTP_PORT=1025 SMTP_TLS=false SMTP_SSL=false \
+  EMAILS_FROM_EMAIL=noreply@example.com \
+  uv run uvicorn app.main:app --host 127.0.0.1 --port 8000
+```
+
+In another terminal, use the frontend's matching Playwright Chromium binary
+(`npx playwright install chromium` if needed), and run:
+
+```bash
+cd frontend
+npm ci
+npm run lint
+npm run typecheck
+npm run test:unit
+npm run build
+VITE_API_URL=http://localhost:8000 MAILCATCHER_HOST=http://localhost:1080 \
+  npx playwright test --fail-on-flaky-tests
+```
+
+Do not run destructive backend pytest fixtures while the browser suite is
+active. Shut down the host backend when finished and stop only owned services
+with `docker compose -p hdg-beta-baseline stop db mailcatcher`. Never use broad
+`docker compose down -v` cleanup or touch unrelated stacks/volumes.
+
 ## Pre-commits and code linting
 
 we are using a tool called [pre-commit](https://pre-commit.com/) for code linting and formatting.

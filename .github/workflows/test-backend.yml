@@ -13,6 +13,7 @@ jobs:
   test-backend:
     runs-on: ubuntu-latest
     env:
+      POSTGRES_DB: historical_date_game_test
       POSTGRES_PORT: "5433"
     steps:
       - name: Checkout
