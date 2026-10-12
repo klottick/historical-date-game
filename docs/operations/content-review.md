@@ -4,8 +4,8 @@ Despite this retained filename and `review_status` contract, there is **no human
 content/image review, approval queue, or manual publication gate**. C3 imports
 private facts only. A passed `content` receipt is **never publication-ready**;
 C4 must independently revalidate content and the frozen complete MediaCatalog,
-then C5 verifies final receipts and actual asset bytes. No media acquisition,
-publisher, CLI, or game functionality is implemented here.
+then C5 verifies final receipts and actual asset bytes. C4's Python media API is
+described below; publisher, CLI and game functionality remain separate work.
 
 ## Supported selected-provider snapshots
 
@@ -271,3 +271,137 @@ rechecks content+media for all current candidates with fresh `content_media`
 receipts. C5 consumes only independently verified final artifacts and digests.
 Neither C1 research screens nor these C3 content passes count as the final
 1,000-event publication gate.
+
+## C4 automated media API and C5 handoff
+
+`app.content.media.pipeline.assign_media(event, selection, workspace)` consumes
+an **unchanged current C3 candidate**, its retained raw provider envelopes and
+the selected Commons/original-art policy. Resolve `current.json` once to load
+that generation's candidates. It attempts up to three exact, unqualified,
+nondeprecated Wikidata P18 file names for **each event**. This is a real per-event
+candidate lookup, not a fallback-only stub or open-ended image search. With no
+P18 candidate it records that reason and selects representative original art.
+
+Commons metadata is cached privately in
+`media-cache/commons/<sha256-of-normalized-File-title>.json`, with a matching
+`.meta.json` containing the exact response SHA-256, fixed Commons endpoint and
+actual metadata retrieval timestamp. Missing cache entries optionally make one
+serial fixed-endpoint `imageinfo`/`extmetadata` request per selected title, sleeping
+one second and setting `maxlag=5` and an identifying User-Agent. Redirects,
+provider errors and responses over 1 MiB / bounded request time are failures, not
+a retry loop. File title/repository, original URL, SHA-1, revision timestamp,
+credit, license/version and metadata digest are retained in private decisions.
+No C1 research screen is promoted to media approval. Cached snapshot bytes never
+silently refresh or overwrite; a new metadata acquisition must be supplied as
+a new private snapshot/workspace rather than replacing an authoritative batch.
+
+Supported per-file rights are CC0, CC BY / CC BY-SA 2.0, 3.0 and 4.0, and explicit
+`PD-self`, `PD-author`, `PD-old-100-expired` or
+`PD-Art (PD-old-100-expired)` bases. A generic PD label alone is insufficient.
+Conflicting license fields/URLs/versions, missing creator/credit, territorial-only
+or non-Commons files, unsupported licensing and unresolved restrictions use
+fallbacks. Required credit text **and its links** are preserved as plain text,
+not removed to hide dates. Conversion/resizing and compatible adaptation terms
+are included in `MediaRecord.attribution`; creator, source URL, exact license URL,
+revision/SHA-1/metadata identity and actual original acquisition time remain in
+the record/evidence. UI consumers must display accessible attribution and license
+links, and escape these plain strings rather than interpreting source HTML.
+
+Acceptance is intentionally narrow: source-P18 subject-context photographs must
+have a positive simple-composition description (portrait/object/ship photograph
+against a plain background), no answer/date metadata or risk terms, and an exact
+per-event relevance match. No OCR or visual recognition certainty is claimed.
+Artwork, books/editions, battle/political scenes, maps/documents/title pages,
+plaques, text-heavy/titled images and ambiguous rights, sensitivity or composition
+use fallback unless a future supported automated rule establishes their safety.
+This deliberately excludes many otherwise open photographs; neither image yield
+nor real production catalog acceptance is measured here. Alt text honestly labels
+accepted photographs as subject context, not photographs of the exact milestone.
+
+Originals are digest-bound private cache entries in
+`media-cache/originals/<upstream-sha1>.bin` plus `.meta.json` acquisition evidence.
+Downloads allow **only HTTPS `upload.wikimedia.org`**, with no credentials or
+nonstandard port. Every redirect is checked before sending; all resolved targets
+must be globally routable, with private/link-local and IPv4-mapped IPv6 rejected.
+The transport pins the checked IP while retaining the approved Host/TLS SNI and
+certificate validation, closing the dial-time DNS-rebinding gap. Environment
+proxies and automatic redirects are disabled. Limits are five requests per
+download, 16 MiB, 10-second HTTP operation timeouts and a 30-second elapsed-time
+budget checked between requests/chunks. OS DNS resolution itself is not
+interruptibly deadline-bounded; a blocking operation may finish up to its timeout
+after the budget. Local POSIX and trusted local workspace writers are assumed.
+
+Preparation rejects unsupported/animated/broken images, oversized dimensions
+(10,000 per side) or pixels (20 million), embedded textual/EXIF metadata and
+decompression-bomb **warnings as well as errors**. WebP derivatives preserve the
+full composition (`fit='contain'`, no crops), bounded to 1,600 pixels per side.
+Only checked optional container metadata is stripped, never required credits.
+No external media URL is a gameplay download. Public files are create-only
+`media/<sha256>.webp`; existing different bytes cannot be replaced.
+
+The eight packaged SVGs in `backend/app/content/fallbacks/` are original authored
+geometric illustrations, offered under CC0 1.0 with generation provenance. They
+share a palette and depict cradle/sun, memorial/branch, shields, mechanism/lamp,
+open unlettered book, abstract canvas/brush, compass/route and civic assembly.
+They contain no copied stock, text, dates, logos, scripts or external resources.
+SVG element/attribute/palette/label checks and byte SHA checks run automatically.
+Birth/death milestones map to their own illustration; the other six taxonomy
+categories map to battle/invention/book/art/exploration/politics. All candidates
+have coherent fallbacks, even when they also have a photograph. SVG assets also
+use create-only `media/<sha256>.svg` names; changed artwork creates a new URL.
+
+### Atomic draft and final layout (no separate content contracts)
+
+C3 generations are **never modified**. C4 uses the existing C2 EventRecord,
+MediaRecord, FallbackRecord, MediaCatalog and ValidationReceipt types:
+
+| Location | Meaning |
+| --- | --- |
+| `media-staging.json` → `media-staging/<batch-id>/` | Atomic private draft pointer; generation contains `assignments.json` (event ID → assigned EventRecord), `media.json` and event-specific `decisions.json`; no final receipts |
+| `media-assets/media/<digest>.<webp\|svg>` | Shared immutable prepared assets; many events may reference identical physical bytes |
+| `media-current.json` → `media-generations/<batch-id>/` | **Only C4 handoff commit point**, bound to exact C3 generation/input digest and canonical whole-media-catalog digest |
+| Final `events.jsonl`, `media.json`, `validation.json`, `receipts.jsonl` | Assigned events, complete frozen MediaCatalog and all fresh final receipts (`validation.json` is an array; JSONL contains the same receipts) |
+| Final `raw.jsonl`, `sources.json`, `aliases.json`, `taxonomy.json`, `source-selection.json`, `decisions.json` | Coherent private source snapshot and event-specific lookup/rights/relevance/fallback evidence |
+| Final `media/<digest>.<webp\|svg>` | Independent byte copies, **frozen before validation**, never hardlinks to mutable/corrupted draft cache |
+| Final `batch.json` | Private recovery/integrity summary: artifact byte hashes, source generation/input digest, catalog digest, event count and aggregate pass; **not a publisher CatalogManifest** |
+
+`finalize_media_receipts(workspace)` refuses partial assignments or an obsolete C3
+generation. It freezes the entire catalog and asset bytes, independently reruns
+selected-source normalization/date/conflict/provenance and C2 content validation,
+duplicate suspicion checks, per-event media rights/safety/relevance/credit checks,
+fallback mapping and every current asset's actual SHA. It does not trust C3 pass
+flags. All receipts use `stage='content_media'`, `automated-v1`, the assigned
+candidate digest, C3-consistent sorted unique provider snapshot digests and C2's
+canonical **whole** `media_catalog_digest`. Any catalog metadata/rights change
+invalidates every old receipt, including events with unchanged fallback keys or
+shared image IDs. Finalization always rechecks every event and writes fresh
+receipts for the whole batch; failed receipts are persisted for machine diagnosis,
+not sent to a human queue.
+
+Writers take the C3 import lock then the C4 media lock, fsync files/directories
+and atomically replace pointers only after coherent generations are complete.
+Failed writes keep the previous pointer; orphan generations are not authoritative
+and are retained. Reassigning after a C3 update starts a fresh draft; completing
+it is required before finalization. Metadata/source/assets/receipts from different
+generations must never be joined.
+
+**C5:** resolve `media-current.json` once; require its content generation/input to
+match the selected current C3 input, verify `batch.json` file hashes and recompute
+the complete typed MediaCatalog digest. Independently load all events and final
+receipts, derive each event's current source digests from retained raw evidence,
+call C2 `validate_receipt`, reject any missing/failed/stale receipt, and hash actual
+referenced image/fallback bytes against current record SHAs again. A pointer or
+aggregate pass field alone is not proof. Use only this frozen generation when
+building a release; do not read mutable drafts/cache. Keep source metadata,
+decisions and receipts private. Publisher/CLI/release minimum-count checks remain
+C5 responsibilities; no real catalog, legal clearance, deployment or manual
+artist/device/content approval is claimed or required by C4.
+
+Automated verification, from `backend/` (no database required):
+
+```bash
+uv run pytest tests/content/test_media.py -q
+uv run pytest tests/content tests/safety -q
+uv run ruff check app tests/content/test_media.py
+uv run mypy app
+```

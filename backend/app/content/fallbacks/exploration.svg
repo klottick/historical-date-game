@@ -1,0 +1,10 @@
+<svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 480 320" role="img" aria-label="Representative exploration illustration: compass and a winding route">
+  <rect width="480" height="320" rx="24" fill="#f3ebdd"/>
+  <circle cx="192" cy="150" r="78" fill="#426d73"/>
+  <circle cx="192" cy="150" r="62" fill="#fffaf0"/>
+  <path d="m210 100-2 60-34 40 2-60z" fill="#cf785b"/>
+  <path d="m210 100-18 50-18 50 2-60z" fill="#263f4a"/>
+  <circle cx="192" cy="150" r="7" fill="#dba64d"/>
+  <path d="M192 87v13m0 100v13m-63-63h13m100 0h13M285 242q67-2 35-58-27-49 26-91" fill="none" stroke="#dba64d" stroke-width="7" stroke-linecap="round"/>
+  <circle cx="347" cy="89" r="12" fill="#cf785b"/>
+</svg>

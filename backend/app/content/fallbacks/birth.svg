@@ -1,0 +1,9 @@
+<svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 480 320" role="img" aria-label="Representative birth illustration: cradle beneath a rising sun">
+  <rect width="480" height="320" rx="24" fill="#f3ebdd"/>
+  <circle cx="240" cy="94" r="38" fill="#dba64d"/>
+  <path d="M176 95h-24m176 0h-24M196 50l-18-18m106 18 18-18M240 38V18" stroke="#dba64d" stroke-width="8" stroke-linecap="round"/>
+  <path d="M139 170h202l-20 60H159z" fill="#426d73"/>
+  <path d="M151 172c13-34 40-48 73-32l24 32" fill="#cf785b"/>
+  <path d="M173 232v26m134-26v26M136 258q104 38 208 0" fill="none" stroke="#263f4a" stroke-width="12" stroke-linecap="round"/>
+  <path d="M174 190h132" stroke="#f3ebdd" stroke-width="6" stroke-linecap="round"/>
+</svg>
