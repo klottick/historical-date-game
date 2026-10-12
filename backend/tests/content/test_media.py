@@ -55,6 +55,7 @@ def candidate(**changes: Any) -> MediaCandidate:
         "upstream_sha1": hashlib.sha1(pixels()).hexdigest(),
         "metadata_sha256": "a" * 64,
         "title": "File:Synthetic Ada.png",
+        "subject_name": "Synthetic Ada",
         "description": "Portrait photograph of Synthetic Ada against a plain background.",
         "categories": ("Portrait photographs",),
         "entity_id": "Q900001",
@@ -925,3 +926,501 @@ def test_risk_in_other_file_metadata_never_ignored(
     monkeypatch.setattr(pipeline, "download_image", fake_download)
     result = pipeline.assign_media(events[0], SELECTION, workspace)
     assert result.media is None and "unsafe" in str(result.reason)
+
+
+UNRESOLVED_COMPOSITIONS = (
+    "Object photograph of a handwritten letter against a plain background.",
+    "Portrait photograph of Synthetic Ada holding a sign reading MDCCC against a plain background.",
+    "Portrait photograph of Synthetic Ada carrying an unspecified item against a plain background.",
+    "Portrait photograph of Synthetic Ada and another person against a plain background.",
+    "Object photograph of an ordinary item against a plain background.",
+)
+
+
+@pytest.mark.parametrize("description", UNRESOLVED_COMPOSITIONS)
+def test_round1_unresolved_subject_composition_uses_reasoned_fallback(
+    tmp_path: Path, monkeypatch: pytest.MonkeyPatch, description: str
+) -> None:
+    workspace, events = with_image(tmp_path)
+    body = commons(ImageDescription=description)
+    cache(workspace, "File:Synthetic Ada.png", body)
+    monkeypatch.setattr(pipeline, "download_image", fake_download)
+    for event in events:
+        result = pipeline.assign_media(event, SELECTION, workspace)
+        assert result.media is None and result.reason
+        assert any(
+            code in result.reason
+            for code in ("unresolved_visual_safety", "unsafe", "date_bearing")
+        )
+    receipts = pipeline.finalize_media_receipts(workspace)
+    generation = (
+        workspace
+        / json.loads((workspace / "media-current.json").read_text())["generation"]
+    )
+    assert all(
+        receipt.passed for receipt in receipts
+    )  # valid representative art, never this image
+    assert (
+        MediaCatalog.model_validate_json(
+            (generation / "media.json").read_text()
+        ).records
+        == ()
+    )
+    assert all(
+        json.loads(line)["media_asset_id"] is None
+        for line in (generation / "events.jsonl").read_text().splitlines()
+    )
+    assert json.dumps(body, sort_keys=True) in json.dumps(
+        json.loads((generation / "decisions.json").read_text())[
+            str(events[0].event_id)
+        ]["attempts"][0]["file_metadata"],
+        sort_keys=True,
+    )
+
+
+def _legacy_composition_evidence(workspace: Path, description: str) -> None:
+    """Construct an internally consistent old accepted-image artifact, without mocking gates."""
+    stage = (
+        workspace
+        / json.loads((workspace / "media-staging.json").read_text())["generation"]
+    )
+    decisions = json.loads((stage / "decisions.json").read_text())
+    assignments = json.loads((stage / "assignments.json").read_text())
+    catalog = MediaCatalog.model_validate_json((stage / "media.json").read_text())
+    body = commons(ImageDescription=description)
+    cache(workspace, "File:Synthetic Ada.png", body)
+    metadata_sha = hashlib.sha256(json.dumps(body).encode()).hexdigest()
+    info = body["query"]["pages"][0]["imageinfo"][0]
+    revision = info["timestamp"] + ";sha1=" + info["sha1"] + ";metadata=" + metadata_sha
+    asset_id = uuid5(NAMESPACE_URL, info["descriptionurl"] + revision)
+    record = catalog.records[0].model_copy(
+        update={"asset_id": asset_id, "source_revision": revision}
+    )
+    for event_id, decision in decisions.items():
+        decision["candidate"].update(
+            description=description,
+            metadata_sha256=metadata_sha,
+            source_revision=revision,
+            asset_id=str(asset_id),
+        )
+        assigned = EventRecord.model_validate_json(
+            json.dumps(assignments[event_id])
+        ).model_copy(update={"media_asset_id": asset_id})
+        assignments[event_id] = assigned.model_dump(mode="json")
+        decision["candidate_sha256"] = candidate_digest(assigned)
+        decision["attempts"][0].update(
+            file_metadata=body,
+            metadata_sha256=metadata_sha,
+            candidate=decision["candidate"],
+        )
+    (stage / "decisions.json").write_text(json.dumps(decisions))
+    (stage / "assignments.json").write_text(json.dumps(assignments))
+    (stage / "media.json").write_text(
+        catalog.model_copy(update={"records": (record,)}).model_dump_json()
+    )
+
+
+@pytest.mark.parametrize("description", UNRESOLVED_COMPOSITIONS[:2])
+def test_round1_finalization_rejects_previously_accepted_letter_or_sign(
+    tmp_path: Path, monkeypatch: pytest.MonkeyPatch, description: str
+) -> None:
+    workspace, events = with_image(tmp_path)
+    monkeypatch.setattr(pipeline, "download_image", fake_download)
+    for event in events:
+        assert pipeline.assign_media(event, SELECTION, workspace).media is not None
+    assert all(
+        receipt.passed for receipt in pipeline.finalize_media_receipts(workspace)
+    )
+    _legacy_composition_evidence(workspace, description)
+    receipts = pipeline.finalize_media_receipts(workspace)
+    assert all(
+        not receipt.passed and "unresolved_visual_safety" in receipt.issue_codes
+        for receipt in receipts
+    )
+
+
+@pytest.mark.parametrize(
+    "key,field,value",
+    [
+        ("birth", "creator", "Original illustrator / racist propaganda and gore"),
+        ("art", "creator", "Original illustrator / racist propaganda and gore"),
+        (
+            "art",
+            "alt_text",
+            "Representative art illustration: racist propaganda and gore",
+        ),
+        ("book", "creator", "Original illustrator / handwritten letter with a sign"),
+    ],
+)
+def test_round1_catalog_wide_public_fallback_text_is_rechecked(
+    tmp_path: Path, key: str, field: str, value: str
+) -> None:
+    workspace, events = batch(tmp_path)
+    for event in events:
+        pipeline.assign_media(event, SELECTION, workspace)
+    assert all(
+        receipt.passed for receipt in pipeline.finalize_media_receipts(workspace)
+    )
+    stage = (
+        workspace
+        / json.loads((workspace / "media-staging.json").read_text())["generation"]
+    )
+    catalog = MediaCatalog.model_validate_json((stage / "media.json").read_text())
+    record = catalog.fallbacks[key]
+    original_data = (workspace / "media-assets" / record.filename).read_bytes()
+    changes: dict[str, Any] = {field: value}
+    if field == "alt_text":
+        data = original_data.replace(record.alt_text.encode(), value.encode())
+        sha = hashlib.sha256(data).hexdigest()
+        changes.update(sha256=sha, filename=f"media/{sha}.svg")
+        download.immutable_write(workspace / "media-assets" / changes["filename"], data)
+    altered = record.model_copy(update=changes)
+    (stage / "media.json").write_text(
+        catalog.model_copy(
+            update={"fallbacks": {**catalog.fallbacks, key: altered}}
+        ).model_dump_json()
+    )
+    assert all(
+        not receipt.passed and "unsafe_fallback" in receipt.issue_codes
+        for receipt in pipeline.finalize_media_receipts(workspace)
+    )
+    assert (workspace / "media-assets" / record.filename).read_bytes() == original_data
+
+
+@pytest.mark.parametrize(
+    "kind,version", [("BY", "2.0"), ("BY", "3.0"), ("BY-SA", "2.0"), ("BY-SA", "3.0")]
+)
+def test_round1_older_cc_derivative_retains_supplied_work_title(
+    tmp_path: Path, monkeypatch: pytest.MonkeyPatch, kind: str, version: str
+) -> None:
+    workspace, events = with_image(tmp_path)
+    rights = f"CC {kind} {version}"
+    terms = f"Creative Commons Attribution{'-Share Alike' if kind == 'BY-SA' else ''} {version}"
+    cache(
+        workspace,
+        "File:Synthetic Ada.png",
+        commons(
+            ObjectName="Quiet profile study",
+            LicenseShortName=rights,
+            LicenseUrl=pipeline.LICENSES[rights],
+            UsageTerms=terms,
+        ),
+    )
+    monkeypatch.setattr(pipeline, "download_image", fake_download)
+    for event in events:
+        result = pipeline.assign_media(event, SELECTION, workspace)
+        assert (
+            result.media is not None
+            and "Quiet profile study" in result.media.attribution
+        )
+        assert (
+            rights in result.media.attribution
+            and "Converted" in result.media.attribution
+        )
+    assert all(
+        receipt.passed for receipt in pipeline.finalize_media_receipts(workspace)
+    )
+
+
+def test_round1_finalization_regenerates_required_supplied_title(
+    tmp_path: Path, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    workspace, events = with_image(tmp_path)
+    cache(
+        workspace,
+        "File:Synthetic Ada.png",
+        commons(
+            ObjectName="Quiet profile study",
+            LicenseShortName="CC BY 3.0",
+            LicenseUrl=pipeline.LICENSES["CC BY 3.0"],
+            UsageTerms="Creative Commons Attribution 3.0",
+        ),
+    )
+    monkeypatch.setattr(pipeline, "download_image", fake_download)
+    for event in events:
+        pipeline.assign_media(event, SELECTION, workspace)
+    assert all(
+        receipt.passed for receipt in pipeline.finalize_media_receipts(workspace)
+    )
+    stage = (
+        workspace
+        / json.loads((workspace / "media-staging.json").read_text())["generation"]
+    )
+    catalog = MediaCatalog.model_validate_json((stage / "media.json").read_text())
+    record = catalog.records[0].model_copy(
+        update={
+            "attribution": catalog.records[0].attribution.replace(
+                "Quiet profile study / ", ""
+            )
+        }
+    )
+    decisions = json.loads((stage / "decisions.json").read_text())
+    for decision in decisions.values():
+        decision["candidate"]["attribution"] = decision["candidate"][
+            "attribution"
+        ].replace("Quiet profile study / ", "")
+    (stage / "decisions.json").write_text(json.dumps(decisions))
+    (stage / "media.json").write_text(
+        catalog.model_copy(update={"records": (record,)}).model_dump_json()
+    )
+    assert all(
+        not receipt.passed for receipt in pipeline.finalize_media_receipts(workspace)
+    )
+
+
+@pytest.mark.parametrize(
+    "work_title",
+    [
+        "Profile MDCCC",
+        "Profile_MDCCC",
+        "Profile ⅯⅮⅭⅭⅭ",
+        "Handwritten letter",
+        "Portrait from 1800",
+    ],
+)
+def test_round1_unsafe_required_work_title_is_fallback_not_stripped(
+    tmp_path: Path, monkeypatch: pytest.MonkeyPatch, work_title: str
+) -> None:
+    workspace, events = with_image(tmp_path)
+    cache(
+        workspace,
+        "File:Synthetic Ada.png",
+        commons(
+            ObjectName=work_title,
+            LicenseShortName="CC BY 3.0",
+            LicenseUrl=pipeline.LICENSES["CC BY 3.0"],
+            UsageTerms="Creative Commons Attribution 3.0",
+        ),
+    )
+    monkeypatch.setattr(pipeline, "download_image", fake_download)
+    result = pipeline.assign_media(events[0], SELECTION, workspace)
+    assert result.media is None and result.reason
+    stage = (
+        workspace
+        / json.loads((workspace / "media-staging.json").read_text())["generation"]
+    )
+    evidence = json.loads((stage / "decisions.json").read_text())[
+        str(events[0].event_id)
+    ]["attempts"][0]["file_metadata"]
+    assert (
+        evidence["query"]["pages"][0]["imageinfo"][0]["extmetadata"]["ObjectName"][
+            "value"
+        ]
+        == work_title
+    )
+
+
+@pytest.mark.parametrize("short_name", ["CC0", "CC0 1.0"])
+def test_round1_commons_cc_zero_dedication_acquisition_to_final_receipts(
+    tmp_path: Path, monkeypatch: pytest.MonkeyPatch, short_name: str
+) -> None:
+    workspace, events = with_image(tmp_path)
+    body = commons(
+        LicenseShortName=short_name,
+        License="cc-zero",
+        LicenseUrl=pipeline.LICENSES["CC0"],
+        Copyrighted="False",
+        AttributionRequired="False",
+        UsageTerms="Creative Commons CC0 1.0 Universal Public Domain Dedication",
+    )
+    cache(workspace, "File:Synthetic Ada.png", body)
+    monkeypatch.setattr(pipeline, "download_image", fake_download)
+    for event in events:
+        result = pipeline.assign_media(event, SELECTION, workspace)
+        assert result.media is not None and result.media.rights_basis == "CC0"
+        assert result.media.license_url == pipeline.LICENSES["CC0"]
+        assert "Synthetic photographer" in result.media.attribution
+    receipts = pipeline.finalize_media_receipts(workspace)
+    assert len(receipts) == 2 and all(receipt.passed for receipt in receipts)
+    generation = (
+        workspace
+        / json.loads((workspace / "media-current.json").read_text())["generation"]
+    )
+    catalog = MediaCatalog.model_validate_json((generation / "media.json").read_text())
+    assigned = [
+        EventRecord.model_validate_json(line)
+        for line in (generation / "events.jsonl").read_text().splitlines()
+    ]
+    assert (
+        workspace / "media-cache" / "originals" / f"{candidate().upstream_sha1}.bin"
+    ).read_bytes() == pixels()
+    for event, receipt in zip(assigned, receipts, strict=True):
+        assert not validate_receipt(event, receipt, receipt.source_sha256, catalog)
+        assert (
+            hashlib.sha256(
+                (generation / catalog.records[0].filename).read_bytes()
+            ).hexdigest()
+            == catalog.records[0].sha256
+        )
+
+
+@pytest.mark.parametrize(
+    "terms", ["Creative Commons Attribution 4.0", "Unspecified terms"]
+)
+def test_round1_cc0_cannot_ignore_conflicting_usage_terms(
+    tmp_path: Path, monkeypatch: pytest.MonkeyPatch, terms: str
+) -> None:
+    workspace, events = with_image(tmp_path)
+    cache(
+        workspace,
+        "File:Synthetic Ada.png",
+        commons(
+            LicenseShortName="CC0",
+            License="cc0",
+            LicenseUrl=pipeline.LICENSES["CC0"],
+            Copyrighted="False",
+            AttributionRequired="False",
+            UsageTerms=terms,
+        ),
+    )
+    monkeypatch.setattr(pipeline, "download_image", fake_download)
+    result = pipeline.assign_media(events[0], SELECTION, workspace)
+    assert result.media is None and "license_conflict" in str(result.reason)
+
+
+def test_round1_old_rules_or_dependency_fingerprint_cannot_reuse_passes(
+    tmp_path: Path, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    workspace, events = with_image(tmp_path)
+    monkeypatch.setattr(pipeline, "download_image", fake_download)
+    for event in events:
+        pipeline.assign_media(event, SELECTION, workspace)
+    assert all(
+        receipt.passed for receipt in pipeline.finalize_media_receipts(workspace)
+    )
+    pointer = json.loads((workspace / "media-current.json").read_text())
+    assert len(pointer.get("media_rules_sha256", "")) == 64
+    generation = workspace / pointer["generation"]
+    assert (
+        json.loads((generation / "batch.json").read_text())["media_rules_sha256"]
+        == pointer["media_rules_sha256"]
+    )
+    stage = (
+        workspace
+        / json.loads((workspace / "media-staging.json").read_text())["generation"]
+    )
+    decisions = json.loads((stage / "decisions.json").read_text())
+    for decision in decisions.values():
+        decision.pop("media_rules_sha256", None)  # pre-fix persisted assignments
+    (stage / "decisions.json").write_text(json.dumps(decisions))
+    assert all(
+        not receipt.passed and "stale_media_rules" in receipt.issue_codes
+        for receipt in pipeline.finalize_media_receipts(workspace)
+    )
+    for event in events:
+        pipeline.assign_media(event, SELECTION, workspace)
+    assert all(
+        receipt.passed for receipt in pipeline.finalize_media_receipts(workspace)
+    )
+    monkeypatch.setattr(pipeline, "package_version", lambda _name: "0.0.0")
+    assert pipeline.media_rules_digest() != pointer["media_rules_sha256"]
+    assert all(
+        not receipt.passed and "stale_media_rules" in receipt.issue_codes
+        for receipt in pipeline.finalize_media_receipts(workspace)
+    )
+    for event in events:
+        pipeline.assign_media(event, SELECTION, workspace)
+    assert all(
+        receipt.passed for receipt in pipeline.finalize_media_receipts(workspace)
+    )
+
+
+def test_round1_changed_commons_lookup_invalidates_unchanged_event_and_asset_bytes(
+    tmp_path: Path, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    workspace, events = with_image(tmp_path)
+    monkeypatch.setattr(pipeline, "download_image", fake_download)
+    for event in events:
+        pipeline.assign_media(event, SELECTION, workspace)
+    old_receipts = pipeline.finalize_media_receipts(workspace)
+    old_generation = (
+        workspace
+        / json.loads((workspace / "media-current.json").read_text())["generation"]
+    )
+    old_catalog = MediaCatalog.model_validate_json(
+        (old_generation / "media.json").read_text()
+    )
+    old_bytes = (old_generation / old_catalog.records[0].filename).read_bytes()
+    cache(
+        workspace, "File:Synthetic Ada.png", commons(ObjectName="Quiet profile study")
+    )
+    assert all(
+        not receipt.passed for receipt in pipeline.finalize_media_receipts(workspace)
+    )
+    for event in events:
+        result = pipeline.assign_media(event, SELECTION, workspace)
+        assert (
+            result.media is not None
+            and "Quiet profile study" in result.media.attribution
+        )
+    new_receipts = pipeline.finalize_media_receipts(workspace)
+    assert all(receipt.passed for receipt in new_receipts)
+    assert all(
+        old.media_catalog_sha256 != new.media_catalog_sha256
+        for old, new in zip(old_receipts, new_receipts, strict=True)
+    )
+    assert (old_generation / old_catalog.records[0].filename).read_bytes() == old_bytes
+
+
+def test_round1_roman_date_screen_never_matches_empty_civic_word() -> None:
+    from app.content.media.rights import date_bearing
+
+    assert not date_bearing("Representative politics illustration: civic assembly")
+    assert not date_bearing("Synthetic photographer / CC BY-SA 3.0")
+    assert date_bearing("Profile_MDCCC")
+    assert date_bearing("Profile ⅯⅮⅭⅭⅭ")
+
+
+def test_round1_corrected_source_fingerprint_requires_new_complete_fallback_batch(
+    tmp_path: Path, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    workspace, events = batch(tmp_path)
+    for event in events:
+        pipeline.assign_media(event, SELECTION, workspace)
+    assert all(
+        receipt.passed for receipt in pipeline.finalize_media_receipts(workspace)
+    )
+    old_pointer = json.loads((workspace / "media-current.json").read_text())
+    old_generation = workspace / old_pointer["generation"]
+    original_reader = Path.read_bytes
+    rules_path = Path(pipeline.__file__).with_name("rights.py")
+
+    def corrected_source_bytes(path: Path) -> bytes:
+        data = original_reader(path)
+        return data + b"\n# simulated corrected rules\n" if path == rules_path else data
+
+    # Source-file input double, not a mocked fingerprint/check: no repo edits.
+    monkeypatch.setattr(Path, "read_bytes", corrected_source_bytes)
+    assert pipeline.media_rules_digest() != old_pointer["media_rules_sha256"]
+    assert all(
+        not receipt.passed and "stale_media_rules" in receipt.issue_codes
+        for receipt in pipeline.finalize_media_receipts(workspace)
+    )
+    pipeline.assign_media(events[0], SELECTION, workspace)
+    with pytest.raises(ValueError, match="complete"):
+        pipeline.finalize_media_receipts(workspace)
+    pipeline.assign_media(events[1], SELECTION, workspace)
+    assert all(
+        receipt.passed for receipt in pipeline.finalize_media_receipts(workspace)
+    )
+    assert (old_generation / "media.json").read_text() == (
+        workspace
+        / json.loads((workspace / "media-current.json").read_text())["generation"]
+        / "media.json"
+    ).read_text()
+
+
+@pytest.mark.parametrize(
+    "subject,description",
+    [
+        ("Transistor", "Object photograph of a transistor against a plain background."),
+        (
+            "Sailing ship",
+            "Ship photograph of a sailing ship against a plain background.",
+        ),
+    ],
+)
+def test_round1_closed_physical_subjects_remain_supported(
+    subject: str, description: str
+) -> None:
+    assert not check_candidate(candidate(subject_name=subject, description=description))

@@ -306,11 +306,26 @@ are included in `MediaRecord.attribution`; creator, source URL, exact license UR
 revision/SHA-1/metadata identity and actual original acquisition time remain in
 the record/evidence. UI consumers must display accessible attribution and license
 links, and escape these plain strings rather than interpreting source HTML.
+Supplied `ObjectName` work titles are retained separately from the file title in
+private candidate evidence and included unchanged in derivative attribution,
+including the required title for CC BY/BY-SA 2.0/3.0. An unsafe supplied title
+uses fallback, never title omission. Finalization independently rebuilds that
+complete credit from the current cached file metadata. Explicit Commons
+`cc-zero`/`cc0` tokens and `CC0`/`CC0 1.0` labels normalize to CC0; public-domain
+dedication usage terms are checked separately from BY/BY-SA attribution terms.
+Conflicting dedication/attribution declarations still fail closed.
 
 Acceptance is intentionally narrow: source-P18 subject-context photographs must
-have a positive simple-composition description (portrait/object/ship photograph
-against a plain background), no answer/date metadata or risk terms, and an exact
-per-event relevance match. No OCR or visual recognition certainty is claimed.
+fit **exact structural productions**, not arbitrary `of <prose>` descriptions.
+Portraits require the exact current source English subject name, a bounded
+capitalized proper-name grammar, and exactly the plain-background composition.
+Objects and ships require source-matched subjects from closed positive physical
+classes (transistor, microscope, telescope, steam engine, telephone, light bulb;
+sailing ship), with no extra clause, object, sign or document. Unrecognized names,
+classes or compositions fall back, rather than inventing visual truth. Names with
+unsupported scripts/initials/suffixes currently also fall back. Additional risk
+and Arabic/Roman/Unicode date screens apply to all metadata and complete public
+credits. No OCR or visual recognition certainty is claimed.
 Artwork, books/editions, battle/political scenes, maps/documents/title pages,
 plaques, text-heavy/titled images and ambiguous rights, sensitivity or composition
 use fallback unless a future supported automated rule establishes their safety.
@@ -345,6 +360,9 @@ share a palette and depict cradle/sun, memorial/branch, shields, mechanism/lamp,
 open unlettered book, abstract canvas/brush, compass/route and civic assembly.
 They contain no copied stock, text, dates, logos, scripts or external resources.
 SVG element/attribute/palette/label checks and byte SHA checks run automatically.
+Every final catalog's public fallback alt text **and creator** are rechecked for
+current sensitivity/text/date safety, including unreferenced fallbacks; metadata
+digest freshness alone is not a safety pass.
 Birth/death milestones map to their own illustration; the other six taxonomy
 categories map to battle/invention/book/art/exploration/politics. All candidates
 have coherent fallbacks, even when they also have a photograph. SVG assets also
@@ -387,7 +405,21 @@ generations must never be joined.
 
 **C5:** resolve `media-current.json` once; require its content generation/input to
 match the selected current C3 input, verify `batch.json` file hashes and recompute
-the complete typed MediaCatalog digest. Independently load all events and final
+the complete typed MediaCatalog digest. **Also independently call
+`app.content.media.pipeline.media_rules_digest()`**: the final pointer, batch and
+every decision must contain a matching `media_rules_sha256`. Missing or obsolete
+fingerprints invalidate the handoff, even if old receipts/candidates/catalogs
+otherwise match. This fingerprint binds the current C4 source, packaged art,
+shared schemas/validation/import normalization and installed Python/Pillow/httpx/
+pydantic/mwparserfromhell versions. Code/dependency corrections require complete
+fresh assignments and whole-batch revalidation, not reusing a former pass.
+`assign_media` starts a new draft on fingerprint change; finalization records
+`stale_media_rules` failed receipts for obsolete/missing decision fingerprints.
+The shared `automated-v1` receipt shape stays unchanged: C2 `validate_receipt`
+alone does **not** check code/dependency freshness, so this batch check is
+mandatory before C5 accepts persisted final receipts. Immutable already-published
+run assets remain unchanged; this is a gate for new publication under current
+rules, not mutation of historical releases. Independently load all events and final
 receipts, derive each event's current source digests from retained raw evidence,
 call C2 `validate_receipt`, reject any missing/failed/stale receipt, and hash actual
 referenced image/fallback bytes against current record SHAs again. A pointer or

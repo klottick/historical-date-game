@@ -15,7 +15,9 @@ from dataclasses import dataclass
 from datetime import UTC, datetime
 from difflib import SequenceMatcher
 from html.parser import HTMLParser
+from importlib.metadata import version as package_version
 from pathlib import Path
+from platform import python_version
 from typing import Any
 from urllib.parse import unquote, urlsplit
 from uuid import NAMESPACE_URL, uuid5
@@ -35,6 +37,7 @@ from app.content.media.rights import (
     RISK,
     MediaCandidate,
     check_candidate,
+    composition_kind,
     date_bearing,
 )
 from app.content.schemas import (
@@ -55,6 +58,13 @@ from app.content.validation import (
 )
 
 COMMONS_API = "https://commons.wikimedia.org/w/api.php"
+CC0_USAGE_TERMS = {
+    "creative commons cc0 1.0 universal public domain dedication",
+    "cc0 1.0 universal public domain dedication",
+    "cc0 1.0 universal",
+    "public domain dedication",
+    "cc0",
+}
 FALLBACKS = dict(
     zip(
         (
@@ -99,6 +109,40 @@ SVG_ATTRIBUTES = {
     "stroke-width",
     "stroke-linecap",
 }
+
+
+def media_rules_digest() -> str:
+    """Current offline rules/dependencies, independently recomputed for C5.
+
+    The shared automated-v1 receipt schema stays unchanged. Its batch must also
+    match this fingerprint before publication; a historical receipt alone is
+    not proof under corrected rules or changed decoding/lookup dependencies.
+    """
+    content_root = Path(__file__).parents[1]
+    sources = (
+        *sorted(content_root.joinpath("media").glob("*.py")),
+        *sorted(content_root.joinpath("fallbacks").glob("*.svg")),
+        content_root / "schemas.py",
+        content_root / "validation.py",
+        content_root / "importer.py",
+        content_root / "adapters" / "selected.py",
+    )
+    return digest(
+        {
+            "rules": "commons-media-v2",
+            "source_sha256": {
+                str(path.relative_to(content_root)): hashlib.sha256(
+                    path.read_bytes()
+                ).hexdigest()
+                for path in sources
+            },
+            "dependencies": {
+                name: package_version(name)
+                for name in ("pillow", "httpx", "pydantic", "mwparserfromhell")
+            },
+            "python": python_version(),
+        }
+    )
 
 
 @dataclass(frozen=True)
@@ -153,6 +197,7 @@ def check_fallback(record: FallbackRecord, data: bytes) -> tuple[str, ...]:
             or not record.alt_text.startswith("Representative ")
             or record.rights_basis != "Original authored artwork; CC0 1.0"
             or date_bearing(record.alt_text + " " + record.creator)
+            or RISK.search(record.alt_text + " " + record.creator)
             or record.key not in root.get("aria-label", "")
             or root.get("aria-label") != record.alt_text
         ):
@@ -340,7 +385,11 @@ def _commons_metadata(
 
 
 def _candidate(
-    event: EventRecord, title: str, data: dict[str, Any], metadata: dict[str, Any]
+    event: EventRecord,
+    title: str,
+    data: dict[str, Any],
+    metadata: dict[str, Any],
+    raws: list[RawCandidate],
 ) -> MediaCandidate:
     pages = data.get("query", {}).get("pages", [])
     if isinstance(pages, dict):
@@ -374,6 +423,8 @@ def _candidate(
     ):
         raise ValueError("date_bearing_metadata_or_required_credit")
     rights = fields.get("LicenseShortName", "")
+    if rights == "CC0 1.0":
+        rights = "CC0"
     if rights == "Public domain":
         rights = fields.get("License", "")
     if rights in PD_BASES and fields.get("Copyrighted") != "False":
@@ -382,7 +433,10 @@ def _candidate(
         raise ValueError("unsupported_rights")
     token = fields.get("License", "")
     expected_token = rights.lower().replace(" ", "-")
-    if token and token != expected_token and token != rights:
+    supported_tokens = {expected_token, rights}
+    if rights == "CC0":
+        supported_tokens.add("cc-zero")
+    if token and token not in supported_tokens:
         raise ValueError("license_conflict")
     if rights.startswith("CC BY") and fields.get("AttributionRequired") != "True":
         raise ValueError("license_conflict")
@@ -398,7 +452,21 @@ def _candidate(
         or re.search(r"\b(unknown|anonymous)\b", creator, re.I)
     ):
         raise ValueError("missing_credit")
-    if fields.get("UsageTerms") and rights.startswith("CC "):
+    if rights == "CC0":
+        if (
+            fields.get("Copyrighted") != "False"
+            or fields.get("AttributionRequired") != "False"
+        ):
+            raise ValueError("license_conflict")
+        # Dedication is not attribution/share-alike licensing. Accept only
+        # explicit supported CC0/public-domain declarations, never arbitrary
+        # terms merely because they lack an attribution requirement.
+        if (
+            fields.get("UsageTerms")
+            and fields["UsageTerms"].casefold() not in CC0_USAGE_TERMS
+        ):
+            raise ValueError("license_conflict")
+    elif fields.get("UsageTerms") and rights.startswith("CC BY"):
         terms = fields["UsageTerms"].casefold()
         expected = "share alike" if "BY-SA" in rights else "attribution"
         if expected not in terms or re.search(
@@ -439,6 +507,7 @@ def _candidate(
                 (
                     creator,
                     credit,
+                    fields.get("ObjectName"),
                     fields.get("Attribution"),
                     "Wikimedia Commons",
                     rights,
@@ -463,6 +532,8 @@ def _candidate(
         upstream_sha1=info["sha1"],
         metadata_sha256=metadata["sha256"],
         title=title,
+        subject_name=_source_subject(raws),
+        work_title=fields.get("ObjectName") or None,
         description=description,
         categories=tuple(fields.get("Categories", "").split("|")),
         entity_id=event.identity_key.split(":")[1],
@@ -470,8 +541,31 @@ def _candidate(
     )
 
 
+def _source_subject(raws: list[RawCandidate]) -> str:
+    names = set()
+    for raw in raws:
+        payload: dict[str, Any] = raw.payload
+        name = payload.get("entity", {}).get("labels", {}).get("en", {}).get(
+            "value"
+        ) or payload.get("page", {}).get("title")
+        if not isinstance(name, str) or not 0 < len(name) <= 120:
+            raise ValueError("unresolved_source_subject")
+        names.add(name)
+    if len(names) != 1:
+        raise ValueError("unresolved_source_subject")
+    return names.pop()
+
+
 def _event_candidate_codes(event: EventRecord, item: MediaCandidate) -> tuple[str, ...]:
     codes = set(check_candidate(item))
+    kind = composition_kind(item)
+    categories = {
+        "person": {"births", "deaths"},
+        "object": {"inventions"},
+        "ship": {"exploration"},
+    }
+    if kind is not None and not set(event.category_ids) <= categories[kind]:
+        codes.add("unresolved_event_relevance")
     visible = " ".join(
         (
             item.creator,
@@ -574,11 +668,15 @@ def assign_media(
         assignments: dict[str, Any] = {}
         decisions: dict[str, Any] = {}
         records: dict[str, MediaRecord] = {}
+        rules_sha = media_rules_digest()
         assets = workspace / "media-assets"
         fallbacks = install_fallbacks(assets)
         if (workspace / "media-staging.json").exists():
             stage, staged_pointer = _generation(workspace, "media-staging.json")
-            if staged_pointer["content_generation"] == pointer["generation"]:
+            if (
+                staged_pointer["content_generation"] == pointer["generation"]
+                and staged_pointer.get("media_rules_sha256") == rules_sha
+            ):
                 assignments = json.loads((stage / "assignments.json").read_text())
                 decisions = json.loads((stage / "decisions.json").read_text())
                 catalog = MediaCatalog.model_validate_json(
@@ -600,7 +698,9 @@ def assign_media(
                 attempt["metadata_sha256"] = metadata["sha256"]
                 # Preserve exact mandatory-credit metadata even when rejected.
                 attempt["file_metadata"] = data
-                item = _candidate(event, title, data, metadata)
+                item = _candidate(
+                    event, title, data, metadata, _event_raws(event, raws)
+                )
                 attempt["candidate"] = item.model_dump(mode="json")
                 codes = _event_candidate_codes(event, item)
                 if codes:
@@ -645,6 +745,7 @@ def assign_media(
             "candidate_sha256": candidate_digest(assigned),
             "source_sha256": _sources(_event_raws(event, raws)),
             "policy_version": VALIDATION_POLICY_VERSION,
+            "media_rules_sha256": rules_sha,
             "selection": selection.model_dump(mode="json"),
             "attempts": attempts,
             "candidate": evidence.model_dump(mode="json") if evidence else None,
@@ -672,6 +773,7 @@ def assign_media(
             {
                 "content_generation": pointer["generation"],
                 "content_input_sha256": pointer["input_sha256"],
+                "media_rules_sha256": rules_sha,
             },
         )
         return MediaDecision(media=selected, fallback_key=key, reason=reason)
@@ -816,7 +918,7 @@ def _recheck_media(
         ):
             codes.add("unresolved_relevance")
         data, metadata = _commons_metadata(workspace, evidence.title, fetch=False)
-        rebuilt = _candidate(original, evidence.title, data, metadata)
+        rebuilt = _candidate(original, evidence.title, data, metadata, raws)
         rebuilt = rebuilt.model_copy(update={"acquired_at": evidence.acquired_at})
         if rebuilt != evidence:
             codes.add("current_media_evidence_mismatch")
@@ -888,6 +990,7 @@ def finalize_media_receipts(workspace: Path) -> tuple[ValidationReceipt, ...]:
         frozen = catalog.model_dump_json()
         catalog = MediaCatalog.model_validate_json(frozen)
         catalog_sha = media_catalog_digest(catalog)
+        rules_sha = media_rules_digest()
         now = datetime.now(UTC)
         # Freeze the bytes too, before any validation receipt. Later corruption
         # of shared draft assets cannot change this generation's checked bytes.
@@ -910,6 +1013,11 @@ def finalize_media_receipts(workspace: Path) -> tuple[ValidationReceipt, ...]:
         )
         sources = json.loads((content / "sources.json").read_text())
         global_codes = _check_assets(catalog, target)
+        if stage_pointer.get("media_rules_sha256") != rules_sha or any(
+            decision.get("media_rules_sha256") != rules_sha
+            for decision in decisions.values()
+        ):
+            global_codes.add("stale_media_rules")
         if sources.get("input_sha256") != pointer["input_sha256"]:
             global_codes.add("source_integrity")
         if tuple(sources.get("source_sha256", [])) != _sources(raws):
@@ -1011,6 +1119,7 @@ def finalize_media_receipts(workspace: Path) -> tuple[ValidationReceipt, ...]:
                     "content_generation": pointer["generation"],
                     "content_input_sha256": pointer["input_sha256"],
                     "media_catalog_sha256": catalog_sha,
+                    "media_rules_sha256": rules_sha,
                     "files": file_hashes,
                     "passed": all(r.passed for r in receipts),
                     "event_count": len(events),
@@ -1029,6 +1138,7 @@ def finalize_media_receipts(workspace: Path) -> tuple[ValidationReceipt, ...]:
                     "content_generation": pointer["generation"],
                     "content_input_sha256": pointer["input_sha256"],
                     "media_catalog_sha256": catalog_sha,
+                    "media_rules_sha256": rules_sha,
                 },
                 sort_keys=True,
             ),
