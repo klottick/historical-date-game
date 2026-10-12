@@ -528,11 +528,16 @@ function PendingDraggable({
 class TimelineKeyboardSensor extends KeyboardSensor {
   private slotIndex: number | null = null
   private frame: number | null = null
+  private ordinalCollisions = false
 
   protected override cleanup(): void {
     this.slotIndex = null
     if (this.frame !== null) cancelAnimationFrame(this.frame)
     this.frame = null
+    if (this.ordinalCollisions) {
+      this.ordinalCollisions = false
+      this.manager.collisionObserver.enable()
+    }
     super.cleanup()
   }
 
@@ -547,6 +552,11 @@ class TimelineKeyboardSensor extends KeyboardSensor {
     )
     if (!slots?.length) return
     event.preventDefault()
+    // ScrollListener's delayed geometric collision pass can clear an ordinal
+    // keyboard target after it was set. Ignore geometry only for this keyboard
+    // operation; cleanup restores normal pointer/touch collision detection.
+    this.manager.collisionObserver.disable()
+    this.ordinalCollisions = true
     const forward = direction === "right" || direction === "down"
     const currentSlot = this.slotIndex
     const next =
@@ -568,6 +578,7 @@ class TimelineKeyboardSensor extends KeyboardSensor {
     this.frame = requestAnimationFrame(() => {
       this.frame = null
       if (!this.manager.dragOperation.status.dragging) return
+      this.manager.collisionObserver.disable()
       void this.manager.actions.setDropTarget(`slot-${slot.dataset.slot}`)
     })
   }

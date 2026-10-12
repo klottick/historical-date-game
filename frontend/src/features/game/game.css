@@ -262,8 +262,10 @@
 }
 .game-table :focus-visible,
 .play-nav a:focus-visible {
-  outline: 3px solid #ffcd75;
-  outline-offset: 4px;
+  /* Navy against cream controls; the outer cream band against dark tables. */
+  outline: 3px solid #17243b;
+  outline-offset: 2px;
+  box-shadow: 0 0 0 7px #f7f0df;
 }
 .drag-handle {
   width: 100%;

@@ -65,8 +65,11 @@ export function GameResults({ run }: { run: RunPublic }): React.JSX.Element {
           You placed every eligible event in this frozen configuration (
           {formatYear(run.config.start)}–{formatYear(run.config.end)}, minimum
           gap {run.config.min_gap}; categories:{" "}
-          {run.categories.map((category) => category.label).join(", ")}). No
-          eligible unused event remains in catalog release{" "}
+          {run.categories
+            .filter((category) => run.config.category_ids.includes(category.id))
+            .map((category) => category.label)
+            .join(", ")}
+          ). No eligible unused event remains in catalog release{" "}
           {run.catalog_release_id}.
         </p>
       ) : (
