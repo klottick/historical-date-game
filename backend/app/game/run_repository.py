@@ -1,12 +1,20 @@
 import hashlib
 import json
+from datetime import date
 from uuid import UUID
 
+from sqlalchemy.dialects.postgresql import insert
 from sqlmodel import Session, select, text
 
 from app.content.schemas import CategoryRecord, FallbackRecord, MediaRecord
 from app.game.catalog_repository import CatalogError
-from app.game.models import CatalogCategory, GameOperation, GameRun, MediaAsset
+from app.game.models import (
+    CatalogCategory,
+    DailyDefinition,
+    GameOperation,
+    GameRun,
+    MediaAsset,
+)
 from app.models import User
 
 
@@ -39,8 +47,14 @@ def read_owned_run(session: Session, run_id: UUID, owner_id: UUID) -> GameRun:
 
 
 def lock_owner(session: Session, owner_id: UUID) -> None:
+    """Serialize starts without blocking placement's owner FK KEY SHARE check.
+
+    NO KEY UPDATE is exclusive against another start (and owner deletion), but
+    compatible with FK checks. FOR UPDATE would deadlock a new Daily operation
+    on an existing attempt against a placement locking that attempt's run.
+    """
     owner = session.exec(
-        select(User).where(User.id == owner_id).with_for_update()
+        select(User).where(User.id == owner_id).with_for_update(key_share=True)
     ).first()
     if owner is None:
         raise CatalogError("run_not_found")
@@ -106,4 +120,44 @@ def latest_placement(session: Session, run: GameRun) -> GameOperation | None:
             GameOperation.scope == "placement",
             GameOperation.outcome["revision"].as_integer() == run.revision,
         )
+    ).first()
+
+
+def find_daily_definition(session: Session, day: date) -> DailyDefinition | None:
+    return session.exec(
+        select(DailyDefinition).where(DailyDefinition.day == day)
+    ).first()
+
+
+def insert_or_read_daily(
+    session: Session, candidate: DailyDefinition
+) -> DailyDefinition:
+    """The unique UTC date chooses one winner without aborting a losing transaction.
+
+    Under PostgreSQL READ COMMITTED, ON CONFLICT waits for the winning insert;
+    the following statement sees that committed row (not our discarded seed).
+    Neither this helper nor definition creation commits an attempt separately.
+    """
+    session.execute(
+        insert(DailyDefinition)
+        .values(**candidate.model_dump())
+        .on_conflict_do_nothing(index_elements=["day"])
+    )
+    definition = find_daily_definition(session, candidate.day)
+    if definition is None:
+        raise CatalogError("catalog_unavailable")
+    return definition
+
+
+def find_daily_attempt(
+    session: Session, owner_id: UUID, definition_id: UUID
+) -> GameRun | None:
+    # The revision-based B3 projection gives coherent state/feedback even if a
+    # placement commits between this query and the projection's feedback query.
+    return session.exec(
+        select(GameRun)
+        .where(
+            GameRun.owner_id == owner_id, GameRun.daily_definition_id == definition_id
+        )
+        .execution_options(populate_existing=True)
     ).first()
