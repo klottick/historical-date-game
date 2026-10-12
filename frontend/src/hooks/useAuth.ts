@@ -1,5 +1,6 @@
 import { useMutation, useQuery, useQueryClient } from "@tanstack/react-query"
 import { useNavigate } from "@tanstack/react-router"
+import { isAxiosError } from "axios"
 
 import {
   type BodyLoginLoginAccessToken as AccessToken,
@@ -25,6 +26,10 @@ const useAuth = () => {
     queryFn: async () =>
       (await UsersService.readUserMe({ throwOnError: true })).data,
     enabled: isLoggedIn(),
+    retry: (count, error) =>
+      !(
+        isAxiosError(error) && [401, 403].includes(error.response?.status ?? 0)
+      ) && count < 3,
   })
 
   const signUpMutation = useMutation({
@@ -50,7 +55,12 @@ const useAuth = () => {
   const loginMutation = useMutation({
     mutationFn: login,
     onSuccess: () => {
-      navigate({ to: "/" })
+      const returnTo = sessionStorage.getItem("game-login-return")
+      sessionStorage.removeItem("game-login-return")
+      queryClient.clear()
+      const runId = returnTo?.match(/^\/play\/([\da-f-]+)$/)?.[1]
+      if (runId) navigate({ to: "/play/$runId", params: { runId } })
+      else navigate({ to: "/" })
     },
     onError: handleError.bind(showErrorToast),
   })

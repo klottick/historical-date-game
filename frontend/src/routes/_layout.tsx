@@ -11,8 +11,11 @@ import { isLoggedIn } from "@/hooks/useAuth"
 
 export const Route = createFileRoute("/_layout")({
   component: Layout,
-  beforeLoad: async () => {
+  beforeLoad: async ({ location }) => {
     if (!isLoggedIn()) {
+      if (/^\/play\/[\da-f-]+$/.test(location.pathname)) {
+        sessionStorage.setItem("game-login-return", location.pathname)
+      }
       throw redirect({
         to: "/login",
       })

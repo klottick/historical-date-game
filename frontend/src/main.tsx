@@ -22,6 +22,9 @@ client.setConfig({
 
 const handleApiError = (error: Error) => {
   if (isAxiosError(error) && [401, 403].includes(error.response?.status ?? 0)) {
+    if (/^\/play\/[\da-f-]+$/.test(window.location.pathname)) {
+      sessionStorage.setItem("game-login-return", window.location.pathname)
+    }
     localStorage.removeItem("access_token")
     window.location.href = "/login"
   }
