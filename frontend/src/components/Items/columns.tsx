@@ -4,6 +4,7 @@ import { Check, Copy } from "lucide-react"
 import type { ItemPublic } from "@/client"
 import { Button } from "@/components/ui/button"
 import { useCopyToClipboard } from "@/hooks/useCopyToClipboard"
+import type { dataTableFeatures } from "@/lib/table"
 import { cn } from "@/lib/utils"
 import { ItemActionsMenu } from "./ItemActionsMenu"
 
@@ -31,7 +32,7 @@ function CopyId({ id }: { id: string }) {
   )
 }
 
-export const columns: ColumnDef<ItemPublic>[] = [
+export const columns: ColumnDef<typeof dataTableFeatures, ItemPublic>[] = [
   {
     accessorKey: "id",
     header: "ID",

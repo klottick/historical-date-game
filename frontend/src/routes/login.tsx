@@ -7,7 +7,7 @@ import {
 import { useForm } from "react-hook-form"
 import { z } from "zod"
 
-import type { Body_login_login_access_token as AccessToken } from "@/client"
+import type { BodyLoginLoginAccessToken as AccessToken } from "@/client"
 import { AuthLayout } from "@/components/Common/AuthLayout"
 import {
   Form,
@@ -66,7 +66,6 @@ function Login() {
     if (loginMutation.isPending) return
     loginMutation.mutate(data)
   }
-
 
   return (
     <AuthLayout>

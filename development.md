@@ -18,6 +18,12 @@ Automatic interactive documentation with Swagger UI (from the OpenAPI backend): 
 
 Adminer, database web administration: <http://localhost:8087>
 
+PostgreSQL is exposed on `localhost:5433` (containers use `db:5432`).
+The stack uses PostgreSQL 18 with a new `app-db-data-pg18` volume, leaving
+the old PostgreSQL 17 volume untouched. Development data is intentionally
+not migrated. PostgreSQL 18 mounts its versioned data directory under
+`/var/lib/postgresql`.
+
 Traefik UI, to see how the routes are being handled by the proxy: <http://localhost:8091>
 
 **Note**: The first time you start your stack, it might take a minute for it to be ready. While the backend waits for the database to be ready and configures everything. You can check the logs to monitor it.

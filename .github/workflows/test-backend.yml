@@ -12,17 +12,19 @@ on:
 jobs:
   test-backend:
     runs-on: ubuntu-latest
+    env:
+      POSTGRES_PORT: "5433"
     steps:
       - name: Checkout
-        uses: actions/checkout@v6
+        uses: actions/checkout@v7.0.1
       - name: Set up Python
-        uses: actions/setup-python@v6
+        uses: actions/setup-python@v7.0.0
         with:
-          python-version: "3.10"
+          python-version: "3.15"
       - name: Install uv
-        uses: astral-sh/setup-uv@v7
+        uses: astral-sh/setup-uv@v10.3.0
         with:
-          version: "0.4.15"
+          version: "0.13.0"
           enable-cache: true
       - run: docker compose down -v --remove-orphans
       - run: docker compose up -d db mailcatcher
@@ -34,7 +36,7 @@ jobs:
         working-directory: backend
       - run: docker compose down -v --remove-orphans
       - name: Store coverage files
-        uses: actions/upload-artifact@v6
+        uses: actions/upload-artifact@v7.0.2
         with:
           name: coverage-html
           path: backend/htmlcov

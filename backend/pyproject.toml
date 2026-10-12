@@ -2,35 +2,34 @@
 name = "app"
 version = "0.1.0"
 description = ""
-requires-python = ">=3.10,<4.0"
+requires-python = ">=3.15,<3.16"
 dependencies = [
-    "fastapi[standard]<1.0.0,>=0.114.2",
-    "python-multipart<1.0.0,>=0.0.7",
-    "email-validator<3.0.0.0,>=2.1.0.post1",
-    "passlib[bcrypt]<2.0.0,>=1.7.4",
-    "tenacity<9.0.0,>=8.2.3",
-    "pydantic>2.0",
-    "emails<1.0,>=0.6",
-    "jinja2<4.0.0,>=3.1.4",
-    "alembic<2.0.0,>=1.12.1",
-    "httpx<1.0.0,>=0.25.1",
-    "psycopg[binary]<4.0.0,>=3.1.13",
-    "sqlmodel<1.0.0,>=0.0.21",
-    # Pin bcrypt until passlib supports the latest
-    "bcrypt==4.3.0",
-    "pydantic-settings<3.0.0,>=2.2.1",
-    "sentry-sdk[fastapi]<2.0.0,>=1.40.6",
-    "pyjwt<3.0.0,>=2.8.0",
+    "fastapi>=0.143.0,<1.0.0",
+    "fastapi-cli>=0.0.32,<1.0.0",
+    "uvicorn[standard]>=0.54.0,<1.0.0",
+    "python-multipart>=0.0.32,<1.0.0",
+    "email-validator>=2.3.0,<3.0.0",
+    "pwdlib[argon2]>=0.3.1,<1.0.0",
+    "tenacity>=9.2.1,<10.0.0",
+    "pydantic>=2.14.0,<3.0.0",
+    "emails>=1.1.3,<2.0.0",
+    "jinja2>=3.1.6,<4.0.0",
+    "alembic>=1.20.0,<2.0.0",
+    "httpx>=0.28.1,<1.0.0",
+    "psycopg[binary]>=3.3.6,<4.0.0",
+    "sqlmodel>=0.0.48,<1.0.0",
+    "pydantic-settings>=2.15.0,<3.0.0",
+    "sentry-sdk[fastapi]>=2.71.0,<3.0.0",
+    "pyjwt>=2.15.1,<3.0.0",
 ]
 
-[tool.uv]
-dev-dependencies = [
-    "pytest<8.0.0,>=7.4.3",
-    "mypy<2.0.0,>=1.8.0",
-    "ruff<1.0.0,>=0.2.2",
-    "pre-commit<4.0.0,>=3.6.2",
-    "types-passlib<2.0.0.0,>=1.7.7.20240106",
-    "coverage<8.0.0,>=7.4.3",
+[dependency-groups]
+dev = [
+    "pytest>=9.1.1,<10.0.0",
+    "mypy>=2.4.0,<3.0.0",
+    "ruff>=0.17.0,<1.0.0",
+    "pre-commit>=4.6.2,<5.0.0",
+    "coverage>=7.16.2,<8.0.0",
 ]
 
 [build-system]
@@ -42,7 +41,7 @@ strict = true
 exclude = ["venv", ".venv", "alembic"]
 
 [tool.ruff]
-target-version = "py310"
+target-version = "py315"
 exclude = ["alembic"]
 
 [tool.ruff.lint]

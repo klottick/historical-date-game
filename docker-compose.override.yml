@@ -6,7 +6,7 @@ services:
   # etc. To enable it, update .env, set:
   # DOMAIN=localhost.tiangolo.com
   proxy:
-    image: traefik:3.0
+    image: traefik:3.7.14
     volumes:
       - /var/run/docker.sock:/var/run/docker.sock
     ports:
@@ -87,7 +87,7 @@ services:
       EMAILS_FROM_EMAIL: "noreply@example.com"
 
   mailcatcher:
-    image: schickling/mailcatcher
+    image: sj26/mailcatcher:v0.11.0
     ports:
       - "1080:1080"
       - "1025:1025"
@@ -120,7 +120,7 @@ services:
       - MAILCATCHER_HOST=http://mailcatcher:1080
       # For the reports when run locally
       - PLAYWRIGHT_HTML_HOST=0.0.0.0
-      - CI=${CI}
+      - CI=${CI:-false}
     volumes:
       - ./frontend/blob-report:/app/blob-report
       - ./frontend/test-results:/app/test-results

@@ -4,6 +4,10 @@
 
 * [Docker](https://www.docker.com/).
 * [uv](https://docs.astral.sh/uv/) for Python package and environment management.
+* Python 3.15 (uv installs the version specified in `.python-version`).
+
+Passwords use pwdlib with Argon2. Existing bcrypt hashes are not migrated:
+this modernization starts with a fresh, disposable development database.
 
 ## Docker Compose
 
@@ -18,6 +22,10 @@ From `./backend/` you can install all the dependencies with:
 ```console
 $ uv sync
 ```
+
+For local backend development against the Compose database, use
+`POSTGRES_PORT=5433 uv run fastapi dev app/main.py`. Containers connect to the
+database on its internal port, 5432.
 
 Then you can activate the virtual environment with:
 

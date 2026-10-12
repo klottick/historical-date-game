@@ -22,9 +22,9 @@ jobs:
     outputs:
       changed: ${{ steps.filter.outputs.changed }}
     steps:
-    - uses: actions/checkout@v6
+    - uses: actions/checkout@v7.0.1
     # For pull requests it's not necessary to checkout the code but for the main branch it is
-    - uses: dorny/paths-filter@v3
+    - uses: dorny/paths-filter@v4.0.3
       id: filter
       with:
         filters: |
@@ -47,22 +47,22 @@ jobs:
         shardTotal: [4]
       fail-fast: false
     steps:
-    - uses: actions/checkout@v6
-    - uses: actions/setup-node@v6
+    - uses: actions/checkout@v7.0.1
+    - uses: actions/setup-node@v7.1.0
       with:
-        node-version: lts/*
-    - uses: actions/setup-python@v6
+        node-version: "26.11.1"
+    - uses: actions/setup-python@v7.0.0
       with:
-        python-version: '3.10'
+        python-version: "3.15"
     - name: Setup tmate session
-      uses: mxschmitt/action-tmate@v3
+      uses: mxschmitt/action-tmate@v3.24
       if: ${{ github.event_name == 'workflow_dispatch' && github.event.inputs.debug_enabled == 'true' }}
       with:
         limit-access-to-actor: true
     - name: Install uv
-      uses: astral-sh/setup-uv@v7
+      uses: astral-sh/setup-uv@v10.3.0
       with:
-        version: "0.4.15"
+        version: "0.13.0"
         enable-cache: true
     - run: uv sync
       working-directory: backend
@@ -71,6 +71,13 @@ jobs:
     - run: uv run bash scripts/generate-client.sh
       env:
         VIRTUAL_ENV: backend/.venv
+    - name: Check frontend
+      run: |
+        npm run lint
+        npm run typecheck
+        npm run test:unit
+        npm run build
+      working-directory: frontend
     - run: docker compose build
     - run: docker compose down -v --remove-orphans
     - name: Run Playwright tests
@@ -78,7 +85,7 @@ jobs:
     - run: docker compose down -v --remove-orphans
     - name: Upload blob report to GitHub Actions Artifacts
       if: ${{ !cancelled() }}
-      uses: actions/upload-artifact@v6
+      uses: actions/upload-artifact@v7.0.2
       with:
         name: blob-report-${{ matrix.shardIndex }}
         path: frontend/blob-report
@@ -93,15 +100,15 @@ jobs:
     if: ${{ !cancelled() && needs.changes.outputs.changed == 'true' }}
     runs-on: ubuntu-latest
     steps:
-    - uses: actions/checkout@v6
-    - uses: actions/setup-node@v6
+    - uses: actions/checkout@v7.0.1
+    - uses: actions/setup-node@v7.1.0
       with:
-        node-version: 20
+        node-version: "26.11.1"
     - name: Install dependencies
       run: npm ci
       working-directory: frontend
     - name: Download blob reports from GitHub Actions Artifacts
-      uses: actions/download-artifact@v7
+      uses: actions/download-artifact@v8.0.2
       with:
         path: frontend/all-blob-reports
         pattern: blob-report-*
@@ -110,7 +117,7 @@ jobs:
       run: npx playwright merge-reports --reporter html ./all-blob-reports
       working-directory: frontend
     - name: Upload HTML report
-      uses: actions/upload-artifact@v6
+      uses: actions/upload-artifact@v7.0.2
       with:
         name: html-report--attempt-${{ github.run_attempt }}
         path: frontend/playwright-report
@@ -125,7 +132,7 @@ jobs:
     runs-on: ubuntu-latest
     steps:
       - name: Decide whether the needed jobs succeeded or failed
-        uses: re-actors/alls-green@release/v1
+        uses: re-actors/alls-green@v1.3.0
         with:
           jobs: ${{ toJSON(needs) }}
           allowed-skips: test-playwright

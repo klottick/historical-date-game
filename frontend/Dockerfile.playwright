@@ -1,10 +1,15 @@
-FROM mcr.microsoft.com/playwright:v1.57.0-noble
+FROM node:26.11.1 AS node-runtime
+
+FROM mcr.microsoft.com/playwright:v1.64.0-noble
+
+COPY --from=node-runtime /usr/local/bin/node /usr/local/bin/node
+COPY --from=node-runtime /usr/local/lib/node_modules/npm /usr/local/lib/node_modules/npm
 
 WORKDIR /app
 
 COPY package*.json /app/
 
-RUN npm install
+RUN npm ci
 
 COPY ./ /app/
 
