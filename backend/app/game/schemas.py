@@ -1,12 +1,13 @@
 """Allowlisted wire contracts, separate from private catalog and run models."""
 
 from datetime import date, datetime
-from typing import Annotated, Literal
+from typing import Annotated, Literal, Self
 from uuid import UUID
 
-from pydantic import BaseModel, ConfigDict, Field, field_validator
+from pydantic import BaseModel, ConfigDict, Field, field_validator, model_validator
 
 from app.content.schemas import CategoryRecord
+from app.game.years import to_year_index
 
 
 class PublicModel(BaseModel):
@@ -18,6 +19,16 @@ class PublicModel(BaseModel):
 class YearInput(PublicModel):
     value: Annotated[int, Field(gt=0)]
     era: Literal["BCE", "CE"]
+
+    @model_validator(mode="after")
+    def persistable_year_index(self) -> Self:
+        # Persisted rule constraints cast indexes to PostgreSQL bigint. Bound the
+        # canonical index, not the civil magnitude: BCE 2**63 + 1 is still valid.
+        # This is a storage boundary, not an historical range limit on B1 math.
+        index = to_year_index(self.value, self.era)
+        if not -(2**63) <= index <= 2**63 - 1:
+            raise ValueError("Year index must fit signed 64-bit storage")
+        return self
 
 
 class GameConfig(PublicModel):

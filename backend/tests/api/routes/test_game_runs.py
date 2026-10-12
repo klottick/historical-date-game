@@ -7,6 +7,8 @@ from typing import Any
 from uuid import UUID, uuid4
 
 import pytest
+from fastapi import FastAPI
+from fastapi.testclient import TestClient
 from pydantic import ValidationError
 from sqlmodel import Session, select
 
@@ -17,6 +19,7 @@ from app.content.publish import publish_release
 from app.core.db import engine
 from app.game.catalog_repository import activate_catalog, load_events
 from app.game.models import GameOperation, GameRun
+from app.game.schemas import FreeplayStart, RunPublic
 from app.models import User
 from tests.content.test_importer import snapshot
 from tests.content.test_media import SELECTION, fake_download, with_image
@@ -622,3 +625,160 @@ def test_loss_preserves_previously_scored_timeline_and_feedback_on_reconnect(
     with Session(engine) as reconnect:
         assert read_run(reconnect, owner_id, good.run_id) == lost
         assert submit_placement(reconnect, owner_id, good.run_id, wrong) == lost
+
+
+@pytest.mark.parametrize(
+    "era,value,accepted",
+    [
+        ("CE", 2**63 - 1, True),
+        ("BCE", 2**63 + 1, True),
+        ("CE", 2**63, False),
+        ("BCE", 2**63 + 2, False),
+        ("CE", 10**30, False),
+        ("BCE", 10**30, False),
+        ("CE", True, False),
+        ("BCE", 1.0, False),
+    ],
+)
+def test_year_storage_dto_bounds(era: str, value: Any, accepted: bool) -> None:
+    from app.game.schemas import YearInput
+
+    body = json.dumps({"era": era, "value": value})
+    if accepted:
+        assert YearInput.model_validate_json(body).value == value
+    else:
+        with pytest.raises(ValidationError):
+            YearInput.model_validate_json(body)
+
+
+@pytest.mark.parametrize(
+    "field,era,value",
+    [
+        ("end", "CE", 10**30),
+        ("end", "CE", 2**63),
+        ("start", "BCE", 10**30),
+        ("start", "BCE", 2**63 + 2),
+    ],
+)
+def test_year_storage_service_rejection_is_atomic(
+    db: Session, game_context: tuple[UUID, str], field: str, era: str, value: int
+) -> None:
+    from app.game.run_service import GameServiceError, start_freeplay
+
+    command = start_command(game_context[1])
+    # Exercise service revalidation independently of the wire validator.
+    changed = getattr(command.config, field).model_copy(
+        update={"era": era, "value": value}
+    )
+    invalid = command.model_copy(
+        update={"config": command.config.model_copy(update={field: changed})}
+    )
+    with pytest.raises(GameServiceError) as error:
+        start_freeplay(db, game_context[0], invalid)
+    assert error.value.code == "invalid_command" and error.value.status_code == 422
+    assert not db.in_transaction()
+    assert not db.exec(select(GameRun).where(GameRun.owner_id == game_context[0])).all()
+    assert not db.exec(
+        select(GameOperation).where(GameOperation.owner_id == game_context[0])
+    ).all()
+
+
+def test_year_storage_extreme_bounds_accept_sparse_pool(
+    db: Session, game_context: tuple[UUID, str]
+) -> None:
+    from app.game.run_service import read_run, start_freeplay, submit_placement
+
+    config = start_command(game_context[1]).config.model_dump(mode="json")
+    config.update(
+        start={"value": 2**63 + 1, "era": "BCE"}, end={"value": 2**63 - 1, "era": "CE"}
+    )
+    initial = start_freeplay(
+        db, game_context[0], start_command(game_context[1], config=config)
+    )
+    persisted = db.get(GameRun, initial.run_id)
+    assert persisted.rules["start_year_index"] == -(2**63)
+    assert persisted.rules["end_year_index"] == 2**63 - 1
+    assert len(persisted.pool) == 4 and initial.status == "active"
+    assert initial.config.model_dump(mode="json") == config
+    with Session(engine) as reconnect:
+        assert read_run(reconnect, game_context[0], initial.run_id) == initial
+        scored = submit_placement(
+            reconnect,
+            game_context[0],
+            initial.run_id,
+            correct_command(reconnect, initial),
+        )
+        assert scored.streak == 1 and scored.revision == 1
+
+
+@pytest.mark.parametrize(
+    "field,era,value", [("end", "CE", 10**30), ("start", "BCE", 10**30)]
+)
+def test_year_storage_routed_dto_rejects_before_allocation(
+    db: Session, game_context: tuple[UUID, str], field: str, era: str, value: int
+) -> None:
+    from app.game.run_service import start_freeplay
+
+    # Test-only route verifies FastAPI's decoded-JSON boundary without adding B5
+    # endpoints, dependencies, or generated OpenAPI to the production app.
+    app = FastAPI()
+
+    @app.post("/runs")
+    def create_run(command: FreeplayStart) -> RunPublic:
+        with Session(engine) as session:
+            return start_freeplay(session, game_context[0], command)
+
+    body = start_command(game_context[1]).model_dump(mode="json")
+    body["config"][field] = {"era": era, "value": value}
+    with TestClient(app) as client:
+        response = client.post("/runs", json=body)
+    assert response.status_code == 422
+    assert response.json()["detail"][0]["loc"][:3] == ["body", "config", field]
+    assert not db.exec(select(GameRun).where(GameRun.owner_id == game_context[0])).all()
+    assert not db.exec(
+        select(GameOperation).where(GameOperation.owner_id == game_context[0])
+    ).all()
+
+
+def test_other_huge_integer_commands_do_not_reach_unsafe_persistence(
+    db: Session, game_context: tuple[UUID, str]
+) -> None:
+    from app.game.run_service import (
+        GameServiceError,
+        read_run,
+        start_freeplay,
+        submit_placement,
+    )
+
+    config = start_command(game_context[1]).config.model_dump(mode="json")
+    # min_gap is JSONB without a bigint cast; no artificial 64-bit cap is needed.
+    command = start_command(game_context[1], config={**config, "min_gap": 10**30})
+    with pytest.raises(GameServiceError) as error:
+        start_freeplay(db, game_context[0], command)
+    assert error.value.code == "insufficient_pool" and error.value.status_code == 422
+    assert not db.exec(select(GameRun).where(GameRun.owner_id == game_context[0])).all()
+    assert not db.exec(
+        select(GameOperation).where(GameOperation.owner_id == game_context[0])
+    ).all()
+    initial = start(db, game_context)
+    for changes, code, status in (
+        ({"slot": 10**30}, "invalid_slot", 422),
+        ({"expected_revision": 10**30}, "stale_revision", 409),
+    ):
+        with pytest.raises(GameServiceError) as error:
+            submit_placement(
+                db,
+                game_context[0],
+                initial.run_id,
+                correct_command(db, initial, **changes),
+            )
+        assert error.value.code == code and error.value.status_code == status
+        assert read_run(db, game_context[0], initial.run_id) == initial
+    assert (
+        len(
+            db.exec(
+                select(GameOperation).where(GameOperation.owner_id == game_context[0])
+            ).all()
+        )
+        == 1
+    )
