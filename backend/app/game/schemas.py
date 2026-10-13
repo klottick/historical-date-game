@@ -128,6 +128,11 @@ class GameOptions(PublicModel):
     registration_open: bool
 
 
+class GameSessionPublic(PublicModel):
+    kind: Literal["guest", "account"]
+    context_id: str
+
+
 class PublicConfig(PublicModel):
     registration_open: bool
 

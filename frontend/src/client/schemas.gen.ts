@@ -241,6 +241,24 @@ export const GameOptionsSchema = {
   title: "GameOptions",
 } as const
 
+export const GameSessionPublicSchema = {
+  properties: {
+    kind: {
+      type: "string",
+      enum: ["guest", "account"],
+      title: "Kind",
+    },
+    context_id: {
+      type: "string",
+      title: "Context Id",
+    },
+  },
+  additionalProperties: false,
+  type: "object",
+  required: ["kind", "context_id"],
+  title: "GameSessionPublic",
+} as const
+
 export const HTTPValidationErrorSchema = {
   properties: {
     detail: {

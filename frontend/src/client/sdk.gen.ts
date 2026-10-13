@@ -10,6 +10,8 @@ import {
   urlSearchParamsBodySerializer,
 } from "./client/index.ts"
 import type {
+  GamesBootstrapGameSessionData,
+  GamesBootstrapGameSessionResponses,
   GamesPlaceCardData,
   GamesPlaceCardErrors,
   GamesPlaceCardResponses,
@@ -17,6 +19,8 @@ import type {
   GamesReadActiveRunsResponses,
   GamesReadDailyData,
   GamesReadDailyResponses,
+  GamesReadGameSessionData,
+  GamesReadGameSessionResponses,
   GamesReadLeaderboardData,
   GamesReadLeaderboardErrors,
   GamesReadLeaderboardResponses,
@@ -685,6 +689,42 @@ export class ItemsService {
 
 export class GamesService {
   /**
+   * Read Game Session
+   */
+  public static readGameSession<ThrowOnError extends boolean = false>(
+    options?: Options<GamesReadGameSessionData, ThrowOnError>,
+  ): RequestResult<GamesReadGameSessionResponses, unknown, ThrowOnError> {
+    return (options?.client ?? client).get<
+      GamesReadGameSessionResponses,
+      unknown,
+      ThrowOnError
+    >({
+      responseType: "json",
+      security: [{ scheme: "bearer", type: "http" }],
+      url: "/api/v1/games/session",
+      ...options,
+    })
+  }
+
+  /**
+   * Bootstrap Game Session
+   */
+  public static bootstrapGameSession<ThrowOnError extends boolean = false>(
+    options?: Options<GamesBootstrapGameSessionData, ThrowOnError>,
+  ): RequestResult<GamesBootstrapGameSessionResponses, unknown, ThrowOnError> {
+    return (options?.client ?? client).post<
+      GamesBootstrapGameSessionResponses,
+      unknown,
+      ThrowOnError
+    >({
+      responseType: "json",
+      security: [{ scheme: "bearer", type: "http" }],
+      url: "/api/v1/games/session",
+      ...options,
+    })
+  }
+
+  /**
    * Read Options
    */
   public static readOptions<ThrowOnError extends boolean = false>(
@@ -696,7 +736,6 @@ export class GamesService {
       ThrowOnError
     >({
       responseType: "json",
-      security: [{ scheme: "bearer", type: "http" }],
       url: "/api/v1/games/options",
       ...options,
     })

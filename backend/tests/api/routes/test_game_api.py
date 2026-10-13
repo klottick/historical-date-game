@@ -36,9 +36,8 @@ def headers(owner: UUID) -> dict[str, str]:
     return {"Authorization": f"Bearer {token}"}
 
 
-def test_games_require_authentication(client: TestClient) -> None:
+def test_owned_games_require_a_game_session(client: TestClient) -> None:
     for method, path in (
-        ("get", "/options"),
         ("post", "/freeplay"),
         ("get", "/active-runs"),
         ("get", f"/runs/{uuid4()}"),
@@ -47,7 +46,14 @@ def test_games_require_authentication(client: TestClient) -> None:
         ("post", "/daily"),
         ("get", "/daily/2026-10-12/leaderboard"),
     ):
-        assert client.request(method, BASE + path).status_code == 401
+        # Valid mutation protections do not substitute for a player credential.
+        response = client.request(
+            method,
+            BASE + path,
+            headers={"Origin": settings.FRONTEND_HOST, "X-Game-Request": "1"},
+        )
+        assert response.status_code == 401
+        assert response.json()["detail"]["code"] == "game_session_required"
 
 
 def test_http_commands_reject_answers_and_score(
@@ -488,6 +494,8 @@ def test_openapi_exposes_only_public_game_models() -> None:
         "GameRun",
         "DailyDefinition",
         "MediaAsset",
+        "GuestSession",
+        "GamePlayer",
     ):
         assert private not in models
     for name in (
@@ -496,6 +504,7 @@ def test_openapi_exposes_only_public_game_models() -> None:
         "GameOptions",
         "DailyOverview",
         "LeaderboardEntry",
+        "GameSessionPublic",
     ):
         fields = models[name]["properties"]
         assert (
@@ -503,6 +512,29 @@ def test_openapi_exposes_only_public_game_models() -> None:
             & fields.keys()
         )
         assert models[name]["additionalProperties"] is False
+    assert set(models["GameSessionPublic"]["properties"]) == {"kind", "context_id"}
+    assert models["GameSessionPublic"]["properties"]["kind"]["enum"] == [
+        "guest",
+        "account",
+    ]
+    session_routes = schema["paths"][BASE + "/session"]
+    assert session_routes["get"]["operationId"] == "games-read_game_session"
+    assert session_routes["post"]["operationId"] == "games-bootstrap_game_session"
+    for path, methods in schema["paths"].items():
+        if path.startswith(BASE):
+            for operation in methods.values():
+                if path == BASE + "/options":
+                    assert not operation.get("security")
+                else:
+                    # Keep SDK bearer attachment while allowing cookie sessions.
+                    assert operation["security"] == [
+                        {"OAuth2PasswordBearer": []},
+                        {},
+                    ]
+                assert all(
+                    p["name"] != "require_context"
+                    for p in operation.get("parameters", [])
+                )
     assert set(models["PendingCard"]["properties"]) == {
         "event_id",
         "prompt",

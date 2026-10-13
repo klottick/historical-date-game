@@ -146,6 +146,20 @@ export type GameOptions = {
 }
 
 /**
+ * GameSessionPublic
+ */
+export type GameSessionPublic = {
+  /**
+   * Kind
+   */
+  kind: "guest" | "account"
+  /**
+   * Context Id
+   */
+  context_id: string
+}
+
+/**
  * HTTPValidationError
  */
 export type HttpValidationError = {
@@ -1308,6 +1322,40 @@ export type ItemsUpdateItemResponses = {
 
 export type ItemsUpdateItemResponse =
   ItemsUpdateItemResponses[keyof ItemsUpdateItemResponses]
+
+export type GamesReadGameSessionData = {
+  body?: never
+  path?: never
+  query?: never
+  url: "/api/v1/games/session"
+}
+
+export type GamesReadGameSessionResponses = {
+  /**
+   * Successful Response
+   */
+  200: GameSessionPublic
+}
+
+export type GamesReadGameSessionResponse =
+  GamesReadGameSessionResponses[keyof GamesReadGameSessionResponses]
+
+export type GamesBootstrapGameSessionData = {
+  body?: never
+  path?: never
+  query?: never
+  url: "/api/v1/games/session"
+}
+
+export type GamesBootstrapGameSessionResponses = {
+  /**
+   * Successful Response
+   */
+  200: GameSessionPublic
+}
+
+export type GamesBootstrapGameSessionResponse =
+  GamesBootstrapGameSessionResponses[keyof GamesBootstrapGameSessionResponses]
 
 export type GamesReadOptionsData = {
   body?: never

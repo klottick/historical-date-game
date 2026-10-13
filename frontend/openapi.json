@@ -736,6 +736,40 @@
         }
       }
     },
+    "/api/v1/games/session": {
+      "get": {
+        "tags": ["games"],
+        "summary": "Read Game Session",
+        "operationId": "games-read_game_session",
+        "responses": {
+          "200": {
+            "description": "Successful Response",
+            "content": {
+              "application/json": {
+                "schema": { "$ref": "#/components/schemas/GameSessionPublic" }
+              }
+            }
+          }
+        },
+        "security": [{ "OAuth2PasswordBearer": [] }, {}]
+      },
+      "post": {
+        "tags": ["games"],
+        "summary": "Bootstrap Game Session",
+        "operationId": "games-bootstrap_game_session",
+        "responses": {
+          "200": {
+            "description": "Successful Response",
+            "content": {
+              "application/json": {
+                "schema": { "$ref": "#/components/schemas/GameSessionPublic" }
+              }
+            }
+          }
+        },
+        "security": [{ "OAuth2PasswordBearer": [] }, {}]
+      }
+    },
     "/api/v1/games/options": {
       "get": {
         "tags": ["games"],
@@ -750,8 +784,7 @@
               }
             }
           }
-        },
-        "security": [{ "OAuth2PasswordBearer": [] }]
+        }
       }
     },
     "/api/v1/games/freeplay": {
@@ -785,7 +818,7 @@
             }
           }
         },
-        "security": [{ "OAuth2PasswordBearer": [] }]
+        "security": [{ "OAuth2PasswordBearer": [] }, {}]
       }
     },
     "/api/v1/games/active-runs": {
@@ -807,7 +840,7 @@
             }
           }
         },
-        "security": [{ "OAuth2PasswordBearer": [] }]
+        "security": [{ "OAuth2PasswordBearer": [] }, {}]
       }
     },
     "/api/v1/games/runs/{run_id}": {
@@ -815,7 +848,6 @@
         "tags": ["games"],
         "summary": "Read Run",
         "operationId": "games-read_run",
-        "security": [{ "OAuth2PasswordBearer": [] }],
         "parameters": [
           {
             "name": "run_id",
@@ -841,7 +873,8 @@
               }
             }
           }
-        }
+        },
+        "security": [{ "OAuth2PasswordBearer": [] }, {}]
       }
     },
     "/api/v1/games/runs/{run_id}/placements": {
@@ -849,7 +882,6 @@
         "tags": ["games"],
         "summary": "Place Card",
         "operationId": "games-place_card",
-        "security": [{ "OAuth2PasswordBearer": [] }],
         "parameters": [
           {
             "name": "run_id",
@@ -883,7 +915,8 @@
               }
             }
           }
-        }
+        },
+        "security": [{ "OAuth2PasswordBearer": [] }, {}]
       }
     },
     "/api/v1/games/daily": {
@@ -901,7 +934,7 @@
             }
           }
         },
-        "security": [{ "OAuth2PasswordBearer": [] }]
+        "security": [{ "OAuth2PasswordBearer": [] }, {}]
       },
       "post": {
         "tags": ["games"],
@@ -933,7 +966,7 @@
             }
           }
         },
-        "security": [{ "OAuth2PasswordBearer": [] }]
+        "security": [{ "OAuth2PasswordBearer": [] }, {}]
       }
     },
     "/api/v1/games/daily/{day}/leaderboard": {
@@ -941,7 +974,6 @@
         "tags": ["games"],
         "summary": "Read Leaderboard",
         "operationId": "games-read_leaderboard",
-        "security": [{ "OAuth2PasswordBearer": [] }],
         "parameters": [
           {
             "name": "day",
@@ -967,7 +999,8 @@
               }
             }
           }
-        }
+        },
+        "security": [{ "OAuth2PasswordBearer": [] }, {}]
       }
     },
     "/api/v1/private/users/": {
@@ -1174,6 +1207,20 @@
           "registration_open"
         ],
         "title": "GameOptions"
+      },
+      "GameSessionPublic": {
+        "properties": {
+          "kind": {
+            "type": "string",
+            "enum": ["guest", "account"],
+            "title": "Kind"
+          },
+          "context_id": { "type": "string", "title": "Context Id" }
+        },
+        "additionalProperties": false,
+        "type": "object",
+        "required": ["kind", "context_id"],
+        "title": "GameSessionPublic"
       },
       "HTTPValidationError": {
         "properties": {
