@@ -91,6 +91,138 @@ def public_run(response: Any) -> RunPublic:
     return RunPublic.model_validate_json(response.text)
 
 
+def assert_private_cache_policy(response: Any) -> None:
+    assert response.headers.get("cache-control") == "no-store"
+    vary = {
+        field.strip().lower() for field in response.headers.get("vary", "").split(",")
+    }
+    assert {"cookie", "authorization", "x-game-context"} <= vary
+    if "access-control-allow-origin" in response.headers:
+        assert "origin" in vary
+
+
+@pytest.mark.parametrize("path", ["/active-runs", "/runs/{run_id}", "/daily"])
+def test_private_reads_are_not_cacheable_across_identity_changes(
+    daily_context: tuple[list[UUID], str, datetime],
+    monkeypatch: pytest.MonkeyPatch,
+    path: str,
+) -> None:
+    owners, _, now = daily_context
+    monkeypatch.setattr(daily_service, "utc_now", lambda: now)
+    with (
+        TestClient(app) as first,
+        TestClient(app) as second,
+        TestClient(app) as account,
+    ):
+        first_context = bootstrap(first)
+        second_context = bootstrap(second)
+        account.headers.update({**bearer(owners[0]), "Origin": settings.FRONTEND_HOST})
+        clients = [first, second, account]
+        runs = [
+            public_run(c.post(f"{BASE}/daily", json={"operation_id": str(uuid4())}))
+            for c in clients
+        ]
+
+        def read(client: TestClient, run: RunPublic) -> None:
+            response = client.get(BASE + path.format(run_id=run.run_id))
+            assert response.status_code == 200
+            assert_private_cache_policy(response)
+            assert (
+                response.headers["access-control-allow-origin"]
+                == settings.FRONTEND_HOST
+            )
+            if path == "/active-runs":
+                assert [r["run_id"] for r in response.json()] == [str(run.run_id)]
+            elif path == "/daily":
+                assert response.json()["attempt_run_id"] == str(run.run_id)
+            else:
+                assert response.json()["run_id"] == str(run.run_id)
+
+        for client, run in zip(clients, runs, strict=True):
+            read(client, run)
+        first.cookies.clear()
+        first.cookies.update(second.cookies)
+        stale = first.get(BASE + path.format(run_id=runs[0].run_id))
+        assert_error(stale, 409, "game_identity_changed")
+        assert_private_cache_policy(stale)
+        first.headers["X-Game-Context"] = second_context
+        read(first, runs[1])
+        denied = first.get(f"{BASE}/runs/{runs[0].run_id}")
+        assert denied.status_code == 404
+        assert_private_cache_policy(denied)
+        first.headers.update(bearer(owners[0]))
+        changed = first.get(BASE + path.format(run_id=runs[2].run_id))
+        assert_error(changed, 409, "game_identity_changed")
+        assert_private_cache_policy(changed)
+        del first.headers["X-Game-Context"]
+        read(first, runs[2])  # Existing bearer callers need no context header.
+        del first.headers["Authorization"]
+        first.headers["X-Game-Context"] = second_context
+        read(first, runs[1])
+        assert first_context != second_context
+
+
+@pytest.mark.parametrize(
+    "kind,status",
+    [
+        ("missing_cookie", 401),
+        ("bad_bearer", 403),
+        ("wrong_scheme", 401),
+        ("unknown_account", 404),
+        ("inactive_account", 400),
+        ("cross_owner", 404),
+        ("stale_context", 409),
+        ("missing_context", 409),
+    ],
+)
+def test_private_read_denials_are_not_cacheable(
+    db: Session,
+    daily_context: tuple[list[UUID], str, datetime],
+    monkeypatch: pytest.MonkeyPatch,
+    kind: str,
+    status: int,
+) -> None:
+    owners, _, now = daily_context
+    monkeypatch.setattr(daily_service, "utc_now", lambda: now)
+    with TestClient(app) as client, TestClient(app) as other:
+        bootstrap(client)
+        run = public_run(
+            client.post(f"{BASE}/daily", json={"operation_id": str(uuid4())})
+        )
+        if kind == "missing_cookie":
+            client.cookies.clear()
+        elif kind == "bad_bearer":
+            client.headers["Authorization"] = "Bearer bad"
+        elif kind == "wrong_scheme":
+            client.headers["Authorization"] = "Basic bad"
+        elif kind == "unknown_account":
+            client.headers.update(bearer(uuid4()))
+        elif kind == "inactive_account":
+            owner = db.get(User, owners[0])
+            assert owner is not None
+            owner.is_active = False
+            db.add(owner)
+            db.commit()
+            client.headers.update(bearer(owners[0]))
+        elif kind == "cross_owner":
+            bootstrap(other)
+            client.cookies.clear()
+            client.cookies.update(other.cookies)
+            client.headers["X-Game-Context"] = other.headers["X-Game-Context"]
+        elif kind == "stale_context":
+            client.headers["X-Game-Context"] = "old-context"
+        else:
+            del client.headers["X-Game-Context"]
+        before = counts(db)
+        response = client.get(f"{BASE}/runs/{run.run_id}")
+        assert response.status_code == status
+        assert_private_cache_policy(response)
+        assert response.headers["access-control-allow-origin"] == settings.FRONTEND_HOST
+        if kind == "wrong_scheme":
+            assert response.headers["www-authenticate"] == "Bearer"
+        assert counts(db) == before
+
+
 def test_public_options_do_not_allocate_identity(
     db: Session, daily_context: tuple[list[UUID], str, datetime]
 ) -> None:
@@ -108,6 +240,14 @@ def test_public_options_do_not_allocate_identity(
             "registration_open",
         }
         assert not response.headers.get("set-cookie") and not client.cookies
+        assert "cache-control" not in response.headers
+        assert "cookie" not in response.headers.get("vary", "").lower()
+        account_api = client.get(
+            "/api/v1/users/me", headers={"Origin": settings.FRONTEND_HOST}
+        )
+        assert account_api.status_code == 401
+        assert "cache-control" not in account_api.headers
+        assert account_api.headers["vary"] == "Origin"
     assert counts(db) == before
 
 
@@ -122,7 +262,7 @@ def test_session_errors_are_not_cacheable(db: Session) -> None:
         ]
         assert [r.status_code for r in responses] == [401, 403, 403, 401]
         for response in responses:
-            assert response.headers.get("cache-control") == "no-store"
+            assert_private_cache_policy(response)
             assert "set-cookie" not in response.headers
         assert responses[-1].headers["www-authenticate"] == "Bearer"
     assert counts(db) == before
@@ -421,6 +561,7 @@ def test_guest_and_account_share_daily_but_not_runs(
             r.timeline == runs[0].timeline and r.pending == runs[0].pending
             for r in runs
         )
+        prefixes: list[list[RunPublic]] = []
         for i, client in enumerate(clients):
             assert client.get(f"{BASE}/daily").json()["attempt_run_id"] == str(
                 runs[i].run_id
@@ -449,6 +590,7 @@ def test_guest_and_account_share_daily_but_not_runs(
                 client.post(f"{BASE}/daily", json={"operation_id": str(uuid4())})
             )
             assert resumed == moved
+            prefix = [moved]
             while moved.status == "active":
                 moved = public_run(
                     client.post(
@@ -456,7 +598,11 @@ def test_guest_and_account_share_daily_but_not_runs(
                         json=correct_command(db, moved).model_dump(mode="json"),
                     )
                 )
+                prefix.append(moved)
             assert moved.status == "won" and moved.streak == 5
+            prefixes.append(prefix)
+        projections = [[(r.timeline, r.pending) for r in prefix] for prefix in prefixes]
+        assert projections[0] == projections[1] == projections[2]
         board = first.get(f"{BASE}/daily/{now.date()}/leaderboard")
         assert board.status_code == 200
         entries = board.json()["entries"]

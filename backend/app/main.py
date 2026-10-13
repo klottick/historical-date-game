@@ -1,7 +1,8 @@
 import sentry_sdk
-from fastapi import FastAPI, Request
+from fastapi import FastAPI, Request, Response
 from fastapi.responses import JSONResponse
 from fastapi.routing import APIRoute
+from starlette.middleware.base import RequestResponseEndpoint
 from starlette.middleware.cors import CORSMiddleware
 
 from app.api.main import api_router
@@ -34,6 +35,28 @@ if settings.all_cors_origins:
     )
 
 app.include_router(api_router, prefix=settings.API_V1_STR)
+
+
+@app.middleware("http")
+async def private_game_cache_policy(
+    request: Request, call_next: RequestResponseEndpoint
+) -> Response:
+    response = await call_next(request)
+    game_prefix = f"{settings.API_V1_STR}/games/"
+    if (
+        request.url.path.startswith(game_prefix)
+        and request.url.path != game_prefix + "options"
+    ):
+        # Apply after handled errors and CORS, not just successful route returns.
+        response.headers["Cache-Control"] = "no-store"
+        vary = {
+            field.strip().lower()
+            for field in response.headers.get("Vary", "").split(",")
+        }
+        for field in ("Cookie", "Authorization", "X-Game-Context"):
+            if field.lower() not in vary:
+                response.headers.add_vary_header(field)
+    return response
 
 
 @app.exception_handler(GameServiceError)
