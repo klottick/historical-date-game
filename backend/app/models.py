@@ -1,8 +1,10 @@
 import uuid
 
 from pydantic import EmailStr
+from sqlalchemy import Boolean, CheckConstraint, Column, false
 from sqlmodel import Field, Relationship, SQLModel
 
+from app.game.guest_models import GuestSession  # noqa: F401 (register private table)
 from app.game.models import GameOperation, GameRun
 
 
@@ -44,7 +46,15 @@ class UpdatePassword(SQLModel):
 # Database model, database table inferred from class name
 class User(UserBase, table=True):
     id: uuid.UUID = Field(default_factory=uuid.uuid4, primary_key=True)
+    is_guest: bool = Field(
+        default=False, sa_column=Column(Boolean, nullable=False, server_default=false())
+    )
     hashed_password: str
+    __table_args__ = (
+        CheckConstraint(
+            "NOT (is_guest AND is_superuser)", name="ck_user_guest_not_superuser"
+        ),
+    )
     items: list[Item] = Relationship(back_populates="owner", cascade_delete=True)
     game_runs: list[GameRun] = Relationship(
         back_populates="owner", cascade_delete=True, passive_deletes=True

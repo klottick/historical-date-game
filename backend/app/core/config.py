@@ -1,3 +1,4 @@
+import re
 import secrets
 import warnings
 from pathlib import Path
@@ -10,6 +11,7 @@ from pydantic import (
     HttpUrl,
     PostgresDsn,
     computed_field,
+    field_validator,
     model_validator,
 )
 from pydantic_settings import BaseSettings, SettingsConfigDict
@@ -57,6 +59,14 @@ class Settings(BaseSettings):
     POSTGRES_DB: str = ""
     GAME_DATA_DIR: Path = Path("../data/game")
     PUBLIC_REGISTRATION_ENABLED: bool = True
+    GAME_GUEST_COOKIE_NAME: str = "hdg_guest"
+
+    @field_validator("GAME_GUEST_COOKIE_NAME")
+    @classmethod
+    def _validate_guest_cookie_name(cls, value: str) -> str:
+        if re.fullmatch(r"[!#$%&'*+.^_`|~0-9A-Za-z-]+", value) is None:
+            raise ValueError("Guest cookie name must be a safe cookie token")
+        return value
 
     @computed_field  # type: ignore[prop-decorator]
     @property

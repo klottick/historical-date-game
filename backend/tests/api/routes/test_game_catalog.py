@@ -38,6 +38,11 @@ from app.game.models import (
 )
 from app.game.run_repository import lock_run
 from app.models import User
+from tests.browser.guest_test_environment import (
+    ownership_comment,
+    require_owned_guest_database,
+    require_ownership,
+)
 from tests.content.test_importer import snapshot
 from tests.content.test_media import SELECTION
 from tests.content.test_publish import final_batch, rewrite
@@ -472,21 +477,55 @@ def test_catalog_unavailable_without_pointer(db: Session) -> None:
 def test_migration_round_trip_on_owned_fixture_database(
     release: Path, request: pytest.FixtureRequest
 ) -> None:
-    """Only create/drop this test's exact random *_test DB on the owned server."""
+    """Authorized exception: this test owns one absent random child DB.
+
+    Primary verification targets remain fixed-name and comment-verified. This
+    round trip separately creates/comments/verifies/drops only its exact child.
+    """
     require_test_database(settings.POSTGRES_DB)
+    require_owned_guest_database()
     name = "hdg_b2_fixture_" + uuid4().hex[:12] + "_test"
     request.node.user_properties.append(("owned_fixture_database", name))
     require_test_database(name)
     env = {**os.environ, "POSTGRES_DB": name, "POSTGRES_PORT": "5433"}
-    from sqlalchemy import create_engine, inspect
+    from psycopg import sql
+    from sqlalchemy import Connection, create_engine, inspect
+
+    def verify_child_ownership(connection: Connection) -> None:
+        identity = connection.execute(
+            text(
+                "SELECT shobj_description(oid, 'pg_database'), pg_get_userbyid(datdba) "
+                "FROM pg_database WHERE datname = :name"
+            ),
+            {"name": name},
+        ).one()
+        require_ownership(name, identity[0], identity[1])
 
     child = create_engine(
         str(settings.SQLALCHEMY_DATABASE_URI).rsplit("/", 1)[0] + "/" + name
     )
     with engine.connect().execution_options(isolation_level="AUTOCOMMIT") as connection:
+        assert (
+            connection.execute(
+                text("SELECT count(*) FROM pg_database WHERE datname = :name"),
+                {"name": name},
+            ).scalar_one()
+            == 0
+        )
+        # CREATE must succeed before entering any cleanup path; never adopt a DB.
         connection.execute(text(f'CREATE DATABASE "{name}"'))
         try:
+            connection.exec_driver_sql(
+                sql.SQL("COMMENT ON DATABASE {} IS {}")
+                .format(sql.Identifier(name), sql.Literal(ownership_comment(name)))
+                .as_string()
+            )
+            verify_child_ownership(connection)
+            request.node.user_properties.append(
+                ("owned_fixture_comment", ownership_comment(name))
+            )
             for step, revision in enumerate(("head", "1a31ce608336", "head")):
+                verify_child_ownership(connection)
                 action = "downgrade" if revision == "1a31ce608336" else "upgrade"
                 result = subprocess.run(
                     [sys.executable, "-m", "alembic", action, revision],
@@ -498,6 +537,7 @@ def test_migration_round_trip_on_owned_fixture_database(
                 if step == 0:
                     # Exercise downgrade with real synthetic C5 snapshots and owned
                     # run/operation rows, not a scored production database.
+                    verify_child_ownership(connection)
                     with Session(child) as fixture_db:
                         owner = User(
                             email="migration-fixture@example.com",
@@ -508,6 +548,7 @@ def test_migration_round_trip_on_owned_fixture_database(
                         release_id = activate(fixture_db, release)
                         run_data(fixture_db, release_id, owner)
                 elif step == 1:
+                    verify_child_ownership(connection)
                     with child.connect() as previous:
                         assert "gamerun" not in inspect(previous).get_table_names()
                         assert (
@@ -525,12 +566,13 @@ def test_migration_round_trip_on_owned_fixture_database(
                             == 0
                         )
             # Verify the re-upgraded schema and exact revision, then drop only this DB.
+            verify_child_ownership(connection)
             with child.connect() as migrated:
                 assert (
                     migrated.execute(
                         text("SELECT version_num FROM alembic_version")
                     ).scalar_one()
-                    == "20261011_01"
+                    == "20261013_01"
                 )
                 assert set(inspect(migrated).get_table_names()) >= {
                     "catalogrelease",
@@ -552,4 +594,19 @@ def test_migration_round_trip_on_owned_fixture_database(
                 )
         finally:
             child.dispose()
+            verify_child_ownership(connection)
+            assert (
+                connection.execute(
+                    text("SELECT count(*) FROM pg_stat_activity WHERE datname = :name"),
+                    {"name": name},
+                ).scalar_one()
+                == 0
+            )
             connection.execute(text(f'DROP DATABASE "{name}"'))
+            assert (
+                connection.execute(
+                    text("SELECT count(*) FROM pg_database WHERE datname = :name"),
+                    {"name": name},
+                ).scalar_one()
+                == 0
+            )

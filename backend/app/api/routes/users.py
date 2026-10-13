@@ -2,7 +2,7 @@ import uuid
 from typing import Any
 
 from fastapi import APIRouter, Depends, HTTPException
-from sqlmodel import func, select
+from sqlmodel import col, func, select
 
 from app import crud
 from app.api.deps import (
@@ -38,10 +38,14 @@ def read_users(session: SessionDep, skip: int = 0, limit: int = 100) -> Any:
     Retrieve users.
     """
 
-    count_statement = select(func.count()).select_from(User)
+    count_statement = (
+        select(func.count()).select_from(User).where(col(User.is_guest).is_(False))
+    )
     count = session.exec(count_statement).one()
 
-    statement = select(User).offset(skip).limit(limit)
+    statement = (
+        select(User).where(col(User.is_guest).is_(False)).offset(skip).limit(limit)
+    )
     users = session.exec(statement).all()
 
     return UsersPublic(
@@ -166,6 +170,8 @@ def read_user_by_id(
     Get a specific user by id.
     """
     user = session.get(User, user_id)
+    if user and user.is_guest:
+        raise HTTPException(status_code=404, detail="User not found")
     if user == current_user:
         return user
     if not current_user.is_superuser:
@@ -192,7 +198,7 @@ def update_user(
     """
 
     db_user = session.get(User, user_id)
-    if not db_user:
+    if not db_user or db_user.is_guest:
         raise HTTPException(
             status_code=404,
             detail="The user with this id does not exist in the system",
@@ -216,7 +222,7 @@ def delete_user(
     Delete a user.
     """
     user = session.get(User, user_id)
-    if not user:
+    if not user or user.is_guest:
         raise HTTPException(status_code=404, detail="User not found")
     if user == current_user:
         raise HTTPException(

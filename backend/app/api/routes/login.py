@@ -31,7 +31,7 @@ def login_access_token(
     user = crud.authenticate(
         session=session, email=form_data.username, password=form_data.password
     )
-    if not user:
+    if not user or user.is_guest:
         raise HTTPException(status_code=400, detail="Incorrect email or password")
     elif not user.is_active:
         raise HTTPException(status_code=400, detail="Inactive user")
@@ -58,7 +58,7 @@ def recover_password(email: str, session: SessionDep) -> Message:
     """
     user = crud.get_user_by_email(session=session, email=email)
 
-    if not user:
+    if not user or user.is_guest:
         raise HTTPException(
             status_code=404,
             detail="The user with this email does not exist in the system.",
@@ -84,7 +84,7 @@ def reset_password(session: SessionDep, body: NewPassword) -> Message:
     if not email:
         raise HTTPException(status_code=400, detail="Invalid token")
     user = crud.get_user_by_email(session=session, email=email)
-    if not user:
+    if not user or user.is_guest:
         raise HTTPException(
             status_code=404,
             detail="The user with this email does not exist in the system.",
@@ -109,7 +109,7 @@ def recover_password_html_content(email: str, session: SessionDep) -> Any:
     """
     user = crud.get_user_by_email(session=session, email=email)
 
-    if not user:
+    if not user or user.is_guest:
         raise HTTPException(
             status_code=404,
             detail="The user with this username does not exist in the system.",
