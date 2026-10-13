@@ -202,6 +202,19 @@ async function begin(
     { mode, count },
   )
 }
+
+async function retryGuest(page: Page) {
+  await page.evaluate(() => {
+    window.bootstrap.retryGuestBootstrap(window.cancel.signal).then(
+      (result) => window.outcomes.push(result),
+      (error) =>
+        window.outcomes.push({
+          failure: window.bootstrap.sessionFailure(error),
+          name: error.name,
+        }),
+    )
+  })
+}
 async function outcomes(page: Page, count = 1) {
   await expect
     .poll(() => page.evaluate(() => window.outcomes.length))
@@ -259,16 +272,230 @@ test("cold_tabs_share_confirmed_identity", async ({ context, page, api }) => {
   ).toEqual([1])
 })
 
-test("rejected_cookie_stops_bootstrap", async ({ page, api }) => {
+test("rejected_cookie_stops_bootstrap", async ({ context, page, api }) => {
+  api.rejectCookie = true
+  api.postGate = gate()
+  await load(page, api)
+  const other = await context.newPage()
+  await load(other, api)
+  await begin(page)
+  await expect.poll(() => api.allocations).toBe(1)
+  await begin(other)
+  api.postGate.release()
+  expect((await outcomes(page))[0].failure).toBe("storage")
+  expect((await outcomes(other))[0].failure).toBe("storage")
+  expect(api.allocations).toBe(1)
+  expect(
+    await page.evaluate(() =>
+      localStorage.getItem("game-guest-cookie-rejected"),
+    ),
+  ).toBe("1")
+  expect(await page.evaluate(() => Object.entries(localStorage))).toEqual([
+    ["game-guest-cookie-rejected", "1"],
+  ])
+  await begin(page)
+  expect((await outcomes(page, 2))[1].failure).toBe("storage")
+  await load(page, api) // Reload destroys module memory, not the origin flag.
+  await begin(page)
+  expect((await outcomes(page))[0].failure).toBe("storage")
+  expect(api.allocations).toBe(1)
+  expect(api.requests.filter((r) => r.method === "POST")).toHaveLength(1)
+  expect(api.mutations).toBe(0)
+})
+
+test("successful_guest_inspection_clears_rejection_without_allocating", async ({
+  context,
+  page,
+  api,
+}) => {
   api.rejectCookie = true
   await load(page, api)
   await begin(page)
   expect((await outcomes(page))[0].failure).toBe("storage")
-  await begin(page)
-  expect((await outcomes(page, 2))[1].failure).toBe("storage")
+  expect(
+    await page.evaluate(() =>
+      localStorage.getItem("game-guest-cookie-rejected"),
+    ),
+  ).toBe("1")
+  await context.addCookies([
+    {
+      name: "bootstrap_test",
+      value: "1",
+      domain: "127.0.0.1",
+      path: "/api/v1/games",
+      httpOnly: true,
+      sameSite: "Lax",
+    },
+  ])
+  await begin(page, "inspect")
+  expect((await outcomes(page, 2))[1]).toEqual({
+    kind: "guest",
+    context_id: "g:1",
+  })
+  expect(
+    await page.evaluate(() =>
+      localStorage.getItem("game-guest-cookie-rejected"),
+    ),
+  ).toBeNull()
   expect(api.allocations).toBe(1)
-  expect(api.requests.map((r) => r.method)).toEqual(["GET", "POST", "GET"])
+  expect(api.requests.filter((r) => r.method === "POST")).toHaveLength(1)
+})
+
+test("account_inspection_and_bootstrap_do_not_clear_guest_rejection", async ({
+  page,
+  api,
+}) => {
+  api.rejectCookie = true
+  await load(page, api)
+  await begin(page)
+  expect((await outcomes(page))[0].failure).toBe("storage")
+  await page.evaluate(() => localStorage.setItem("access_token", "account-one"))
+  await begin(page, "inspect")
+  expect((await outcomes(page, 2))[1].kind).toBe("account")
+  await begin(page)
+  expect((await outcomes(page, 3))[2].kind).toBe("account")
+  expect(
+    await page.evaluate(() =>
+      localStorage.getItem("game-guest-cookie-rejected"),
+    ),
+  ).toBe("1")
+  await page.evaluate(() => localStorage.removeItem("access_token"))
+  await begin(page)
+  expect((await outcomes(page, 4))[3].failure).toBe("storage")
+  expect(api.allocations).toBe(1)
+})
+
+test("explicit_guest_retry_confirms_cookie_and_does_not_join_automatic_flight", async ({
+  page,
+  api,
+}) => {
+  api.rejectCookie = true
+  await load(page, api)
+  await begin(page)
+  expect((await outcomes(page))[0].failure).toBe("storage")
+  api.rejectCookie = false
+  api.postGate = gate()
+  await begin(page)
+  await retryGuest(page)
+  await expect.poll(() => api.allocations).toBe(2)
+  expect((await outcomes(page, 2))[1].failure).toBe("storage")
+  expect(
+    await page.evaluate(() =>
+      localStorage.getItem("game-guest-cookie-rejected"),
+    ),
+  ).toBe("1")
+  api.postGate.release()
+  expect((await outcomes(page, 3))[2]).toEqual({
+    kind: "guest",
+    context_id: "g:2",
+  })
+  expect(
+    await page.evaluate(() =>
+      localStorage.getItem("game-guest-cookie-rejected"),
+    ),
+  ).toBeNull()
+  expect(await page.evaluate(() => localStorage.length)).toBe(0)
   expect(api.mutations).toBe(0)
+})
+
+test("aborted_explicit_retry_keeps_rejection_and_cannot_write_after_unlock", async ({
+  context,
+  page,
+  api,
+}) => {
+  api.rejectCookie = true
+  await load(page, api)
+  await begin(page)
+  expect((await outcomes(page))[0].failure).toBe("storage")
+  api.postGate = gate()
+  await retryGuest(page)
+  await expect.poll(() => api.allocations).toBe(2)
+  await page.evaluate(() => window.cancel.abort())
+  expect((await outcomes(page, 2))[1].context_id).toBeUndefined()
+  await expect
+    .poll(
+      () =>
+        [...api.requests].reverse().find((r) => r.method === "POST")?.aborted,
+    )
+    .toBe(true)
+  expect(
+    await page.evaluate(() =>
+      localStorage.getItem("game-guest-cookie-rejected"),
+    ),
+  ).toBe("1")
+  const other = await context.newPage()
+  await load(other, api)
+  api.rejectCookie = false
+  api.postGate.release()
+  await retryGuest(other)
+  expect((await outcomes(other))[0]).toEqual({
+    kind: "guest",
+    context_id: "g:3",
+  })
+  expect(
+    await other.evaluate(() =>
+      localStorage.getItem("game-guest-cookie-rejected"),
+    ),
+  ).toBeNull()
+  await begin(other)
+  expect((await outcomes(other, 2))[1].context_id).toBe("g:3")
+  expect(api.allocations).toBe(3)
+})
+
+test("guest_flag_storage_access_failure_stops_before_post", async ({
+  page,
+  api,
+}) => {
+  await load(page, api)
+  await page.evaluate(async () => {
+    const sdkPath = "/src/client/client.gen.ts"
+    const { client } = await import(sdkPath)
+    client.setConfig({ auth: "" }) // Isolate flag access from account storage.
+    Object.defineProperty(window, "localStorage", {
+      get: () => {
+        throw new DOMException("Denied", "SecurityError")
+      },
+    })
+  })
+  await begin(page)
+  expect((await outcomes(page))[0].failure).toBe("storage")
+  expect(api.requests.map((r) => r.method)).toEqual(["GET"])
+  expect(api.allocations).toBe(0)
+})
+
+test("guest_flag_storage_write_failure_stops_before_post", async ({
+  page,
+  api,
+}) => {
+  await load(page, api)
+  await page.evaluate(() => {
+    Storage.prototype.setItem = () => {
+      throw new DOMException("Quota", "QuotaExceededError")
+    }
+  })
+  await begin(page)
+  expect((await outcomes(page))[0].failure).toBe("storage")
+  expect(api.requests.map((r) => r.method)).toEqual(["GET"])
+  expect(api.allocations).toBe(0)
+})
+
+test("explicit_guest_retry_does_not_clear_flag_for_signed_in_account", async ({
+  page,
+  api,
+}) => {
+  await load(page, api)
+  await page.evaluate(() => {
+    localStorage.setItem("game-guest-cookie-rejected", "1")
+    localStorage.setItem("access_token", "account-one")
+  })
+  await retryGuest(page)
+  expect((await outcomes(page))[0].failure).toBe("identity_changed")
+  expect(
+    await page.evaluate(() =>
+      localStorage.getItem("game-guest-cookie-rejected"),
+    ),
+  ).toBe("1")
+  expect(api.requests).toEqual([])
 })
 
 test("inspection_never_allocates", async ({ page, api }) => {

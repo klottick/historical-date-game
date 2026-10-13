@@ -17,15 +17,47 @@ export {
 } from "./identityState.ts"
 
 type Mode = "bootstrap" | "inspect"
+type AttemptMode = Mode | "retry"
 type Flight = {
   controller: AbortController
   promise: Promise<GameSessionPublic>
   subscribers: number
 }
 const flights = new Map<string, Flight>()
-// Do not automatically issue another allocation after a failed cookie check.
-// A successful non-allocating inspection can recover after cookies are enabled.
-const rejectedCookies = new Set<string>()
+// Availability state only: no credential, context, or account metadata. This is
+// not a lock/lease; every read/write below occurs inside the IndexedDB writer.
+const guestRejectionKey = "game-guest-cookie-rejected"
+const guestStorageProbeKey = "game-guest-storage-probe"
+
+function guestCookieRejected(): boolean {
+  try {
+    const storage = window.localStorage
+    const rejected = storage.getItem(guestRejectionKey) === "1"
+    // Readable storage can still have writes disabled or exhausted quota. Prove
+    // that a rejection can be persisted before issuing an allocating request.
+    storage.setItem(guestStorageProbeKey, "1")
+    storage.removeItem(guestStorageProbeKey)
+    return rejected
+  } catch {
+    throw storageUnavailable()
+  }
+}
+
+function recordGuestRejection() {
+  try {
+    window.localStorage.setItem(guestRejectionKey, "1")
+  } catch {
+    throw storageUnavailable()
+  }
+}
+
+function clearGuestRejection() {
+  try {
+    window.localStorage.removeItem(guestRejectionKey)
+  } catch {
+    throw storageUnavailable()
+  }
+}
 
 async function accountAuth(): Promise<string> {
   try {
@@ -60,7 +92,7 @@ function validContext(value: GameSessionPublic): GameSessionPublic {
 }
 
 async function runSession(
-  mode: Mode,
+  mode: AttemptMode,
   auth: string,
   controller: AbortController,
 ) {
@@ -112,12 +144,9 @@ async function runSession(
     return result
   }
   try {
-    if (mode === "inspect") {
-      const context = await inspect()
-      rejectedCookies.delete(auth)
-      return context
-    }
-    if (rejectedCookies.has(auth)) throw storageUnavailable()
+    // Guest continuation must be a separate deliberate sign-out decision by
+    // the caller, never an implicit fallback from an account bearer.
+    if (mode === "retry" && auth) throw changed()
     return await withBootstrapLock(async (lockSignal) => {
       const lockAborted = () => controller.abort(lockSignal.reason)
       lockSignal.addEventListener("abort", lockAborted, { once: true })
@@ -130,10 +159,26 @@ async function runSession(
           // Only a structured missing/expired guest session permits POST.
           // An explicit invalid account bearer never falls through to a guest.
           if (
+            mode === "inspect" ||
             auth ||
             !["missing", "expired"].includes(sessionFailure(error) ?? "")
           )
             throw error
+        }
+        await assertAuth()
+        if (mode === "inspect") {
+          if (before!.kind === "guest") clearGuestRejection()
+          return before!
+        }
+        if (!auth) {
+          const rejected = guestCookieRejected()
+          if (before?.kind === "guest") {
+            // A successful guest inspection proves cookie acceptance. Account
+            // responses must never erase this origin-wide guest failure state.
+            clearGuestRejection()
+          } else if (rejected && mode !== "retry") {
+            throw storageUnavailable()
+          }
         }
         await assertAuth()
         const created = validContext(
@@ -150,7 +195,10 @@ async function runSession(
               sessionFailure(error) ?? "",
             )
           ) {
-            rejectedCookies.add(auth)
+            // An aborted/stale callback must not publish a rejection after its
+            // lock was released or overwrite another tab's successful recovery.
+            await assertAuth()
+            recordGuestRejection()
             throw storageUnavailable()
           }
           throw error
@@ -164,6 +212,7 @@ async function runSession(
         )
           throw changed()
         await assertAuth()
+        if (confirmed.kind === "guest") clearGuestRejection()
         return confirmed
       } finally {
         lockSignal.removeEventListener("abort", lockAborted)
@@ -179,8 +228,8 @@ async function runSession(
   }
 }
 
-export async function ensureGameSession(
-  mode: Mode,
+async function joinSession(
+  mode: AttemptMode,
   signal?: AbortSignal,
 ): Promise<GameSessionPublic> {
   if (signal?.aborted) throw signal.reason
@@ -229,4 +278,24 @@ export async function ensureGameSession(
       (error) => settle(() => reject(error)),
     )
   })
+}
+
+export function ensureGameSession(
+  mode: Mode,
+  signal?: AbortSignal,
+): Promise<GameSessionPublic> {
+  return joinSession(mode, signal)
+}
+
+/** Call only from a deliberate Retry/New-play user action, not an effect, query
+ * retry, or unresolved-command replay. Does not sign out or transfer commands.
+ * An explicit guest-only flight may retry despite the rejection flag, under the
+ * same native lock. The flag stays set until guest-cookie confirmation succeeds,
+ * so cancellation, transport failure, or another rejection cannot silently
+ * re-enable automatic allocation. Never nests a second bootstrap lock.
+ */
+export function retryGuestBootstrap(
+  signal?: AbortSignal,
+): Promise<GameSessionPublic> {
+  return joinSession("retry", signal)
 }
