@@ -10,6 +10,7 @@ import type {
   PublicConfig,
   RunPublic,
 } from "../../client/types.gen.ts"
+import { sessionFailure } from "./identityState.ts"
 
 // Reuse the generated client's base URL, bearer auth, and Axios error shape.
 export async function getGameOptions(): Promise<GameOptions> {
@@ -76,6 +77,7 @@ export async function getLeaderboard(day: string): Promise<LeaderboardPublic> {
 }
 
 export function isKnownFailure(error: unknown): boolean {
+  if (sessionFailure(error) !== null) return false
   const status = isAxiosError(error) ? error.response?.status : undefined
   // Transport errors, timeouts, throttling and server failures may follow a commit.
   return (
