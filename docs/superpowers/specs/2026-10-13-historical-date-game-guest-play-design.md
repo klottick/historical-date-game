@@ -1,6 +1,6 @@
 # Historical Date Game: No-Login Guest Play
 
-**Status:** Conversational design approved; written spec awaiting owner review.
+**Status:** Written spec approved by the owner with "I approve" on 2026-10-13.
 **Baseline:** `4b224ad`, `feature/friends-beta`, verified equal to the remote before
 writing this document. No product implementation or live migration has begun.
 
