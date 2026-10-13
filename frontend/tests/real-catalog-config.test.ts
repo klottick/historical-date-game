@@ -108,6 +108,39 @@ test("test-only real catalog answers stay outside application imports and Vite e
   assert.equal(stdout.trim(), "")
 })
 
+test("real catalog UI binds all IPv4 interfaces with same-origin API and media", () => {
+  const result = spawnSync(
+    process.execPath,
+    [
+      "--input-type=module",
+      "-e",
+      `
+    import { resolveConfig } from 'vite';
+    const c = await resolveConfig({configFile:'vite.real-catalog.config.ts'}, 'serve');
+    console.log(JSON.stringify({host:c.server.host,port:c.server.port,strictPort:c.server.strictPort,
+      allowedHosts:c.server.allowedHosts,proxy:c.server.proxy,apiBase:c.define?.['import.meta.env.VITE_API_URL']}));
+  `,
+    ],
+    {
+      encoding: "utf8",
+      env: { ...process.env, VITE_API_URL: "http://localhost:8000" },
+    },
+  )
+  assert.equal(result.status, 0, result.stderr)
+  const actual = JSON.parse(result.stdout.trim().split("\n").pop()!)
+  assert.equal(actual.host, "0.0.0.0")
+  assert.equal(actual.port, 5174)
+  assert.equal(actual.strictPort, true)
+  // Vite adds the configured bind host; it must not allow arbitrary hostnames.
+  assert.ok(Array.isArray(actual.allowedHosts))
+  assert.ok(actual.allowedHosts.every((host: string) => host === "0.0.0.0"))
+  assert.deepEqual(actual.proxy, {
+    "/api/": "http://127.0.0.1:8010",
+    "/media/": "http://127.0.0.1:8010",
+  })
+  assert.equal(actual.apiBase, JSON.stringify(""))
+})
+
 for (const configFile of ["vite.config.ts", "vite.real-catalog.config.ts"]) {
   test(`${configFile} resolves strict private-file protection and retains installed Vite defaults`, () => {
     const result = spawnSync(

@@ -170,7 +170,7 @@ weakened. All eight actual projected asset URLs return 200 with matching byte
 hashes. Private artifacts and directory listings return 404, including paths
 under this release directory. The flat digest path remains deliberately 404.
 
-### Launch and tests (loopback only)
+### Launch and tests
 
 Inspect `ss -ltnp` and process command/cwd before starting. Occupied ports require
 established ownership or approval; a responding health check is not ownership.
@@ -186,8 +186,9 @@ uv run python -m app.initial_data
 uv run uvicorn app.main:app --host 127.0.0.1 --port 8010
 
 # In a separate shell, from frontend/; verify 5174 is free first.
+# Owner authorized all-interface UI binding; backend remains loopback-only.
 export PATH=/tmp/opencode/node-v26.11.1-linux-x64/bin:$PATH
-VITE_API_URL=http://localhost:8010 npm run dev -- --config vite.real-catalog.config.ts --host 127.0.0.1 --port 5174 --strictPort
+npm run dev -- --config vite.real-catalog.config.ts
 
 # Supply FIRST_SUPERUSER / FIRST_SUPERUSER_PASSWORD privately from local .env.
 REAL_CATALOG_RELEASE_DIR="$(realpath ../data/game/releases/jsonl-trial-2026-10-12-review-r1)" \
@@ -249,7 +250,24 @@ Desktop Chromium and Pixel 5 **touch emulation are not physical-device evidence*
 or unassisted owner play. Physical-device, spoken screen-reader, owner gameplay,
 production security/default-secret replacement, hosting/budget and invitation
 gates remain outstanding. No deployment, paid operations, live acquisition,
-LAN/tunnel binding, push, merge, or publication was performed.
+LAN/tunnel binding, push, merge, or publication was performed during F2.
+
+### Owner-authorized network access
+
+The real UI now binds **`0.0.0.0:5174`**. Open
+`http://<server-ip>:5174` from another device; `0.0.0.0` is a bind address,
+not the address to enter on that device. The real-only Vite configuration forces
+a same-origin API base, overriding stale local `VITE_API_URL` settings, and proxies
+`/api/` and `/media/` to `127.0.0.1:8010`. Thus login, game operations and images
+do not point at the visitor's own localhost. The backend stays on loopback;
+the fixture configuration and database remain unchanged.
+
+Default Vite host validation and the shared private-file deny list remain enabled.
+Use an IP address (or explicitly approve a controlled hostname); do not set
+`allowedHosts: true`. This is owner-authorized development access, not a hardened
+production deployment: it uses HTTP and existing local credentials. Do not expose
+it to untrusted networks or add a public tunnel. This authorization does not
+approve production deployment, invitations, or genuine-device test results.
 
 ### F2 review fix1: protect every shared-root Vite origin
 
