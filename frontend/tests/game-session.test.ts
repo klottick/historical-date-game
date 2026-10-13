@@ -1,5 +1,8 @@
 import assert from "node:assert/strict"
 import test from "node:test"
+import axios from "axios"
+import { client } from "../src/client/client.gen.ts"
+import * as gameApi from "../src/features/game/api.ts"
 import { isKnownFailure } from "../src/features/game/api.ts"
 import {
   gameQueryKey,
@@ -119,4 +122,92 @@ test("identity and malformed auth errors cannot discard unresolved commands", ()
     assert.equal(isKnownFailure(error), false)
   }
   assert.equal(isKnownFailure(httpError("stale_revision", 409)), true)
+})
+
+test("captured account auth survives generated client async auth pipeline", async () => {
+  assert.equal(typeof gameApi.bindGameContext, "function")
+  let token = "first"
+  let current = true
+  const context = { kind: "account" as const, context_id: "account-first" }
+  gameApi.bindGameContext(context, "first", () => current, "owner-first")
+  const sent: unknown[] = []
+  const transport = axios.create({
+    adapter: async (options) => {
+      sent.push(options.headers)
+      return {
+        data: [],
+        status: 200,
+        statusText: "OK",
+        headers: {},
+        config: options,
+      }
+    },
+  })
+  client.setConfig({ auth: async () => token, axios: transport })
+  await gameApi.getActiveRuns(context)
+  assert.equal(sent.length, 1)
+  const guest = { kind: "guest" as const, context_id: "guest" }
+  gameApi.bindGameContext(guest, "", () => true)
+  await gameApi.getActiveRuns(guest)
+  assert.equal((sent[1] as Record<string, string>).Authorization, undefined)
+  assert.equal(sent.length, 2)
+  const stale = { kind: "account" as const, context_id: "stale" }
+  let valid = true
+  gameApi.bindGameContext(stale, "first", () => valid)
+  const pending = gameApi.getActiveRuns(stale)
+  valid = false // Switch while the generated pipeline awaits auth resolution.
+  await assert.rejects(pending, { code: "game_identity_changed" })
+  assert.equal(sent.length, 2)
+  assert.equal(
+    (sent[0] as Record<string, string>).Authorization,
+    "Bearer first",
+  )
+  token = "second"
+  current = false
+  await assert.rejects(gameApi.getActiveRuns(context), {
+    code: "game_identity_changed",
+  })
+  assert.equal(sent.length, 2)
+})
+
+test("legacy command migration refuses collisions and preserves original bytes", () => {
+  assert.equal(typeof gameApi.adoptLegacyOperation, "function")
+  const values = new Map<string, string>([
+    ["legacy", '{"operation_id":"old"}'],
+    ["new", '{"operation_id":"other"}'],
+  ])
+  Object.assign(globalThis, {
+    sessionStorage: {
+      getItem: (key: string) => values.get(key) ?? null,
+      setItem: (key: string, value: string) => values.set(key, value),
+      removeItem: (key: string) => values.delete(key),
+    },
+  })
+  assert.throws(
+    () => gameApi.adoptLegacyOperation("legacy", "new"),
+    /conflict/i,
+  )
+  assert.equal(values.get("legacy"), '{"operation_id":"old"}')
+  assert.equal(values.get("new"), '{"operation_id":"other"}')
+  values.delete("new")
+  gameApi.adoptLegacyOperation("legacy", "new")
+  assert.equal(values.get("new"), '{"operation_id":"old"}')
+  assert.equal(values.has("legacy"), false)
+  values.set("game-start:owner-first:daily", '{"operation_id":"original"}')
+  const guest = { kind: "guest" as const, context_id: "guest" }
+  gameApi.bindGameContext(guest, "", () => true, "owner-first")
+  gameApi.adoptAccountStart(guest, "guest-destination", "daily")
+  assert.equal(values.has("guest-destination"), false)
+  const unconfirmed = { kind: "account" as const, context_id: "unconfirmed" }
+  gameApi.bindGameContext(unconfirmed, "first", () => true)
+  gameApi.adoptAccountStart(unconfirmed, "unconfirmed-destination", "daily")
+  assert.equal(values.has("unconfirmed-destination"), false)
+  const otherAccount = { kind: "account" as const, context_id: "other-account" }
+  gameApi.bindGameContext(otherAccount, "second", () => true, "owner-second")
+  gameApi.adoptAccountStart(otherAccount, "other-destination", "daily")
+  assert.equal(values.has("other-destination"), false)
+  assert.equal(
+    values.get("game-start:owner-first:daily"),
+    '{"operation_id":"original"}',
+  )
 })

@@ -1,26 +1,43 @@
 import { useMutation, useQueryClient } from "@tanstack/react-query"
 import { useNavigate } from "@tanstack/react-router"
-import { useState } from "react"
-import type { FreeplayStart, GameOptions, YearInput } from "@/client"
+import { useEffect, useRef, useState } from "react"
+import type {
+  FreeplayStart,
+  GameOptions,
+  GameSessionPublic,
+  YearInput,
+} from "@/client"
 import { Input } from "@/components/ui/input"
 import { LoadingButton } from "@/components/ui/loading-button"
 import { extractErrorMessage } from "@/utils"
 import {
+  isCurrentGameContext,
   isKnownFailure,
   readStartOperation,
   saveStartOperation,
   startFreeplay,
 } from "./api"
 import { defaultConfig, parseSafeInteger, validateConfig } from "./config"
+import { useGameSession } from "./GameSessionProvider"
+import { gameQueryKey, sessionFailure, startStorageKey } from "./identityState"
 
 export function FreeplayForm({
   options,
-  ownerId,
+  context,
 }: {
   options: GameOptions
-  ownerId: string
+  context: GameSessionPublic
 }) {
-  const key = `game-start:${ownerId}:freeplay`
+  const key = startStorageKey(context.context_id, "freeplay")
+  const mounted = useRef(true)
+  useEffect(() => {
+    mounted.current = true
+    return () => {
+      mounted.current = false
+    }
+  }, [])
+  const current = () => mounted.current && isCurrentGameContext(context)
+  const { failSession } = useGameSession()
   const [operation, setOperation] = useState(() =>
     readStartOperation<FreeplayStart>(key),
   )
@@ -31,15 +48,23 @@ export function FreeplayForm({
   const queryClient = useQueryClient()
   const errors = validateConfig(config, options)
   const mutation = useMutation({
-    mutationFn: startFreeplay,
+    mutationFn: (input: FreeplayStart) => startFreeplay(input, context),
     retry: false,
     onSuccess: (run) => {
+      if (!current()) return
       sessionStorage.removeItem(key)
       setOperation(null)
-      queryClient.invalidateQueries({ queryKey: ["game", "active-runs"] })
+      queryClient.invalidateQueries({
+        queryKey: gameQueryKey(context.context_id, "active-runs"),
+      })
       navigate({ to: "/play/$runId", params: { runId: run.run_id } })
     },
     onError: (error) => {
+      if (!current()) return
+      if (sessionFailure(error)) {
+        failSession(error)
+        return
+      }
       if (isKnownFailure(error)) {
         sessionStorage.removeItem(key)
         setOperation(null)
@@ -98,7 +123,8 @@ export function FreeplayForm({
       noValidate
       onSubmit={(event) => {
         event.preventDefault()
-        if (mutation.isPending || (!operation && errors.length)) return
+        if (!current() || mutation.isPending || (!operation && errors.length))
+          return
         const command = saveStartOperation(
           key,
           operation ?? {

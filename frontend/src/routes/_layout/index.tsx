@@ -1,7 +1,11 @@
 import { useQuery } from "@tanstack/react-query"
 import { createFileRoute, Link } from "@tanstack/react-router"
+import type { GameSessionPublic } from "@/client"
 import { Button } from "@/components/ui/button"
 import { getActiveRuns } from "@/features/game/api"
+import { GameSessionGate } from "@/features/game/GameSessionGate"
+import { useGameSessionError } from "@/features/game/GameSessionProvider"
+import { gameQueryKey } from "@/features/game/identityState"
 import useAuth from "@/hooks/useAuth"
 import { extractErrorMessage } from "@/utils"
 
@@ -17,19 +21,28 @@ export const Route = createFileRoute("/_layout/")({
 })
 
 function Dashboard() {
+  return (
+    <GameSessionGate>
+      {(context) => <OwnedDashboard context={context} />}
+    </GameSessionGate>
+  )
+}
+function OwnedDashboard({ context }: { context: GameSessionPublic }) {
   const { user: currentUser } = useAuth()
   const runs = useQuery({
-    queryKey: ["game", "active-runs", currentUser?.id],
-    queryFn: getActiveRuns,
-    enabled: !!currentUser,
+    queryKey: gameQueryKey(context.context_id, "active-runs"),
+    queryFn: ({ signal }) => getActiveRuns(context, signal),
     retry: false,
   })
+  useGameSessionError(runs.error, context)
 
   return (
     <div className="space-y-8">
       <section className="space-y-4 rounded-xl border border-[#426d73]/40 bg-card p-6 md:p-8">
         <p className="text-sm text-muted-foreground">
-          Welcome back, {currentUser?.full_name || currentUser?.email}.
+          {context.kind === "guest"
+            ? "Welcome! Play without an account. Guest progress belongs to this browser; keep using the same site address."
+            : `Welcome back, ${currentUser?.full_name || currentUser?.email || "player"}.`}
         </p>
         <h1 className="font-serif text-3xl md:text-4xl">
           Historical Date Game

@@ -5,12 +5,108 @@ import type {
   DailyStart,
   FreeplayStart,
   GameOptions,
+  GameSessionPublic,
   LeaderboardPublic,
   PlaceCommand,
   PublicConfig,
   RunPublic,
 } from "../../client/types.gen.ts"
-import { sessionFailure } from "./identityState.ts"
+import {
+  gameRequestOptions,
+  sessionError,
+  sessionFailure,
+} from "./identityState.ts"
+
+// A public context is not authorization. Keep its confirmed bearer and lifetime
+// out of DTOs/storage, and never consult mutable client auth for an owned call.
+const bindings = new WeakMap<
+  GameSessionPublic,
+  {
+    auth: string
+    current: () => boolean
+    accountId?: string
+    signal?: AbortSignal
+  }
+>()
+export function bindGameContext(
+  context: GameSessionPublic,
+  auth: string,
+  current: () => boolean,
+  accountId?: string,
+  signal?: AbortSignal,
+) {
+  bindings.set(context, { auth, current, accountId, signal })
+}
+export function isCurrentGameContext(context: GameSessionPublic) {
+  return bindings.get(context)?.current() === true
+}
+function assertContext(context: GameSessionPublic) {
+  if (!isCurrentGameContext(context))
+    throw sessionError(
+      "game_identity_changed",
+      "Identity changed; retry session inspection. Your saved commands remain with their original player.",
+    )
+}
+function ownedOptions(context: GameSessionPublic, signal?: AbortSignal) {
+  assertContext(context)
+  const binding = bindings.get(context)!
+  return {
+    ...gameRequestOptions(context),
+    auth: binding.auth,
+    signal:
+      signal && binding.signal
+        ? AbortSignal.any([signal, binding.signal])
+        : (signal ?? binding.signal),
+    // Generated auth resolution is asynchronous even for a literal token.
+    requestValidator: async () => assertContext(context),
+    throwOnError: true as const,
+  }
+}
+async function ownedResult<T>(
+  context: GameSessionPublic,
+  request: Promise<{ data: T }>,
+): Promise<T> {
+  try {
+    const result = await request
+    assertContext(context)
+    return result.data
+  } catch (error) {
+    assertContext(context)
+    throw error
+  }
+}
+export function adoptLegacyOperation(legacy: string, destination: string) {
+  const saved = sessionStorage.getItem(legacy)
+  if (!saved) return
+  const existing = sessionStorage.getItem(destination)
+  if (existing && existing !== saved)
+    throw new Error(
+      "Saved recovery commands conflict. Neither command was replaced.",
+    )
+  sessionStorage.setItem(destination, saved)
+  sessionStorage.removeItem(legacy)
+}
+export function adoptAccountStart(
+  context: GameSessionPublic,
+  key: string,
+  mode: "daily" | "freeplay",
+) {
+  assertContext(context)
+  const accountId = bindings.get(context)?.accountId
+  if (context.kind === "account" && accountId)
+    adoptLegacyOperation(`game-start:${accountId}:${mode}`, key)
+}
+// Caller must have completed a fresh owned GET, never merely a cached read.
+export function adoptAccountPlacement(
+  context: GameSessionPublic,
+  key: string,
+  runId: string,
+) {
+  assertContext(context)
+  const accountId = bindings.get(context)?.accountId
+  if (context.kind === "account" && accountId)
+    adoptLegacyOperation(`game-placement:${accountId}:${runId}`, key)
+}
 
 // Reuse the generated client's base URL, bearer auth, and Axios error shape.
 export async function getGameOptions(): Promise<GameOptions> {
@@ -19,37 +115,69 @@ export async function getGameOptions(): Promise<GameOptions> {
 export async function getPublicConfig(): Promise<PublicConfig> {
   return (await UtilsService.publicConfig({ throwOnError: true })).data
 }
-export async function getDaily(): Promise<DailyOverview> {
-  return (await GamesService.readDaily({ throwOnError: true })).data
+export async function getDaily(
+  context: GameSessionPublic,
+  signal?: AbortSignal,
+): Promise<DailyOverview> {
+  return ownedResult(
+    context,
+    GamesService.readDaily(ownedOptions(context, signal)),
+  )
 }
-export async function startFreeplay(input: FreeplayStart): Promise<RunPublic> {
-  return (await GamesService.startFreeplay({ body: input, throwOnError: true }))
-    .data
+export async function startFreeplay(
+  input: FreeplayStart,
+  context: GameSessionPublic,
+): Promise<RunPublic> {
+  return ownedResult(
+    context,
+    GamesService.startFreeplay({ body: input, ...ownedOptions(context) }),
+  )
 }
-export async function startDaily(input: DailyStart): Promise<RunPublic> {
-  return (await GamesService.startDaily({ body: input, throwOnError: true }))
-    .data
+export async function startDaily(
+  input: DailyStart,
+  context: GameSessionPublic,
+): Promise<RunPublic> {
+  return ownedResult(
+    context,
+    GamesService.startDaily({ body: input, ...ownedOptions(context) }),
+  )
 }
-export async function getRun(runId: string): Promise<RunPublic> {
-  return (
-    await GamesService.readRun({ path: { run_id: runId }, throwOnError: true })
-  ).data
+export async function getRun(
+  runId: string,
+  context: GameSessionPublic,
+  signal?: AbortSignal,
+): Promise<RunPublic> {
+  return ownedResult(
+    context,
+    GamesService.readRun({
+      path: { run_id: runId },
+      ...ownedOptions(context, signal),
+    }),
+  )
 }
-export async function getActiveRuns(): Promise<RunPublic[]> {
-  return (await GamesService.readActiveRuns({ throwOnError: true })).data
+export async function getActiveRuns(
+  context: GameSessionPublic,
+  signal?: AbortSignal,
+): Promise<RunPublic[]> {
+  return ownedResult(
+    context,
+    GamesService.readActiveRuns(ownedOptions(context, signal)),
+  )
 }
 export async function placeCard(
   runId: string,
   input: PlaceCommand,
+  context: GameSessionPublic,
 ): Promise<RunPublic> {
-  return (
-    await GamesService.placeCard({
+  return ownedResult(
+    context,
+    GamesService.placeCard({
       path: { run_id: runId },
       body: input,
       timeout: 15000,
-      throwOnError: true,
-    })
-  ).data
+      ...ownedOptions(context),
+    }),
+  )
 }
 
 export function gameFailure(
@@ -65,15 +193,18 @@ export function gameFailure(
   return "rejected"
 }
 
-export function renewRunLogin(runId: string): void {
-  sessionStorage.setItem("game-login-return", `/play/${runId}`)
-  localStorage.removeItem("access_token")
-  window.location.assign("/login")
-}
-export async function getLeaderboard(day: string): Promise<LeaderboardPublic> {
-  return (
-    await GamesService.readLeaderboard({ path: { day }, throwOnError: true })
-  ).data
+export async function getLeaderboard(
+  day: string,
+  context: GameSessionPublic,
+  signal?: AbortSignal,
+): Promise<LeaderboardPublic> {
+  return ownedResult(
+    context,
+    GamesService.readLeaderboard({
+      path: { day },
+      ...ownedOptions(context, signal),
+    }),
+  )
 }
 
 export function isKnownFailure(error: unknown): boolean {

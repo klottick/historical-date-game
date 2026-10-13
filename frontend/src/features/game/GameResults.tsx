@@ -1,5 +1,5 @@
 import { Link } from "@tanstack/react-router"
-import type { RevealedCard, RunPublic } from "@/client"
+import type { GameSessionPublic, RevealedCard, RunPublic } from "@/client"
 import { ContentIssueDialog } from "./ContentIssueDialog"
 import { formatYear } from "./config"
 import { DailyLeaderboard } from "./DailyPanel"
@@ -51,7 +51,13 @@ export function CardDetails({
   )
 }
 
-export function GameResults({ run }: { run: RunPublic }): React.JSX.Element {
+export function GameResults({
+  run,
+  context,
+}: {
+  run: RunPublic
+  context: GameSessionPublic
+}): React.JSX.Element {
   return (
     <section className="space-y-4" aria-label="Run result">
       <h2 className="font-serif text-2xl">
@@ -94,7 +100,9 @@ export function GameResults({ run }: { run: RunPublic }): React.JSX.Element {
             This Daily attempt is complete and cannot be replayed. The next
             challenge starts at the next UTC reset.
           </p>
-          {run.daily_date && <DailyLeaderboard day={run.daily_date} />}
+          {run.daily_date && (
+            <DailyLeaderboard day={run.daily_date} context={context} />
+          )}
           <Link to="/daily" className="underline">
             Daily challenge
           </Link>

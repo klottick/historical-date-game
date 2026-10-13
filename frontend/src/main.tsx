@@ -21,10 +21,17 @@ client.setConfig({
 })
 
 const handleApiError = (error: Error) => {
+  // Public gameplay handles session errors locally and preserves commands.
+  if (
+    isAxiosError(error) &&
+    /\/api\/v1\/games(?:\/|$)/.test(error.config?.url ?? "")
+  )
+    return
+  if (!/^\/(settings|admin|items)(\/|$)/.test(window.location.pathname)) return
   if (isAxiosError(error) && [401, 403].includes(error.response?.status ?? 0)) {
-    if (/^\/play\/[\da-f-]+$/.test(window.location.pathname)) {
-      sessionStorage.setItem("game-login-return", window.location.pathname)
-    }
+    const sent = error.config?.headers?.Authorization
+    if (sent && sent !== `Bearer ${localStorage.getItem("access_token")}`)
+      return
     localStorage.removeItem("access_token")
     window.location.href = "/login"
   }

@@ -1,3 +1,4 @@
+import { Link } from "@tanstack/react-router"
 import { CalendarDays, Home, Layers, Settings, Users } from "lucide-react"
 
 import { SidebarAppearance } from "@/components/Common/Appearance"
@@ -37,9 +38,15 @@ export function AppSidebar() {
         <Main items={baseItems} />
       </SidebarContent>
       <SidebarFooter>
-        <Main items={accountItems} />
+        {currentUser && <Main items={accountItems} />}
         <SidebarAppearance />
-        <User user={currentUser} />
+        {currentUser ? (
+          <User user={currentUser} />
+        ) : (
+          <Link to="/login" className="px-4 py-2 underline">
+            Sign in
+          </Link>
+        )}
       </SidebarFooter>
     </Sidebar>
   )

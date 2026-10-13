@@ -1,6 +1,27 @@
 import { isAxiosError } from "axios"
 import type { GameSessionPublic } from "../../client/types.gen.ts"
 
+export function accountToken() {
+  try {
+    return localStorage.getItem("access_token") || ""
+  } catch {
+    return ""
+  }
+}
+export function notifyAccountChange() {
+  window.dispatchEvent(new Event("game-account-change"))
+}
+export function subscribeAccountChange(callback: () => void) {
+  const timer = window.setInterval(callback, 50)
+  window.addEventListener("storage", callback)
+  window.addEventListener("game-account-change", callback)
+  return () => {
+    clearInterval(timer)
+    window.removeEventListener("storage", callback)
+    window.removeEventListener("game-account-change", callback)
+  }
+}
+
 export function gameRequestOptions(context: GameSessionPublic): {
   withCredentials: true
   headers: Record<string, string>

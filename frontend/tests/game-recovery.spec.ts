@@ -192,10 +192,12 @@ for (const committed of [false, true]) {
       "A successful blind move is required to reproduce cross-round cache hydration",
     ).toBeDefined()
     const round = advanced!
-    const owner = await (
-      await page.request.get(`${api}/users/me`, { headers: player.headers })
+    const session = await (
+      await page.request.get(`${api}/games/session`, {
+        headers: player.headers,
+      })
     ).json()
-    const storageKey = `game-placement:${owner.id}:${round.run_id}`
+    const storageKey = `game:${encodeURIComponent(session.context_id)}:placement:${encodeURIComponent(round.run_id)}`
     const commands: PlaceCommand[] = []
     await page.route(
       `**/games/runs/${round.run_id}/placements`,
@@ -492,10 +494,21 @@ test("placement authentication renewal keeps the exact recoverable command", asy
       commands.push(request.postDataJSON())
   })
   await page.getByRole("button", { name: "Slot 1", exact: true }).click()
-  await page.evaluate(() =>
-    localStorage.setItem("access_token", "expired-token"),
-  )
+  // Expire authorization at the server boundary, without pretending that a
+  // bearer replacement is the same identity. Retain the original exact move.
+  await page.route(`**/games/runs/${run.run_id}/placements`, async (route) => {
+    if (commands.length === 1)
+      await route.fulfill({
+        status: 403,
+        json: { detail: "Could not validate credentials" },
+      })
+    else await route.continue()
+  })
   await page.getByRole("button", { name: "Lock it in", exact: true }).click()
+  await expect(
+    page.getByRole("button", { name: "Retry session", exact: true }),
+  ).toBeVisible()
+  await page.getByRole("link", { name: "Sign in", exact: true }).click()
   await expect(page).toHaveURL(/\/login/)
   await page.getByTestId("email-input").fill(player.email)
   await page.getByTestId("password-input").fill(player.password)
@@ -607,6 +620,10 @@ test("reload_and_login_renewal_preserve_progress", async ({
     localStorage.setItem("access_token", "expired-token"),
   )
   await page.reload()
+  await expect(
+    page.getByRole("button", { name: "Retry session", exact: true }),
+  ).toBeVisible()
+  await page.getByRole("link", { name: "Sign in", exact: true }).click()
   await expect(page).toHaveURL(/\/login/)
   await page.getByTestId("email-input").fill(player.email)
   await page.getByTestId("password-input").fill(player.password)

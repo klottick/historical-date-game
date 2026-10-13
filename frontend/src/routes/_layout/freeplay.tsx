@@ -3,7 +3,7 @@ import { createFileRoute } from "@tanstack/react-router"
 import { Button } from "@/components/ui/button"
 import { getGameOptions } from "@/features/game/api"
 import { FreeplayForm } from "@/features/game/FreeplayForm"
-import useAuth from "@/hooks/useAuth"
+import { GameSessionGate } from "@/features/game/GameSessionGate"
 import { extractErrorMessage } from "@/utils"
 
 export const Route = createFileRoute("/_layout/freeplay")({
@@ -12,7 +12,6 @@ export const Route = createFileRoute("/_layout/freeplay")({
 })
 
 function Freeplay() {
-  const { user } = useAuth()
   const options = useQuery({
     queryKey: ["game", "options"],
     queryFn: getGameOptions,
@@ -33,8 +32,12 @@ function Freeplay() {
           </Button>
         </p>
       )}
-      {options.data && user && (
-        <FreeplayForm key={user.id} options={options.data} ownerId={user.id} />
+      {options.data && (
+        <GameSessionGate>
+          {(context) => (
+            <FreeplayForm options={options.data!} context={context} />
+          )}
+        </GameSessionGate>
       )}
     </div>
   )

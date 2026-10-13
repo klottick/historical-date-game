@@ -1,7 +1,7 @@
 import { useMutation, useQuery, useQueryClient } from "@tanstack/react-query"
 import { Link, useNavigate } from "@tanstack/react-router"
-import { useEffect, useState } from "react"
-import type { DailyStart } from "@/client"
+import { useEffect, useRef, useState } from "react"
+import type { DailyStart, GameSessionPublic } from "@/client"
 import { Button } from "@/components/ui/button"
 import { LoadingButton } from "@/components/ui/loading-button"
 import { extractErrorMessage } from "@/utils"
@@ -10,18 +10,28 @@ import {
   getGameOptions,
   getLeaderboard,
   getRun,
+  isCurrentGameContext,
   isKnownFailure,
   readStartOperation,
   saveStartOperation,
   startDaily,
 } from "./api"
+import { useGameSession, useGameSessionError } from "./GameSessionProvider"
+import { gameQueryKey, sessionFailure, startStorageKey } from "./identityState"
 
-export function DailyLeaderboard({ day }: { day: string }) {
+export function DailyLeaderboard({
+  day,
+  context,
+}: {
+  day: string
+  context: GameSessionPublic
+}) {
   const board = useQuery({
-    queryKey: ["game", "leaderboard", day],
-    queryFn: () => getLeaderboard(day),
+    queryKey: gameQueryKey(context.context_id, "leaderboard", day),
+    queryFn: ({ signal }) => getLeaderboard(day, context, signal),
     retry: false,
   })
+  useGameSessionError(board.error, context)
   return (
     <section className="space-y-3">
       <h2 className="text-xl font-semibold">Leaderboard · {day} UTC</h2>
@@ -69,10 +79,19 @@ export function DailyLeaderboard({ day }: { day: string }) {
   )
 }
 
-export function DailyPanel({ ownerId }: { ownerId: string }) {
+export function DailyPanel({ context }: { context: GameSessionPublic }) {
+  const mounted = useRef(true)
+  useEffect(() => {
+    mounted.current = true
+    return () => {
+      mounted.current = false
+    }
+  }, [])
+  const current = () => mounted.current && isCurrentGameContext(context)
+  const { failSession } = useGameSession()
   const overview = useQuery({
-    queryKey: ["game", "daily", ownerId],
-    queryFn: getDaily,
+    queryKey: gameQueryKey(context.context_id, "daily"),
+    queryFn: ({ signal }) => getDaily(context, signal),
     retry: false,
   })
   const options = useQuery({
@@ -82,12 +101,14 @@ export function DailyPanel({ ownerId }: { ownerId: string }) {
   })
   const runId = overview.data?.attempt_run_id
   const run = useQuery({
-    queryKey: ["game", "run", runId],
-    queryFn: () => getRun(runId!),
+    queryKey: gameQueryKey(context.context_id, "run", runId ?? ""),
+    queryFn: ({ signal }) => getRun(runId!, context, signal),
     enabled: !!runId,
     retry: false,
   })
-  const key = `game-start:${ownerId}:daily`
+  const key = startStorageKey(context.context_id, "daily")
+  useGameSessionError(overview.error, context)
+  useGameSessionError(run.error, context)
   const [operation, setOperation] = useState(() =>
     readStartOperation<DailyStart>(key),
   )
@@ -95,16 +116,26 @@ export function DailyPanel({ ownerId }: { ownerId: string }) {
   const navigate = useNavigate()
   const queryClient = useQueryClient()
   const mutation = useMutation({
-    mutationFn: startDaily,
+    mutationFn: (input: DailyStart) => startDaily(input, context),
     retry: false,
     onSuccess: (result) => {
+      if (!current()) return
       sessionStorage.removeItem(key)
       setOperation(null)
-      queryClient.invalidateQueries({ queryKey: ["game", "daily"] })
-      queryClient.invalidateQueries({ queryKey: ["game", "active-runs"] })
+      queryClient.invalidateQueries({
+        queryKey: gameQueryKey(context.context_id, "daily"),
+      })
+      queryClient.invalidateQueries({
+        queryKey: gameQueryKey(context.context_id, "active-runs"),
+      })
       navigate({ to: "/play/$runId", params: { runId: result.run_id } })
     },
     onError: (error) => {
+      if (!current()) return
+      if (sessionFailure(error)) {
+        failSession(error)
+        return
+      }
       if (isKnownFailure(error)) {
         sessionStorage.removeItem(key)
         setOperation(null)
@@ -117,11 +148,26 @@ export function DailyPanel({ ownerId }: { ownerId: string }) {
   }, [])
   // A GET-confirmed attempt resolves an uncertain start without another POST.
   useEffect(() => {
-    if (run.data && operation) {
+    if (
+      isCurrentGameContext(context) &&
+      run.data &&
+      operation &&
+      run.isFetchedAfterMount &&
+      !run.isFetching &&
+      !run.isError
+    ) {
       sessionStorage.removeItem(key)
       setOperation(null)
     }
-  }, [run.data, operation, key])
+  }, [
+    run.data,
+    operation,
+    key,
+    context,
+    run.isFetchedAfterMount,
+    run.isFetching,
+    run.isError,
+  ])
   const reset = overview.data
     ? new Date(overview.data.reset_at).getTime()
     : Infinity
@@ -142,8 +188,9 @@ export function DailyPanel({ ownerId }: { ownerId: string }) {
     <div className="space-y-6">
       <section className="max-w-2xl space-y-4 rounded-xl border border-[#426d73]/40 bg-card p-6">
         <p>
-          One scored attempt per account per UTC day. Everyone plays the same
-          frozen challenge.
+          One scored attempt per{" "}
+          {context.kind === "guest" ? "browser" : "account"} per UTC day.
+          Everyone plays the same frozen challenge.
         </p>
         {overview.isPending && <p>Loading Daily…</p>}
         {overview.error && (
@@ -205,7 +252,7 @@ export function DailyPanel({ ownerId }: { ownerId: string }) {
                 loading={mutation.isPending}
                 disabled={expired || overview.isFetching}
                 onClick={() => {
-                  if (mutation.isPending) return
+                  if (!current() || mutation.isPending) return
                   const command = saveStartOperation(
                     key,
                     operation ?? { operation_id: crypto.randomUUID() },
@@ -232,7 +279,7 @@ export function DailyPanel({ ownerId }: { ownerId: string }) {
         )}
       </section>
       {run.data && run.data.status !== "active" && run.data.daily_date && (
-        <DailyLeaderboard day={run.data.daily_date} />
+        <DailyLeaderboard day={run.data.daily_date} context={context} />
       )}
     </div>
   )

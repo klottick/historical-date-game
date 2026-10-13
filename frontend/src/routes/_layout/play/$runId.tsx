@@ -1,5 +1,6 @@
 import { createFileRoute } from "@tanstack/react-router"
 import { GameBoard } from "@/features/game/GameBoard"
+import { GameSessionGate } from "@/features/game/GameSessionGate"
 
 export const Route = createFileRoute("/_layout/play/$runId")({
   component: PlayRun,
@@ -8,5 +9,9 @@ export const Route = createFileRoute("/_layout/play/$runId")({
 
 function PlayRun() {
   const { runId } = Route.useParams()
-  return <GameBoard runId={runId} />
+  return (
+    <GameSessionGate>
+      {(context) => <GameBoard runId={runId} context={context} />}
+    </GameSessionGate>
+  )
 }

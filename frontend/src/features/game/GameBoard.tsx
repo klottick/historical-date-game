@@ -10,16 +10,32 @@ import { DragDropProvider, DragOverlay, useDraggable } from "@dnd-kit/react"
 import { useQuery, useQueryClient } from "@tanstack/react-query"
 import { Link } from "@tanstack/react-router"
 import { useCallback, useEffect, useRef, useState } from "react"
-import type { PendingCard, PlaceCommand, RunPublic } from "@/client"
+import type {
+  GameSessionPublic,
+  PendingCard,
+  PlaceCommand,
+  RunPublic,
+} from "@/client"
 import { Button } from "@/components/ui/button"
-import useAuth from "@/hooks/useAuth"
 import { extractErrorMessage } from "@/utils"
-import { gameFailure, getRun, placeCard, renewRunLogin } from "./api"
+import {
+  adoptAccountPlacement,
+  gameFailure,
+  getRun,
+  isCurrentGameContext,
+  placeCard,
+} from "./api"
 import { ContentIssueDialog } from "./ContentIssueDialog"
 import { formatYear } from "./config"
 import { GameCard } from "./GameCard"
 import { GameResults } from "./GameResults"
+import { useGameSession, useGameSessionError } from "./GameSessionProvider"
 import { SlotLockContext } from "./InsertionSlot"
+import {
+  gameQueryKey,
+  placementStorageKey,
+  sessionFailure,
+} from "./identityState"
 import { Timeline } from "./Timeline"
 import "./game.css"
 import {
@@ -30,21 +46,28 @@ import {
   selectSlot,
 } from "./placementState"
 
-export function GameBoard({ runId }: { runId: string }): React.JSX.Element {
-  const { user } = useAuth()
-  return user ? (
-    <OwnedBoard key={`${user.id}:${runId}`} runId={runId} ownerId={user.id} />
-  ) : (
-    <p role="status">Loading account…</p>
+export function GameBoard({
+  runId,
+  context,
+}: {
+  runId: string
+  context: GameSessionPublic
+}): React.JSX.Element {
+  return (
+    <OwnedBoard
+      key={`${context.context_id}:${runId}`}
+      runId={runId}
+      context={context}
+    />
   )
 }
 
 function OwnedBoard({
   runId,
-  ownerId,
+  context,
 }: {
   runId: string
-  ownerId: string
+  context: GameSessionPublic
 }): React.JSX.Element {
   const [state, setState] = useState<PlacementState | null>(null)
   const current = useRef<PlacementState | null>(null)
@@ -53,7 +76,8 @@ function OwnedBoard({
   const [dragging, setDragging] = useState(false)
   const mounted = useRef(true)
   const queryClient = useQueryClient()
-  const storageKey = `game-placement:${ownerId}:${runId}`
+  const { failSession } = useGameSession()
+  const storageKey = placementStorageKey(context.context_id, runId)
   useEffect(() => {
     mounted.current = true
     return () => {
@@ -62,17 +86,18 @@ function OwnedBoard({
   }, [])
   const update = useCallback(
     (next: PlacementState) => {
+      if (!isCurrentGameContext(context)) return
       current.current = next // Synchronous guard against duplicate click/late callbacks.
       setState(next)
       if (next.command)
         sessionStorage.setItem(storageKey, JSON.stringify(next.command))
       else sessionStorage.removeItem(storageKey)
     },
-    [storageKey],
+    [storageKey, context],
   )
   const query = useQuery({
-    queryKey: ["game-run", ownerId, runId],
-    queryFn: () => getRun(runId),
+    queryKey: gameQueryKey(context.context_id, "run", runId),
+    queryFn: ({ signal }) => getRun(runId, context, signal),
     retry: false,
     refetchOnMount: "always",
     refetchOnWindowFocus: "always",
@@ -86,15 +111,16 @@ function OwnedBoard({
     },
   })
   function cacheRun(run: RunPublic) {
-    if (run.run_id !== runId) return
+    if (run.run_id !== runId || !isCurrentGameContext(context)) return
     queryClient.setQueryData<RunPublic>(
-      ["game-run", ownerId, runId],
+      gameQueryKey(context.context_id, "run", runId),
       (cached) => (cached && cached.revision > run.revision ? cached : run),
     )
   }
+  useGameSessionError(query.error, context)
   useEffect(() => {
     const run = query.data
-    if (!run || run.run_id !== runId) return
+    if (!run || run.run_id !== runId || !isCurrentGameContext(context)) return
     if (current.current) {
       const next = acceptRun(current.current, run)
       if (next !== current.current) {
@@ -106,6 +132,14 @@ function OwnedBoard({
     // Cached data is not a recovery decision. Wait for a successful owned GET
     // after this observer mounted, including when the returned DTO is unchanged.
     if (!query.isFetchedAfterMount || query.isFetching || query.isError) return
+    try {
+      adoptAccountPlacement(context, storageKey, runId)
+    } catch (error) {
+      setMessage(
+        error instanceof Error ? error.message : "Recovery unavailable",
+      )
+      return
+    }
     let saved: PlaceCommand | null = null
     try {
       saved = JSON.parse(sessionStorage.getItem(storageKey) || "null")
@@ -138,6 +172,7 @@ function OwnedBoard({
     runId,
     storageKey,
     update,
+    context,
   ])
 
   async function reconcile() {
@@ -145,8 +180,8 @@ function OwnedBoard({
     if (!before || before.phase === "sending") return
     update({ ...before, phase: "reconcile" })
     try {
-      const run = await getRun(runId)
-      if (!mounted.current) return
+      const run = await getRun(runId, context)
+      if (!mounted.current || !isCurrentGameContext(context)) return
       const latest = current.current
       if (
         latest?.phase !== "reconcile" ||
@@ -163,9 +198,9 @@ function OwnedBoard({
       )
       setMessage("Server progress checked. You can choose a new placement.")
     } catch (error) {
-      if (!mounted.current) return
-      if (gameFailure(error) === "auth") {
-        renewRunLogin(runId)
+      if (!mounted.current || !isCurrentGameContext(context)) return
+      if (sessionFailure(error)) {
+        failSession(error)
         return
       }
       setMessage(
@@ -183,8 +218,8 @@ function OwnedBoard({
     setMessage(null)
     const command = sending.command
     try {
-      const run = await placeCard(runId, command)
-      if (!mounted.current) return
+      const run = await placeCard(runId, command, context)
+      if (!mounted.current || !isCurrentGameContext(context)) return
       const latest = current.current
       if (!latest || run.run_id !== runId) return
       cacheRun(run)
@@ -193,14 +228,14 @@ function OwnedBoard({
       else if (latest.command?.operation_id === command.operation_id)
         update(markUncertain(latest))
     } catch (error) {
-      if (!mounted.current) return
+      if (!mounted.current || !isCurrentGameContext(context)) return
       const latest = current.current
       if (!latest || latest.command?.operation_id !== command.operation_id)
         return
       const failure = gameFailure(error)
-      if (failure === "auth") {
+      if (sessionFailure(error)) {
         update(markUncertain(latest))
-        renewRunLogin(runId)
+        failSession(error)
         return
       }
       if (failure === "conflict") {
@@ -229,11 +264,12 @@ function OwnedBoard({
     return (
       <div className="space-y-3">
         <h1 className="text-2xl">
-          {query.error ? "Run unavailable" : "Loading run…"}
+          {query.error || message ? "Run unavailable" : "Loading run…"}
         </h1>
-        {query.error && (
+        {(query.error || message) && (
           <p role="alert">
-            Unable to read this run. This does not erase your history.
+            {message ||
+              "Unable to read this run. This does not erase your history."}
           </p>
         )}
         {!query.isFetching && (
@@ -474,7 +510,7 @@ function OwnedBoard({
           }
           aria-live="polite"
         >
-          <GameResults run={run} />
+          <GameResults run={run} context={context} />
         </div>
       )}
       <footer className="game-footer">
