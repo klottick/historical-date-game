@@ -29,6 +29,9 @@ def legacy_rollout() -> ModuleType:
 
 def runner(monkeypatch: pytest.MonkeyPatch) -> tuple[ModuleType, ModuleType]:
     board = rollout()
+    # Simulate namespace creation in this checkout; retain the real runtime pin.
+    assert board.__file__ is not None
+    monkeypatch.setattr(board, "WORKTREE", Path(board.__file__).resolve().parents[3])
     guarded = board.guarded_rollout()
     monkeypatch.setattr(board, "guarded_rollout", lambda: guarded)
     for name, value in {
@@ -53,6 +56,51 @@ def arguments(*extra: str) -> list[str]:
         "http://192.168.1.214:5174",
         *extra,
     ]
+
+
+def test_pure_runner_creates_namespace_in_current_checkout(
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    board, guarded = runner(monkeypatch)
+    assert board.__file__ is not None
+    assert board.WORKTREE == Path(board.__file__).resolve().parents[3]
+    assert guarded is not legacy_rollout()
+    assert guarded.WORKTREE == board.WORKTREE
+
+
+def test_real_worktree_guard_rejects_before_namespace_or_io(
+    monkeypatch: pytest.MonkeyPatch,
+    tmp_path: Path,
+) -> None:
+    board = rollout()
+    guest = legacy_rollout()
+    monkeypatch.setattr(board, "WORKTREE", tmp_path / "different-pinned-worktree")
+    calls: list[bool] = []
+
+    def unexpected_io(*_args: Any, **_kwargs: Any) -> None:
+        calls.append(True)
+        pytest.fail("I/O before worktree rejection")
+
+    monkeypatch.setattr(board.importlib.util, "spec_from_file_location", unexpected_io)
+    monkeypatch.setattr(guest.psycopg, "connect", unexpected_io)
+    monkeypatch.setattr(guest.os, "kill", unexpected_io)
+    monkeypatch.setattr(guest.subprocess, "run", unexpected_io)
+    monkeypatch.setattr(guest.subprocess, "Popen", unexpected_io)
+    for method in (
+        "read_text",
+        "read_bytes",
+        "write_text",
+        "write_bytes",
+        "mkdir",
+        "chmod",
+    ):
+        monkeypatch.setattr(Path, method, unexpected_io)
+    before = dict(os.environ)
+    with pytest.raises(RuntimeError, match="Exact board implementation worktree"):
+        board.guarded_rollout()
+    assert board.main(arguments("--action", "start", "--apply")) == 1
+    assert calls == []
+    assert dict(os.environ) == before
 
 
 @pytest.mark.parametrize(
@@ -117,9 +165,7 @@ def test_unknown_process_or_worktree_never_signalled(
     else:
         monkeypatch.setattr(guarded, "require_process_identity", lambda _: None)
         if change == "cwd":
-            record["identity"]["cwd"] = str(
-                guarded.WORKTREE.parent / "guest-play/backend"
-            )
+            record["identity"]["cwd"] = str(tmp_path / "other-implementation/backend")
         elif change == "argv":
             record["identity"]["command"] = ["unknown"]
         monkeypatch.setattr(
@@ -372,11 +418,12 @@ def test_board_factory_clears_ambient_links_and_keeps_smtp_off(
     assert guest.settings.PUBLIC_REGISTRATION_ENABLED is False
 
 
-def test_board_runner_keeps_old_generation_separate() -> None:
-    board = rollout()
+def test_board_runner_keeps_old_generation_separate(
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    board, guarded = runner(monkeypatch)
     guest = legacy_rollout()
 
-    guarded = board.guarded_rollout()
     assert guarded.EVIDENCE != guest.EVIDENCE
     assert guarded.EVIDENCE == board.EVIDENCE
     assert (

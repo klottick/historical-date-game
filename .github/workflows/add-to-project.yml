@@ -9,6 +9,7 @@ on:
 
 jobs:
   add-to-project:
+    if: github.repository == 'fastapi/full-stack-fastapi-template'
     name: Add to project
     runs-on: ubuntu-latest
     steps:

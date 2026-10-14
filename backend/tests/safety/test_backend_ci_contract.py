@@ -2,9 +2,62 @@
 
 import shlex
 from importlib import import_module
+from pathlib import Path
 from typing import Any
 
 import pytest
+
+
+def workflow_job(filename: str, job: str) -> dict[str, Any]:
+    root = Path(__file__).resolve().parents[3]
+    workflow = import_module("yaml").safe_load(
+        (root / ".github/workflows" / filename).read_text()
+    )
+    return dict(workflow["jobs"][job])
+
+
+def test_generate_client_prefers_configured_token_with_default_fallback() -> None:
+    job = workflow_job("generate-client.yml", "generate-client")
+    checkout = next(step for step in job["steps"] if "token" in step.get("with", {}))
+    assert checkout["with"]["token"] == (
+        "${{ secrets.FULL_STACK_FASTAPI_TEMPLATE_REPO_TOKEN || github.token }}"
+    )
+    assert checkout["with"]["ref"] == "${{ github.head_ref }}"
+    assert job["permissions"] == {"contents": "write"}
+
+
+def test_generate_client_preserves_fork_check_policy_and_exclusive_checkouts() -> None:
+    job = workflow_job("generate-client.yml", "generate-client")
+    checkouts = [
+        step
+        for step in job["steps"]
+        if step.get("uses", "").startswith("actions/checkout@")
+    ]
+    assert len(checkouts) == 2
+    read_only = (
+        "( github.event_name == 'pull_request' && github.secret_source != 'Actions' )"
+    )
+    writable = (
+        "( github.event_name != 'pull_request' || github.secret_source == 'Actions' )"
+    )
+    assert checkouts[0].get("if") == read_only
+    assert "with" not in checkouts[0]
+    assert checkouts[1]["if"] == writable
+    steps = {step.get("name"): step for step in job["steps"]}
+    assert steps["Push changes"]["if"] == writable
+    assert steps["Check changes"]["if"] == read_only
+    assert "git diff --staged --quiet" in steps["Check changes"]["run"]
+    assert "git push" not in steps["Check changes"]["run"]
+
+
+def test_template_project_job_is_scoped_to_exact_upstream_repository() -> None:
+    job = workflow_job("add-to-project.yml", "add-to-project")
+    assert job.get("if") == "github.repository == 'fastapi/full-stack-fastapi-template'"
+    assert "permissions" not in job
+    assert job["steps"][0]["with"] == {
+        "project-url": "https://github.com/orgs/fastapi/projects/2",
+        "github-token": "${{ secrets.PROJECTS_TOKEN }}",
+    }
 
 
 def test_backend_ci_prepares_owned_target_before_migration_and_tests(
