@@ -127,8 +127,16 @@ def test_database_identity_requires_exact_f1_and_selected_bytes(
         r.require_database_identity(identity)
 
 
-def test_paths_are_pinned_and_aliases_rejected(tmp_path: Path) -> None:
+def test_paths_are_pinned_and_aliases_rejected(
+    monkeypatch: pytest.MonkeyPatch, tmp_path: Path
+) -> None:
     r = rollout()
+    # Model linked worktrees, not a retained sibling or hosted clone's .git dir.
+    for field, name in [("LIVE", "live"), ("WORKTREE", "implementation")]:
+        path = tmp_path / name
+        path.mkdir()
+        (path / ".git").write_text("gitdir: fixture-only\n")
+        monkeypatch.setattr(r, field, path)
     r.require_paths(r.LIVE, r.WORKTREE)
     for live, implementation in [(tmp_path, r.WORKTREE), (r.LIVE, tmp_path)]:
         with pytest.raises(RuntimeError):
@@ -137,6 +145,23 @@ def test_paths_are_pinned_and_aliases_rejected(tmp_path: Path) -> None:
     alias.symlink_to(r.WORKTREE, target_is_directory=True)
     with pytest.raises(RuntimeError):
         r.require_paths(r.LIVE, alias)
+
+
+@pytest.mark.parametrize("missing", ["LIVE", "WORKTREE"])
+def test_missing_pinned_path_is_rejected_without_creation(
+    monkeypatch: pytest.MonkeyPatch, tmp_path: Path, missing: str
+) -> None:
+    r = rollout()
+    for field, name in [("LIVE", "live"), ("WORKTREE", "implementation")]:
+        path = tmp_path / name
+        if field != missing:
+            path.mkdir()
+            (path / ".git").write_text("gitdir: fixture-only\n")
+        monkeypatch.setattr(r, field, path)
+    absent = getattr(r, missing)
+    with pytest.raises(FileNotFoundError):
+        r.require_paths(r.LIVE, r.WORKTREE)
+    assert not absent.exists()
 
 
 def test_source_alias_refused_before_verifier_or_database(
