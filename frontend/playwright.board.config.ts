@@ -7,6 +7,7 @@ export default defineConfig({
     "**/board-navigation.spec.ts",
     "**/board-ux.spec.ts",
     "**/game-board-ux.spec.ts",
+    "**/board-projection-focus.spec.ts",
   ],
   fullyParallel: false,
   workers: 1,

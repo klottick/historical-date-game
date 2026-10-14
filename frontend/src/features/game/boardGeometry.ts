@@ -49,6 +49,41 @@ export function clampOffset(offset: number, layout: BoardLayout): number {
   )
 }
 
+/** The same expanded logical position for rendering and window projection. */
+export function confirmedCardStart(index: number, layout: BoardLayout): number {
+  stripWidth(layout)
+  ordinal(index)
+  if (index >= layout.count) throw new RangeError("Card outside timeline")
+  return (
+    (index +
+      (layout.previewSlot !== null && index >= layout.previewSlot ? 1 : 0)) *
+    (layout.cardWidth + layout.gap)
+  )
+}
+
+/** Any positive card/window intersection counts; gaps and a preview alone do
+ * not. Search confirmed positions, not physical slots or animated DOM bounds.
+ */
+export function visibleConfirmedRange(
+  layout: BoardLayout,
+): { first: number; last: number } | null {
+  const offset = clampOffset(layout.offset, layout)
+  const end = offset + layout.viewportWidth
+  function boundary(after: (start: number) => boolean): number {
+    let low = 0
+    let high = layout.count
+    while (low < high) {
+      const index = low + Math.floor((high - low) / 2)
+      if (after(confirmedCardStart(index, layout))) high = index
+      else low = index + 1
+    }
+    return low
+  }
+  const first = boundary((start) => start + layout.cardWidth > offset)
+  const last = boundary((start) => start >= end) - 1
+  return first <= last ? { first, last } : null
+}
+
 /** localX is viewport-local CSS pixels; offset is positive strip displacement.
  * Confirmed cards start at i * (cardWidth + gap). A preview inserts one stride
  * before card previewSlot. Collapse that space ONCE, never animated DOM rects.

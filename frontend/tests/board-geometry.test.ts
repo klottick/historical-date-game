@@ -1,5 +1,6 @@
 import assert from "node:assert/strict"
 import { test } from "node:test"
+import * as geometry from "../src/features/game/boardGeometry.ts"
 import {
   type BoardLayout,
   clampOffset,
@@ -16,6 +17,100 @@ const layout: BoardLayout = {
   offset: 0,
   previewSlot: null,
 }
+
+// Physical slots are not confirmed ordinals; gaps and preview-only windows
+// must not invent visible events. These expectations are hand-derived.
+test("confirmed card starts share expanded geometry without moving preview predecessors", () => {
+  assert.equal(typeof geometry.confirmedCardStart, "function")
+  assert.equal(geometry.confirmedCardStart(0, { ...layout, previewSlot: 1 }), 0)
+  assert.equal(
+    geometry.confirmedCardStart(1, { ...layout, previewSlot: 1 }),
+    240,
+  )
+  assert.equal(
+    geometry.confirmedCardStart(2, { ...layout, previewSlot: 1 }),
+    360,
+  )
+  assert.equal(geometry.confirmedCardStart(2, layout), 240)
+  assert.throws(() => geometry.confirmedCardStart(3, layout), RangeError)
+})
+
+test("visible confirmed projection accounts for preview before inside and after window", () => {
+  assert.equal(typeof geometry.visibleConfirmedRange, "function")
+  const base = { ...layout, count: 6, viewportWidth: 160, offset: 240 }
+  for (const [previewSlot, want] of [
+    [null, { first: 2, last: 3 }],
+    [0, { first: 1, last: 2 }],
+    [2, { first: 2, last: 2 }],
+    [3, { first: 2, last: 2 }],
+    [6, { first: 2, last: 3 }],
+  ] as const)
+    assert.deepEqual(
+      geometry.visibleConfirmedRange({ ...base, previewSlot }),
+      want,
+    )
+})
+
+test("visible confirmed projection excludes touching edges gaps and preview-only windows", () => {
+  assert.equal(typeof geometry.visibleConfirmedRange, "function")
+  for (const [change, want] of [
+    [{ offset: 100, viewportWidth: 20 }, null],
+    [
+      { offset: 99, viewportWidth: 22 },
+      { first: 0, last: 1 },
+    ],
+    [{ offset: 120, viewportWidth: 100, previewSlot: 1 }, null],
+    [
+      { offset: 119, viewportWidth: 122, previewSlot: 1 },
+      { first: 1, last: 1 },
+    ],
+    [{ count: 0 }, null],
+    [{ count: 0, previewSlot: 0 }, null],
+    [
+      { count: 1, viewportWidth: 500 },
+      { first: 0, last: 0 },
+    ],
+  ] as const) {
+    const range = geometry.visibleConfirmedRange({ ...layout, ...change })
+    assert.deepEqual(range, want)
+    if (range === null)
+      assert.ok(
+        overviewMarks(layout.count, -1, -1).every((mark) => !mark.visible),
+      )
+  }
+})
+
+test("visible confirmed projection clamps beginning end and aggregated marks", () => {
+  assert.equal(typeof geometry.visibleConfirmedRange, "function")
+  const base = {
+    count: 12,
+    cardWidth: 230,
+    gap: 16,
+    viewportWidth: 1064,
+    offset: 0,
+    previewSlot: 0,
+  }
+  assert.deepEqual(geometry.visibleConfirmedRange(base), { first: 0, last: 3 })
+  assert.deepEqual(geometry.visibleConfirmedRange({ ...base, offset: 99999 }), {
+    first: 7,
+    last: 11,
+  })
+  const range = geometry.visibleConfirmedRange({
+    ...base,
+    count: 100,
+    offset: 99999,
+  })!
+  assert.deepEqual(range, { first: 95, last: 99 })
+  assert.deepEqual(
+    overviewMarks(100, range.first, range.last).filter((mark) => mark.visible),
+    [
+      { start: 95, end: 95, visible: true },
+      { start: 96, end: 96, visible: true },
+      { start: 97, end: 97, visible: true },
+      { start: 98, end: 99, visible: true },
+    ],
+  )
+})
 
 // Catches center/index off-by-one (especially old displayed slot 2 = index 1).
 test("test_all_insertion_boundaries", () => {
@@ -159,6 +254,8 @@ test("geometry rejects malformed and overflowing inputs instead of emitting NaN"
     assert.throws(() => insertionIndex(10, bad), RangeError)
     assert.throws(() => clampOffset(0, bad), RangeError)
     assert.throws(() => offsetToReveal(1, bad), RangeError)
+    assert.throws(() => geometry.visibleConfirmedRange(bad), RangeError)
+    assert.throws(() => geometry.confirmedCardStart(0, bad), RangeError)
   }
   for (const bad of [NaN, Infinity, -Infinity]) {
     assert.throws(() => insertionIndex(bad, layout), RangeError)

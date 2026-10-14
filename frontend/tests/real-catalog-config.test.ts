@@ -334,6 +334,7 @@ test("board harness is loopback-only, no-account, isolated from fixture discover
     "**/board-navigation.spec.ts",
     "**/board-ux.spec.ts",
     "**/game-board-ux.spec.ts",
+    "**/board-projection-focus.spec.ts",
   ])
   assert.equal(c.workers, 1)
   assert.equal(c.retries, 0)
@@ -345,6 +346,7 @@ test("board harness is loopback-only, no-account, isolated from fixture discover
   assert.ok(c.ignore.includes("**/board-navigation.spec.ts"))
   assert.ok(c.ignore.includes("**/board-ux.spec.ts"))
   assert.ok(c.ignore.includes("**/game-board-ux.spec.ts"))
+  assert.ok(c.ignore.includes("**/board-projection-focus.spec.ts"))
   assert.equal(c.host, "127.0.0.1")
   assert.equal(c.port, 5186)
   assert.equal(c.strict, true)

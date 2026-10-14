@@ -1,6 +1,7 @@
 import { useDroppable } from "@dnd-kit/react"
 import { useContext } from "react"
 import type { PendingCard, RevealedCard } from "@/client"
+import { confirmedCardStart } from "./boardGeometry"
 import { GameCard } from "./GameCard"
 import type { TimelineDisplayItem } from "./lossTimeline"
 import { PendingTile, TimelineLockContext } from "./PendingTile"
@@ -41,6 +42,11 @@ export function TimelineStage({
       onFocus={(event) => {
         const item = event.target.closest<HTMLElement>(".timeline-item")
         if (item) interaction.centerCard(Number(item.dataset.displayIndex))
+        else if (
+          tileSlot !== null &&
+          event.target.closest(".pending-draggable")
+        )
+          interaction.reveal(tileSlot)
       }}
     >
       {pending && (
@@ -72,9 +78,7 @@ export function TimelineStage({
               data-wrong={item.wrong}
               style={{
                 width: layout.cardWidth,
-                left:
-                  index * stride +
-                  (visibleSlot !== null && index >= visibleSlot ? stride : 0),
+                left: confirmedCardStart(index, layout),
               }}
             >
               {item.wrong && <strong className="wrong-marker">Wrong</strong>}

@@ -11,7 +11,7 @@ import { Link } from "@tanstack/react-router"
 import { useEffect } from "react"
 import type { GameSessionPublic } from "@/client"
 import { Button } from "@/components/ui/button"
-import { overviewMarks } from "./boardGeometry"
+import { overviewMarks, visibleConfirmedRange } from "./boardGeometry"
 import { ContentIssueDialog } from "./ContentIssueDialog"
 import { GameCreditsDialog } from "./GameCreditsDialog"
 import { GameResults } from "./GameResults"
@@ -100,13 +100,7 @@ function BoardSurface({
     interaction.reveal,
     interaction.centerCard,
   ])
-  const first = Math.floor(layout.offset / (layout.cardWidth + layout.gap))
-  const last = Math.max(
-    first,
-    Math.floor(
-      (layout.offset + layout.viewportWidth) / (layout.cardWidth + layout.gap),
-    ),
-  )
+  const visible = visibleConfirmedRange(layout)
   const cards = [
     ...run.timeline,
     ...(run.pending ? [run.pending] : []),
@@ -197,7 +191,11 @@ function BoardSurface({
         </TimelineLockContext.Provider>
       </DragDropProvider>
       <TimelineOverview
-        marks={overviewMarks(display.items.length, first, last)}
+        marks={overviewMarks(
+          display.items.length,
+          visible?.first ?? -1,
+          visible?.last ?? -1,
+        )}
         previewSlot={state.selectedSlot}
         correctSlot={display.correctDisplaySlot}
         onNavigate={interaction.reveal}
