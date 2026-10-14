@@ -36,7 +36,17 @@ def resolve_game_player(
                 detail="Not authenticated",
                 headers={"WWW-Authenticate": "Bearer"},
             )
-        player = account_player(get_current_user(session, token))
+        try:
+            user = get_current_user(session, token)
+        except HTTPException as exc:
+            # Only account resolution failures are session errors. Ordinary game
+            # validation/ownership 400s and 404s retain their service contracts.
+            raise HTTPException(
+                status_code=exc.status_code,
+                detail={"code": "invalid_account", "message": str(exc.detail)},
+                headers=exc.headers,
+            ) from exc
+        player = account_player(user)
     else:
         if request.method not in {"GET", "HEAD", "OPTIONS"}:
             require_guest_mutation(request)

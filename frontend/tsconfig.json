@@ -26,15 +26,16 @@
     "src",
     "tests",
     "tests-real-catalog",
+    "tests-guest-catalog",
     "playwright.config.ts",
     "playwright.bootstrap.config.ts",
     "playwright.real-catalog.config.ts",
+    "playwright.guest-catalog.config.ts",
+    "playwright.identity.config.ts",
+    "vite.config.ts",
     "vite.real-catalog.config.ts",
-    "vite.bootstrap.config.ts"
-  ],
-  "references": [
-    {
-      "path": "./tsconfig.node.json"
-    }
+    "vite.bootstrap.config.ts",
+    "vite.guest-catalog.config.ts",
+    "vite.identity.config.ts"
   ]
 }

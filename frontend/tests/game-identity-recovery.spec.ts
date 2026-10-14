@@ -74,6 +74,8 @@ async function harness(page: Page, token = "") {
     delayStart: undefined as Promise<void> | undefined,
     delayLogin: undefined as Promise<void> | undefined,
     failStart: false,
+    unavailableAccount: undefined as "inactive" | "deleted" | undefined,
+    dailyStarts: [] as { operation_id: string }[],
   }
   await page.context().route("**/api/v1/**", async (route) => {
     const request = route.request()
@@ -84,6 +86,19 @@ async function harness(page: Page, token = "") {
       : "guest-one"
     const json = (value: unknown, status = 200) =>
       route.fulfill({ status, json: value })
+    const accountFailure = () =>
+      json(
+        {
+          detail: {
+            code: "invalid_account",
+            message:
+              state.unavailableAccount === "inactive"
+                ? "Inactive user"
+                : "User not found",
+          },
+        },
+        state.unavailableAccount === "inactive" ? 400 : 404,
+      )
     if (path === "/utils/public-config")
       return json({ registration_open: false })
     if (path === "/login/access-token") {
@@ -120,6 +135,7 @@ async function harness(page: Page, token = "") {
       })
     }
     if (path === "/games/session") {
+      if (auth && state.unavailableAccount) return accountFailure()
       if (auth && state.expired)
         return json({ detail: "Could not validate credentials" }, 403)
       if (request.method() === "POST") {
@@ -142,6 +158,12 @@ async function harness(page: Page, token = "") {
       return json({ kind: auth ? "account" : "guest", context_id: context })
     }
     if (path === "/games/active-runs") return json([])
+    if (path === "/games/daily" && request.method() === "POST") {
+      state.dailyStarts.push(request.postDataJSON())
+      await state.delayStart
+      if (auth && state.unavailableAccount) return accountFailure()
+      return json({ ...run, mode: "daily", daily_date: "2026-10-13" })
+    }
     if (path === "/games/daily")
       return json({
         day: "2026-10-13",
@@ -152,6 +174,7 @@ async function harness(page: Page, token = "") {
     if (path === "/games/freeplay") {
       state.starts.push(request.postDataJSON())
       await state.delayStart
+      if (auth && state.unavailableAccount) return accountFailure()
       if (state.failStart)
         return json(
           {
@@ -170,6 +193,7 @@ async function harness(page: Page, token = "") {
         command: request.postDataJSON(),
       })
       await state.delayMove
+      if (auth && state.unavailableAccount) return accountFailure()
       return json(
         {
           detail: { code: "game_session_expired", message: "Session expired" },
@@ -179,6 +203,7 @@ async function harness(page: Page, token = "") {
     }
     if (path === `/games/runs/${runId}`) {
       await state.delayRead
+      if (auth && state.unavailableAccount) return accountFailure()
       if (state.expired)
         return json(
           {
@@ -207,6 +232,149 @@ async function move(page: Page) {
 async function saved(page: Page, key: string) {
   return page.evaluate((value) => sessionStorage.getItem(value), key)
 }
+
+for (const accountState of ["inactive", "deleted"] as const) {
+  test(`${accountState} account owned read offers session recovery without replacement`, async ({
+    page,
+  }) => {
+    const state = await harness(page, "one")
+    let release!: () => void
+    state.delayRead = new Promise<void>((resolve) => {
+      release = resolve
+    })
+    await page.goto(`/play/${runId}`)
+    await expect(
+      page.getByRole("heading", { name: "Loading run…" }),
+    ).toBeVisible()
+    state.unavailableAccount = accountState
+    release()
+    await expect(
+      page.getByRole("button", { name: "Retry session", exact: true }),
+    ).toBeVisible()
+    await expect(page.getByTestId("pending-card")).toHaveCount(0)
+    await page
+      .getByRole("button", { name: "Retry session", exact: true })
+      .click()
+    await expect(
+      page.getByRole("button", { name: "Continue as guest" }),
+    ).toBeVisible()
+    expect(state.bootstraps).toBe(0)
+    expect(state.moves).toHaveLength(0)
+    await page.getByRole("button", { name: "Continue as guest" }).click()
+    await expect(page).toHaveURL(/\/$/)
+    await expect(
+      page.getByRole("heading", { name: "Historical Date Game", exact: true }),
+    ).toBeVisible()
+    expect(state.moves).toHaveLength(0)
+    expect(state.starts).toHaveLength(0)
+    expect(state.dailyStarts).toHaveLength(0)
+  })
+
+  test(`${accountState} account placement retains exact UUID and body through explicit guest continuation`, async ({
+    page,
+  }) => {
+    const state = await harness(page, "one")
+    await openBoard(page)
+    let release!: () => void
+    state.delayMove = new Promise<void>((resolve) => {
+      release = resolve
+    })
+    await move(page)
+    await expect.poll(() => state.moves.length).toBe(1)
+    const key = `game:account-one:placement:${runId}`
+    const original = await saved(page, key)
+    expect(JSON.parse(original!)).toEqual(state.moves[0].command)
+    state.unavailableAccount = accountState
+    release()
+    await expect(
+      page.getByRole("button", { name: "Retry session", exact: true }),
+    ).toBeVisible()
+    expect(await saved(page, key)).toBe(original)
+    await page
+      .getByRole("button", { name: "Retry session", exact: true })
+      .click()
+    await expect(
+      page.getByRole("button", { name: "Continue as guest" }),
+    ).toBeVisible()
+    expect(state.bootstraps).toBe(0)
+    expect(state.moves).toHaveLength(1)
+    expect(await saved(page, key)).toBe(original)
+    await page.getByRole("button", { name: "Continue as guest" }).click()
+    await expect(page).toHaveURL(/\/$/)
+    await expect(
+      page.getByRole("heading", { name: "Historical Date Game", exact: true }),
+    ).toBeVisible()
+    expect(await saved(page, key)).toBe(original)
+    expect(state.moves).toHaveLength(1)
+    expect(await saved(page, `game:guest-one:placement:${runId}`)).toBeNull()
+  })
+
+  for (const mode of ["daily", "freeplay"] as const) {
+    test(`${accountState} account ${mode} start retains exact UUID and body without automatic replay`, async ({
+      page,
+    }) => {
+      const state = await harness(page, "one")
+      let release!: () => void
+      state.delayStart = new Promise<void>((resolve) => {
+        release = resolve
+      })
+      await page.goto(`/${mode}`)
+      await page
+        .getByRole("button", {
+          name: mode === "daily" ? "Start Daily" : "Start Freeplay",
+          exact: true,
+        })
+        .click()
+      const starts = mode === "daily" ? state.dailyStarts : state.starts
+      await expect.poll(() => starts.length).toBe(1)
+      const bootstrapsBeforeFailure = state.bootstraps
+      const key = `game:account-one:start:${mode}`
+      const original = await saved(page, key)
+      expect(JSON.parse(original!)).toEqual(starts[0])
+      state.unavailableAccount = accountState
+      release()
+      await expect(
+        page.getByRole("button", { name: "Retry session", exact: true }),
+      ).toBeVisible()
+      expect(await saved(page, key)).toBe(original)
+      await page
+        .getByRole("button", { name: "Retry session", exact: true })
+        .click()
+      await expect(
+        page.getByRole("button", { name: "Continue as guest" }),
+      ).toBeVisible()
+      expect(state.bootstraps).toBe(bootstrapsBeforeFailure)
+      expect(starts).toHaveLength(1)
+      await page.getByRole("button", { name: "Continue as guest" }).click()
+      await expect(page).toHaveURL(/\/$/)
+      await expect(
+        page.getByRole("heading", {
+          name: "Historical Date Game",
+          exact: true,
+        }),
+      ).toBeVisible()
+      expect(await saved(page, key)).toBe(original)
+      expect(starts).toHaveLength(1)
+      expect(await saved(page, `game:guest-one:start:${mode}`)).toBeNull()
+    })
+  }
+}
+
+test("ordinary owned run 404 is not a session recovery error", async ({
+  page,
+}) => {
+  await harness(page, "two")
+  await page.goto(`/play/${runId}`)
+  await expect(
+    page.getByRole("heading", { name: "Run unavailable" }),
+  ).toBeVisible()
+  await expect(
+    page.getByRole("button", { name: "Retry session", exact: true }),
+  ).toHaveCount(0)
+  await expect(
+    page.getByRole("button", { name: "Continue as guest" }),
+  ).toHaveCount(0)
+})
 
 test("guest_home_has_no_login_gate", async ({ page }) => {
   const state = await harness(page)

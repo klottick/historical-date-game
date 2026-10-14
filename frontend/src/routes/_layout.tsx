@@ -77,5 +77,3 @@ function LayoutContent() {
     </SidebarProvider>
   )
 }
-
-export default Layout

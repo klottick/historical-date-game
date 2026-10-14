@@ -281,7 +281,7 @@ def test_bootstrap_cookie_allowlist_and_refresh(
         assert set(response.json()) == {"kind", "context_id"}
         assert response.json()["kind"] == "guest"
         assert response.headers["cache-control"] == "no-store"
-        cookie: SimpleCookie[str] = SimpleCookie()
+        cookie = SimpleCookie()
         cookie.load(response.headers["set-cookie"])
         morsel = cookie["hdg_guest_api_test"]
         assert morsel["httponly"] and morsel["samesite"].lower() == "lax"
@@ -499,7 +499,8 @@ def test_account_precedence_context_and_existing_validation(
         run = public_run(
             client.post(f"{BASE}/daily", json={"operation_id": str(uuid4())})
         )
-        assert db.get(GameRun, run.run_id).owner_id == owners[0]
+        stored_run = db.get(GameRun, run.run_id)
+        assert stored_run is not None and stored_run.owner_id == owners[0]
         del client.headers["X-Game-Context"]
         assert client.get(f"{BASE}/runs/{run.run_id}").status_code == 200
         owner = db.get(User, owners[0])
@@ -511,6 +512,91 @@ def test_account_precedence_context_and_existing_validation(
         assert client.post(f"{BASE}/session").status_code == 400
         assert client.get(f"{BASE}/daily").status_code == 400
         assert counts(db) == before
+
+
+@pytest.mark.parametrize("account_state,status", [("inactive", 400), ("deleted", 404)])
+def test_unavailable_account_is_a_structured_game_session_failure(
+    db: Session,
+    daily_context: tuple[list[UUID], str, datetime],
+    account_state: str,
+    status: int,
+) -> None:
+    owners, release_id, _ = daily_context
+    owner_id = owners[0]
+    if account_state == "deleted":
+        # Own this account independently; daily_context cleans up its five users.
+        deleted_owner = User(
+            email=f"deleted-{uuid4()}@example.com", hashed_password="unused"
+        )
+        db.add(deleted_owner)
+        db.commit()
+        owner_id = deleted_owner.id
+    with TestClient(app) as client:
+        bootstrap(client)  # A valid cookie must not become an implicit fallback.
+        client.headers.clear()
+        client.headers.update(bearer(owner_id))
+        context = client.get(f"{BASE}/session").json()["context_id"]
+        client.headers["X-Game-Context"] = context
+        initial = public_run(
+            client.post(
+                f"{BASE}/freeplay",
+                json=start_command(release_id).model_dump(mode="json"),
+            )
+        )
+        move = correct_command(db, initial).model_dump(mode="json")
+        start = start_command(release_id).model_dump(mode="json")
+        owner = db.get(User, owner_id)
+        assert owner is not None
+        if account_state == "inactive":
+            owner.is_active = False
+            db.add(owner)
+        else:
+            db.delete(owner)
+        db.commit()
+        before = counts(db)
+        for path in ("/session", "/active-runs", "/daily", f"/runs/{initial.run_id}"):
+            response = client.get(BASE + path)
+            assert_error(response, status, "invalid_account")
+            assert_private_cache_policy(response)
+        for path, body in (
+            ("/session", {}),
+            ("/daily", {"operation_id": str(uuid4())}),
+            ("/freeplay", start),
+            (f"/runs/{initial.run_id}/placements", move),
+        ):
+            response = client.post(BASE + path, json=body)
+            assert_error(response, status, "invalid_account")
+            assert "set-cookie" not in response.headers
+        account = client.get("/api/v1/users/me")
+        assert account.status_code == status
+        assert account.json() == {
+            "detail": "Inactive user" if status == 400 else "User not found"
+        }
+        assert counts(db) == before
+        if account_state == "inactive":
+            owner.is_active = True
+            db.add(owner)
+            db.commit()
+            assert public_run(client.get(f"{BASE}/runs/{initial.run_id}")) == initial
+            moved = public_run(
+                client.post(f"{BASE}/runs/{initial.run_id}/placements", json=move)
+            )
+            assert moved.revision == 1
+            assert client.post(
+                f"{BASE}/runs/{initial.run_id}/placements", json=move
+            ).json() == moved.model_dump(mode="json")
+            started = client.post(f"{BASE}/freeplay", json=start)
+            assert started.status_code == 200
+            assert client.post(f"{BASE}/freeplay", json=start).json() == started.json()
+
+
+def test_account_run_not_found_remains_a_game_rejection(
+    daily_context: tuple[list[UUID], str, datetime],
+) -> None:
+    owners, _, _ = daily_context
+    with TestClient(app) as client:
+        client.headers.update(bearer(owners[0]))
+        assert_error(client.get(f"{BASE}/runs/{uuid4()}"), 404, "run_not_found")
 
 
 def test_guest_cookie_does_not_authorize_account_apis(db: Session) -> None:
