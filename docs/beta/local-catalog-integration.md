@@ -1,5 +1,10 @@
 # Isolated local real-catalog proof (F1)
 
+**Historical F1/F2 evidence:** the retained real game now has owner-authorized
+local guest activation; use the [Task 6 lifecycle](#task-6-current-local-guest-game-lifecycle)
+below. The F1 ownership comment is historical provenance, **not current permission
+to run destructive pytest/cleanup/seed/probe commands on this live database**.
+
 This is a backend service/persistence check, **not production activation, launch,
 browser/device/accessibility evidence, human content review, or legal clearance**.
 No API/schema/publication policy changed. All content acceptance remains automated.
@@ -51,7 +56,11 @@ dd94a8228b0a1e585b99a1c25c8a512951f3849f805d22472f266800426c5146
 fddaeb052db9dd830e63f0722d6945b52fb21665fe36140b84ddd94a30e22c7b
 ```
 
-## Reproduction (from `backend/`)
+## Historical F1 reproduction (from `backend/`, not current lifecycle)
+
+The commands below document the former disposable verification. Do not execute
+this block on the now-retained live real DB, especially full pytest or catalog
+activation. Task 6 has a separate live guard and no cleanup/seed subcommand.
 
 First inspect project/container/database ownership and consumers. **Do not blindly
 run full pytest against an existing database**: its fixtures clean the entire DB.
@@ -170,7 +179,10 @@ weakened. All eight actual projected asset URLs return 200 with matching byte
 hashes. Private artifacts and directory listings return 404, including paths
 under this release directory. The flat digest path remains deliberately 404.
 
-### Launch and tests
+### Historical F2 launch and tests
+
+This archival launch block is superseded by the SMTP-disabled guarded Task 6
+launcher below; do not start a second service or use stale PIDs/addresses.
 
 Inspect `ss -ltnp` and process command/cwd before starting. Occupied ports require
 established ownership or approval; a responding health check is not ownership.
@@ -302,3 +314,71 @@ journal are retained. No existing account, password, registration setting,
 backend process, database cleanup, firewall or production configuration changed.
 Full fix1 RED/GREEN, fresh browser/unit/build verification and lifecycle results
 are appended to the private `task-F2-report.md` and `F2-fix1-evidence/` directory.
+
+## Task 6: current local guest-game lifecycle
+
+Owner-authorized local activation on 2026-10-14 used product baseline `50215af`
+from `.worktrees/guest-play`, additive schema `20261013_01`, and the unchanged
+reviewed 1,276-event release/manifest/media above. The owner explicitly waived the
+old backup/restore gate and authorized the existing DB restart. Neither old real
+service existed; the helper performed a guarded cold start with no old-PID args.
+No backup/restore subsystem, extra database, data reset, catalog reselection,
+original-runtime rewrite or DB-server/exposure change was needed or performed.
+
+Current UI: **http://192.168.1.214:5174**, also http://localhost:5174. The real API
+is loopback-only `127.0.0.1:8010` with `--no-access-log`; the existing real Vite
+config binds `0.0.0.0:5174` and proxies API/media on the visitor's origin. Its
+private-file denies were not widened, including original-beta `/@fs/` paths.
+The API reads the original hash-verified **public media** via an absolute
+`GAME_DATA_DIR`, without asking Vite to serve the private beta runtime.
+
+For inspection from `guest-play/backend/` (read-only, default dry-run):
+
+```bash
+# Inspect current IP, ports and processes anew; do not assume this IP is permanent.
+ip -4 route get 1.1.1.1
+ss -ltnp
+POSTGRES_DB=historical_date_game_catalog_test \
+POSTGRES_SERVER=127.0.0.1 POSTGRES_PORT=5433 ENVIRONMENT=local \
+  .venv/bin/python -m tests.browser.guest_local_rollout \
+  --live-worktree /home/klottick/repos/historical-date-game/.worktrees/beta \
+  --implementation-worktree /home/klottick/repos/historical-date-game/.worktrees/guest-play \
+  --origin http://localhost:5174 --origin http://192.168.1.214:5174
+
+# Pure safety verification only; never full pytest on the retained real DB.
+.venv/bin/pytest --noconftest tests/safety -q
+```
+
+The original successful cold start added `--action start --apply` to that
+inspection command. It is **not a reusable automatic restart command**: existing
+startup outputs/PIDs/ports cause refusal. Do not delete ledgers to bypass it.
+The private ignored directory
+`.superpowers/sdd/2026-10-13-historical-date-game-guest-play/task-6-evidence/`
+retains `startup-env.json`, preflight/migration records, exact service argv/cwd/
+PID/start-time ledgers and logs. Directory mode is 0700; private files are 0600.
+Never publish the environment ledger or copy it into public media or Git.
+
+An owner-requested stop uses the same explicit target/origin arguments with
+`--action stop --apply`. Both current owned service identities and ports are
+rechecked before any SIGTERM; unverified processes are never killed or adopted.
+Ledgers remain. After migration/new gameplay, failures preserve DB/evidence and
+require an owner recovery/restart decision; no reset, downgrade or automatic
+rollback/restore exists. Current processes were left running for owner play.
+
+`hdg_guest_real` is independent of verification/fixture cookies. Only the two
+exact origins above are authorized. Public registration and all SMTP sending
+are disabled, including ambient SMTP restoration from `.env`. The original
+fixture DB/port 8000 were not touched (no listener was present on inspection).
+
+Fresh actual-IP Chromium proved automatic no-account guest entry, Daily and
+Freeplay scoring and identical reload, visible credits/images, eight actual media
+byte hashes, 18 private-artifact denials, cookie boundary and distinct guests.
+A read-only, non-gating spot-check also retained every pre-existing row hash.
+Full commands/exits, TDD RED/GREEN, final pure safety counts, owned PIDs and proof
+state are in the private `task-6-report.md` in the same SDD workspace.
+
+This remains local HTTP development access with existing placeholder secrets,
+not production hardening or remote physical-device proof. Physical touch,
+spoken screen readers, production HTTPS/Secure cookies, security/backup/hosting,
+invitations and final branch review/publication/integration remain separate owner
+decisions. No push, merge, tunnel or external integration was performed.
