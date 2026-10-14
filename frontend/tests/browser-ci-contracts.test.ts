@@ -13,6 +13,19 @@ test("fresh browser CI provisions an owned fixture before browser consumers", ()
   assert.match(workflow, /COMPOSE_FILE=/)
 })
 
+test("CI waits for backend health after fixture verification and before browser consumers", () => {
+  const workflow = readFileSync("../.github/workflows/playwright.yml", "utf8")
+  const seed = workflow.indexOf("tests.browser.ci_fixture prepare")
+  const healthy = workflow.indexOf(
+    "docker compose up -d --wait backend mailcatcher",
+  )
+  const browser = workflow.indexOf("- name: Run Playwright tests")
+  assert.ok(seed > 0, "missing verified fixture provision")
+  assert.ok(healthy > 0, "missing explicit backend health wait")
+  assert.ok(seed < healthy, "verify fixture before starting backend")
+  assert.ok(healthy < browser, "backend health must precede browser consumers")
+})
+
 test("runner temp is resolved in a step, not an unavailable job-env context", () => {
   const workflow = readFileSync("../.github/workflows/playwright.yml", "utf8")
   assert.doesNotMatch(workflow, /^ {6}COMPOSE_FILE:.*runner\.temp/m)

@@ -99,6 +99,8 @@ jobs:
     - name: Verify and activate synthetic browser catalog and public media
       run: .venv/bin/python -m tests.browser.ci_fixture prepare
       working-directory: backend
+    - name: Wait for browser backend readiness
+      run: docker compose up -d --wait backend mailcatcher
     - name: Run Playwright tests
       run: docker compose run --rm playwright npx playwright test --fail-on-flaky-tests --trace=retain-on-failure --shard=${{ matrix.shardIndex }}/${{ matrix.shardTotal }}
     - run: docker compose down -v --remove-orphans
