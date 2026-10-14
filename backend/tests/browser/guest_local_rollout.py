@@ -20,6 +20,8 @@ from typing import Any
 from urllib.request import urlopen
 
 import psycopg
+from alembic.config import Config
+from alembic.script import ScriptDirectory
 
 from app.core.config import settings
 from tests.browser.guest_test_environment import (
@@ -274,10 +276,21 @@ def inspect(
     return {"database": identity, "ip": ip, "origins": origins, "runtime": str(runtime)}
 
 
-def start(proof: dict[str, Any]) -> None:
+def require_current_schema(identity: dict[str, Any]) -> None:
+    # Offline script inspection, not an Alembic command or database operation.
+    config = Config(str(WORKTREE / "backend/alembic.ini"))
+    config.set_main_option("script_location", str(WORKTREE / "backend/app/alembic"))
+    scripts = ScriptDirectory.from_config(config)
+    if identity["revision"] != "20261013_01" or scripts.get_heads() != ["20261013_01"]:
+        raise RuntimeError("Exact existing current schema required without upgrade")
+
+
+def start(proof: dict[str, Any], *, upgrade_schema: bool = True) -> None:
     # Recheck all applicable guards immediately before the first write.
     announce("Stage: final cold-start guard inspection")
     proof = inspect(LIVE, WORKTREE, proof["origins"], True)
+    if not upgrade_schema:
+        require_current_schema(inspect_database())
     require_private_directory(EVIDENCE)
     env = dict(
         os.environ,
@@ -302,15 +315,22 @@ def start(proof: dict[str, Any]) -> None:
         env[field] = str(getattr(settings, field))
     private_json(EVIDENCE / "startup-env.json", env)
     private_json(EVIDENCE / "preflight.json", proof)
-    # Additive upgrade only. No downgrade, activation, reseal, seed or cleanup.
-    announce("Stage: additive live migration")
-    subprocess.run(
-        [sys.executable, "-m", "alembic", "upgrade", "head"],
-        cwd=WORKTREE / "backend",
-        env=env,
-        check=True,
+    if upgrade_schema:
+        # Additive upgrade only. No downgrade, activation, reseal, seed or cleanup.
+        announce("Stage: additive live migration")
+        subprocess.run(
+            [sys.executable, "-m", "alembic", "upgrade", "head"],
+            cwd=WORKTREE / "backend",
+            env=env,
+            check=True,
+        )
+    else:
+        announce("Stage: existing current schema verified; no migration")
+    announce(
+        "Stage: post-migration read-only identity inspection"
+        if upgrade_schema
+        else "Stage: existing-schema read-only identity recheck"
     )
-    announce("Stage: post-migration read-only identity inspection")
     after = inspect_database()
     if after["revision"] != "20261013_01":
         raise RuntimeError("Unexpected upgraded schema; preserve state and report")

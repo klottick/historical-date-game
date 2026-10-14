@@ -317,6 +317,14 @@ are appended to the private `task-F2-report.md` and `F2-fix1-evidence/` director
 
 ## Task 6: current local guest-game lifecycle
 
+This section records the **guest-play** lifecycle, not card-board activation.
+Its original Task 6 cold-start ledger below is historical; the controller's later
+guest-play generation uses private
+`.superpowers/sdd/2026-10-13-historical-date-game-guest-play/final-fix-evidence/local-lifecycle.py`
+and `local-activation/`. Establish actual current ownership there before any
+signal; do not use a historical PID, address, or stopped Task 6 ledger as authority.
+No fresh operational inspection is claimed by the code-only board Phase A.
+
 Owner-authorized local activation on 2026-10-14 used product baseline `50215af`
 from `.worktrees/guest-play`, additive schema `20261013_01`, and the unchanged
 reviewed 1,276-event release/manifest/media above. The owner explicitly waived the
@@ -385,3 +393,35 @@ not production hardening or remote physical-device proof. Physical touch,
 spoken screen readers, production HTTPS/Secure cookies, security/backup/hosting,
 invitations and final branch review/publication/integration remain separate owner
 decisions. No push, merge, tunnel or external integration was performed.
+
+## Card-board switch draft — review gate, not activation evidence
+
+The card-board work is isolated in `.worktrees/board-redesign`. Its guarded new
+generation and exact post-review commands are documented in
+[game-board-redesign.md](game-board-redesign.md#draft-local-lifecycle--phase-a-only).
+Phase A creates/tests the helper and commits draft lifecycle docs only. The live
+guest-play services remain unchanged; no local card-board activation is claimed.
+
+The controlled local phase is authorized by the plan, but independent Task 6 and
+whole-branch code reviews must finish before operational inspection/stop/start.
+Use only the proved **original guest-play runner** to stop the old pair; the new
+wrapper cannot adopt it. New ownership outputs are create-only at the board plan's
+private `local-activation/`, not copied old ledgers. Preserve all generations.
+
+The board wrapper reuses exact live DB/IPv4, source/media, current-origin and
+PID/start-time/cwd/argv/port guards. It requires existing schema `20261013_01` to
+match the sole current script head and passes `upgrade_schema=False`; it invokes
+no migration. The existing helper's default upgrade behavior is unchanged in
+this isolated worktree; served guest-play/beta code is not edited. Missing
+enrichment explicitly uses ordinary source fallback. Supplied private metadata
+requires path/permissions/digest and release/event/source validation. Current
+actual-R metadata contains no matched articles, only 1,276 source fallbacks.
+
+API/UI remain loopback8010/all-interface5174 with the existing same-origin proxy,
+private-file denies, real guest cookie, SMTP/public-registration disabled and
+no-access-log API. Post-review Phase B still owes actual-IP browser/security/media
+and unchanged-release verification before leaving owned services running. It
+must not reseed/reselect, clean/downgrade/reset, delete ownership evidence or run
+integrated pytest on the retained live DB. Failures retain state, not automatic
+rollback. Production/physical-device/deployment/invitation/integration approvals
+remain separate; review-gated local authorization does not imply any of them.

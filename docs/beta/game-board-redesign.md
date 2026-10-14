@@ -160,5 +160,90 @@ CSS edges outwards. It does not scroll the horizontal stage, alter scoring/comma
 or add a desktop scrolling workaround. Actual mobile Daily supplied the failing
 integration evidence; 1920×900 and 1366×768 remain no-scroll surfaces.
 
-Physical devices, production/LAN activation, deployment, and invitations remain
-unreached gates requiring separate owner approval and controller review.
+Physical devices, production deployment, and invitations remain unreached gates
+requiring separate owner decisions. The controlled local switch is authorized by
+the execution plan, but remains held at the independent code-review gate below.
+
+## Draft local lifecycle — Phase A only
+
+The guarded helper is `backend/tests/browser/board_local_rollout.py`. Phase A
+delivers code, pure safety tests and this draft; **the card-board game has not been
+activated locally**. The live guest-play API/UI at 8010/5174 remain unchanged.
+Independent Task 6 and whole-branch review, including residual native teardown
+diagnostic triage, must finish before any operational switch. This is review
+sequencing, not an additional owner check-in or production approval.
+
+The wrapper loads the existing guarded rollout into a separate module namespace,
+pins `.worktrees/board-redesign` and original `.worktrees/beta` source/media, and
+uses fresh create-only ownership evidence at
+`.superpowers/sdd/2026-10-14-game-board-redesign/local-activation/` (0700/0600).
+It neither reads nor adopts old guest-play or stopped verification ledgers.
+An occupied port without this generation's proven ownership is refused.
+
+Default inspection, and start/stop without `--apply`, make no helper filesystem,
+environment, database or process mutations. Inspection may read the database in
+a read-only transaction and query IP/process ownership. Phase A runs only pure
+`--noconftest` tests, **not this operational inspection**:
+
+```sh
+# From board-redesign/backend/; pure, no destructive DB fixture.
+uv run pytest --noconftest tests/safety/test_board_local_rollout.py -q
+```
+
+After the review gate, first inspect the actual old guest-play ownership via its
+private `final-fix-evidence/local-lifecycle.py` and `local-activation/`, using the
+original runner from `guest-play/backend/`. Stop only that proved pair, with the
+exact live DB/IPv4 environment; verify both ports released. Never use the new
+wrapper to stop or adopt the old pair. Changed provenance requires a halt.
+
+For subsequent **post-review** inspection from `board-redesign/backend/`, substitute
+the freshly verified nonloopback IPv4 address, not a historical IP:
+
+```sh
+POSTGRES_DB=historical_date_game_catalog_test \
+POSTGRES_SERVER=127.0.0.1 POSTGRES_PORT=5433 ENVIRONMENT=local \
+  uv run python -m tests.browser.board_local_rollout \
+  --origin http://localhost:5174 --origin "http://<current-LAN-IP>:5174"
+```
+
+Both worktree flags remain available for explicit documentation, but only the
+pinned beta/board paths pass. The DB name, owner/comment, selected manifest bytes,
+release/count and endpoint guards are unchanged. Hostnames/IPv6 are refused.
+The board requires existing revision **20261013_01** and that exact sole script
+head, including a fresh check before the first start write. Its call to
+`guest_local_rollout.start(..., upgrade_schema=False)` never invokes Alembic.
+The legacy default remains `upgrade_schema=True`. A future schema change fails
+closed; it needs isolated proof and review, not an automatic live migration.
+
+After successful cold-start inspection, `--action start --apply` is the explicit
+mutation mode. It retains the exact API/UI binds, no-access-log API, real Vite
+private-file denies/proxy, `hdg_guest_real`, exact current origins, disabled SMTP
+and disabled public registration. With no sidecar arguments, enrichment is
+explicitly disabled even if ambient settings contain it; ordinary source fallback
+still works. To supply the Task 5 sidecar, append both:
+
+```sh
+--event-links-file /home/klottick/repos/historical-date-game/.worktrees/board-redesign/.superpowers/sdd/2026-10-14-game-board-redesign/integration/task-5/event-links.json \
+--event-links-sha256 53da618a7ca6efc621296b0da429fa4c83caa906f3683b9375cb7c99302f9fcd
+```
+
+Supplied metadata must be a nonaliased mode-0600 file in this plan's private
+mode-0700 integration tree; public paths, hardlinks/symlinks, digest mismatch,
+duplicate JSON keys, unsafe links and wrong release/manifest/event/source binding
+are refused. It is rechecked in the final cold-start preflight. Real-R coverage
+remains **0 articles / 1,276 source fallbacks**, not verified article coverage.
+
+The same explicit arguments with `--action stop --apply` stop only this new
+generation: both PID/start-time/cwd/argv/port identities must pass before either
+SIGTERM. Outputs are never overwritten or deleted to force a restart. Failed or
+partial starts retain state/evidence and need a reviewed recovery decision; no
+automatic reset/rollback/cleanup exists.
+
+Phase B must still prove fresh actual-IP no-login Daily/Freeplay, tile preview and
+re-pickup, explicit scoring, persisted attempted loss/reload/replay, both no-scroll
+desktop sizes, overview/credits/source labels, private-file/media security and
+unchanged selected release/answers. Only verified owned services are left running.
+The final activation commit must be documentation-only; a helper/product change
+after whole-branch review requires scoped re-review and affected verification.
+No push/merge, public tunnel, production activation, worktree/evidence removal or
+integrated pytest against the retained live database is authorized here.
