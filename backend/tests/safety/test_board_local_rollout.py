@@ -36,7 +36,12 @@ def runner(
     assert board.__file__ is not None
     checkout = Path(board.__file__).resolve().parents[3]
     monkeypatch.setattr(board, "WORKTREE", checkout)
+    monkeypatch.setattr(board, "EVIDENCE", tmp_path / "evidence")
     guarded = board.guarded_rollout()
+    assert guarded.EVIDENCE == board.EVIDENCE, "Board factory must propagate evidence"
+    assert guarded.EVIDENCE != legacy_rollout().EVIDENCE, (
+        "Board evidence must be separate"
+    )
     monkeypatch.setattr(board, "guarded_rollout", lambda: guarded)
     # After real namespace creation, model coherent linked-worktree CLI pins.
     # Never depend on a retained beta sibling, hosted .git directory or live data.
@@ -54,8 +59,6 @@ def runner(
         board.WORKTREE / "backend/app/alembic",
         ignore=shutil.ignore_patterns("__pycache__"),
     )
-    for module in (board, guarded):
-        monkeypatch.setattr(module, "EVIDENCE", tmp_path / "evidence")
     for name, value in {
         "POSTGRES_DB": "historical_date_game_catalog_test",
         "POSTGRES_SERVER": "127.0.0.1",
@@ -88,6 +91,45 @@ def test_pure_runner_creates_namespace_in_current_checkout(
     assert guarded.__file__ == legacy_rollout().__file__
     assert guarded is not legacy_rollout()
     assert guarded.WORKTREE == board.WORKTREE == tmp_path / "implementation"
+
+
+def test_runner_rejects_legacy_factory_evidence_before_fixture_io(
+    monkeypatch: pytest.MonkeyPatch,
+    tmp_path: Path,
+) -> None:
+    board = rollout()
+    guest = legacy_rollout()
+    real_factory = board.guarded_rollout
+
+    def wrong_evidence_factory() -> ModuleType:
+        guarded: ModuleType = real_factory()
+        guarded.__dict__["EVIDENCE"] = guest.EVIDENCE
+        return guarded
+
+    monkeypatch.setattr(board, "guarded_rollout", wrong_evidence_factory)
+    calls: list[bool] = []
+
+    def unexpected_io(*_args: Any, **_kwargs: Any) -> None:
+        calls.append(True)
+        pytest.fail("Fixture I/O before factory evidence validation")
+
+    monkeypatch.setattr(guest.psycopg, "connect", unexpected_io)
+    monkeypatch.setattr(guest.os, "kill", unexpected_io)
+    monkeypatch.setattr(guest.subprocess, "run", unexpected_io)
+    monkeypatch.setattr(guest.subprocess, "Popen", unexpected_io)
+    for method in ("mkdir", "chmod", "write_text", "write_bytes"):
+        monkeypatch.setattr(Path, method, unexpected_io)
+    before = dict(os.environ)
+    target_fields = ("POSTGRES_DB", "POSTGRES_SERVER", "POSTGRES_PORT", "ENVIRONMENT")
+    before_target = {name: getattr(guest.settings, name) for name in target_fields}
+    with pytest.raises(AssertionError, match="Board factory must propagate evidence"):
+        runner(monkeypatch, tmp_path)
+    assert calls == []
+    assert dict(os.environ) == before
+    assert {
+        name: getattr(guest.settings, name) for name in target_fields
+    } == before_target
+    assert list(tmp_path.iterdir()) == []
 
 
 def test_simulated_cli_paths_do_not_depend_on_retained_sibling(
