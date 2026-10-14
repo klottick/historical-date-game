@@ -1,7 +1,8 @@
 import uuid
 from typing import Any
 
-from sqlmodel import Session, select
+from sqlalchemy import update
+from sqlmodel import Session, col, select
 
 from app.core.security import get_password_hash, verify_password_and_update
 from app.models import Item, ItemCreate, User, UserCreate, UserUpdate
@@ -41,15 +42,30 @@ def authenticate(*, session: Session, email: str, password: str) -> User | None:
     db_user = get_user_by_email(session=session, email=email)
     if not db_user or db_user.is_guest:
         return None
-    verified, updated_hash = verify_password_and_update(
-        password, db_user.hashed_password
-    )
+    original_hash = db_user.hashed_password
+    verified, updated_hash = verify_password_and_update(password, original_hash)
     if not verified:
         return None
     # Keep inactive-account rejection in the login route, without changing its hash.
     if updated_hash is not None and db_user.is_active:
-        db_user.hashed_password = updated_hash
-        session.add(db_user)
+        # A reset or eligibility change committed during verification must win.
+        statement = (
+            update(User)
+            .where(
+                col(User.id) == db_user.id,
+                col(User.hashed_password) == original_hash,
+                col(User.is_active).is_(True),
+                col(User.is_guest).is_(False),
+            )
+            .values(hashed_password=updated_hash)
+            .returning(col(User.id))
+            .execution_options(synchronize_session=False)
+        )
+        if session.exec(statement).scalar_one_or_none() is None:
+            # Rollback expires the stale snapshot. Fail closed, without retrying
+            # authentication or an unconditional write using the old password.
+            session.rollback()
+            return None
         session.commit()
         session.refresh(db_user)
     return db_user

@@ -1,11 +1,23 @@
 from datetime import timedelta
 from typing import cast
+from uuid import UUID
 
 import jwt
 import pytest
 from fastapi import HTTPException
 from fastapi.security import OAuth2PasswordRequestForm
-from sqlalchemy.sql import Select
+from sqlalchemy.sql import Select, operators
+from sqlalchemy.sql.dml import Update
+from sqlalchemy.sql.elements import (
+    BinaryExpression,
+    BindParameter,
+    BooleanClauseList,
+    ClauseElement,
+    ColumnClause,
+    False_,
+    True_,
+)
+from sqlalchemy.sql.selectable import TableClause
 from sqlmodel import Session
 
 from app import crud
@@ -30,16 +42,77 @@ class UserResult:
         return self.user
 
 
+class UpdateResult:
+    def __init__(self, user_id: UUID | None) -> None:
+        self.user_id = user_id
+
+    def scalar_one_or_none(self) -> UUID | None:
+        return self.user_id
+
+
 class FakeSession:
     """Persist snapshots rather than references, so a missing commit is observable."""
 
     def __init__(self, user: User) -> None:
         self.user = user
-        self.persisted_hash = user.hashed_password
+        self.loaded_hash = user.hashed_password
+        self.persisted = user.model_dump()
         self.pending: User | None = None
+        self.pending_hash: str | None = None
         self.commits = 0
+        self.rollbacks = 0
+        self.updates = 0
+        self.last_update: Update | None = None
 
-    def exec(self, statement: Select[tuple[User]]) -> UserResult:
+    @property
+    def persisted_hash(self) -> str:
+        return cast(str, self.persisted["hashed_password"])
+
+    def sql_value(self, expression: ClauseElement) -> object:
+        if isinstance(expression, ColumnClause):
+            return self.persisted[expression.name]
+        if isinstance(expression, BindParameter):
+            return expression.value
+        if isinstance(expression, True_):
+            return True
+        if isinstance(expression, False_):
+            return False
+        raise AssertionError(f"Unsupported SQL value: {expression}")
+
+    def matches(self, expression: ClauseElement | None) -> bool:
+        if expression is None:
+            return True
+        if isinstance(expression, BooleanClauseList):
+            assert expression.operator is operators.and_
+            return all(self.matches(clause) for clause in expression.clauses)
+        assert isinstance(expression, BinaryExpression)
+        assert expression.operator in (operators.eq, operators.is_)
+        left = self.sql_value(expression.left)
+        right = self.sql_value(expression.right)
+        if expression.operator is operators.is_:
+            return left is right
+        return left == right
+
+    def execute(self, statement: Update) -> UpdateResult:
+        # Evaluate the actual SQL predicate against the committed row. This is not
+        # a preconfigured CAS result, and removing a guard changes its behavior.
+        assert isinstance(statement.table, TableClause)
+        assert statement.table.name == "user"
+        assert [column.name for column in statement.exported_columns] == ["id"]
+        assert self.user.hashed_password == self.loaded_hash
+        self.updates += 1
+        self.last_update = statement
+        if not self.matches(statement.whereclause):
+            return UpdateResult(None)
+        self.pending_hash = statement.compile().params["hashed_password"]
+        assert isinstance(self.pending_hash, str)
+        return UpdateResult(self.user.id)
+
+    def exec(
+        self, statement: Select[tuple[User]] | Update
+    ) -> UserResult | UpdateResult:
+        if isinstance(statement, Update):
+            return self.execute(statement)
         email = statement.compile().params["email_1"]
         return UserResult(self.user if email == self.user.email else None)
 
@@ -52,14 +125,23 @@ class FakeSession:
         self.pending = user
 
     def commit(self) -> None:
-        assert self.pending is self.user
-        self.persisted_hash = self.pending.hashed_password
+        assert self.pending is self.user or self.pending_hash is not None
+        if self.pending is not None:
+            self.persisted["hashed_password"] = self.pending.hashed_password
+        else:
+            self.persisted["hashed_password"] = self.pending_hash
         self.pending = None
+        self.pending_hash = None
         self.commits += 1
+
+    def rollback(self) -> None:
+        self.pending = None
+        self.pending_hash = None
+        self.rollbacks += 1
 
     def refresh(self, user: User) -> None:
         assert user is self.user
-        user.hashed_password = self.persisted_hash
+        user.sqlmodel_update(self.persisted)
 
     @property
     def session(self) -> Session:
@@ -310,3 +392,82 @@ def test_same_current_password_does_not_convert_legacy_hash() -> None:
     assert exc.value.detail == "New password cannot be the same as the current one"
     assert user.hashed_password == fake.persisted_hash == LEGACY_BCRYPT_HASH
     assert fake.commits == 0
+
+
+@pytest.mark.parametrize("entrypoint", ["crud", "login"])
+@pytest.mark.parametrize("event", ["reset", "deactivate", "guest", "other-rehash"])
+def test_concurrent_credential_or_policy_change_wins_over_legacy_login(
+    monkeypatch: pytest.MonkeyPatch, entrypoint: str, event: str
+) -> None:
+    user = legacy_user()
+    fake = FakeSession(user)
+    original_verify = security.verify_password_and_update
+    calls = 0
+    competing_hash = security.get_password_hash(
+        LEGACY_PASSWORD if event == "other-rehash" else "synthetic-reset-password"
+    )
+
+    def verify_then_competing_commit(
+        password: str, stored_hash: str
+    ) -> tuple[bool, str | None]:
+        nonlocal calls
+        calls += 1
+        assert stored_hash == LEGACY_BCRYPT_HASH
+        result = original_verify(password, stored_hash)
+        assert result[0] and result[1] is not None
+        # An independent writer commits, without updating A's loaded user snapshot.
+        if event in ("reset", "other-rehash"):
+            fake.persisted["hashed_password"] = competing_hash
+        elif event == "deactivate":
+            fake.persisted["is_active"] = False
+        else:
+            fake.persisted["is_guest"] = True
+        assert user.hashed_password == LEGACY_BCRYPT_HASH
+        assert user.is_active and not user.is_guest
+        return result
+
+    monkeypatch.setattr(
+        crud, "verify_password_and_update", verify_then_competing_commit
+    )
+    if entrypoint == "crud":
+        assert (
+            crud.authenticate(
+                session=fake.session, email=user.email, password=LEGACY_PASSWORD
+            )
+            is None
+        )
+    else:
+        with pytest.raises(HTTPException) as exc:
+            login_access_token(
+                fake.session,
+                OAuth2PasswordRequestForm(
+                    username=user.email, password=LEGACY_PASSWORD
+                ),
+            )
+        assert exc.value.status_code == 400
+    expected_hash = (
+        competing_hash if event in ("reset", "other-rehash") else LEGACY_BCRYPT_HASH
+    )
+    assert fake.persisted_hash == expected_hash
+    assert fake.persisted["is_active"] is (event != "deactivate")
+    assert fake.persisted["is_guest"] is (event == "guest")
+    assert fake.commits == 0
+    assert fake.rollbacks == 1
+    assert fake.updates == 1
+    assert calls == 1  # Fail closed: never retry a migration using a stale password.
+
+
+def test_rehash_query_excludes_another_account_with_the_same_legacy_hash() -> None:
+    user = legacy_user()
+    fake = FakeSession(user)
+    assert (
+        crud.authenticate(
+            session=fake.session, email=user.email, password=LEGACY_PASSWORD
+        )
+        is user
+    )
+    assert fake.last_update is not None
+    another_account = FakeSession(legacy_user())
+    assert another_account.user.id != user.id
+    assert not another_account.matches(fake.last_update.whereclause)
+    assert another_account.persisted_hash == LEGACY_BCRYPT_HASH

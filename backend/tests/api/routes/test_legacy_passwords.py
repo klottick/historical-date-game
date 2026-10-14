@@ -2,13 +2,22 @@ from collections.abc import Iterator
 from datetime import timedelta
 
 import pytest
+from fastapi import HTTPException
+from fastapi.security import OAuth2PasswordRequestForm
 from fastapi.testclient import TestClient
 from sqlmodel import Session
 
 from app import crud
+from app.api.routes.login import login_access_token, reset_password
+from app.api.routes.users import update_password_me
 from app.core.config import settings
-from app.core.security import create_access_token, verify_password
-from app.models import User
+from app.core.security import (
+    create_access_token,
+    verify_password,
+    verify_password_and_update,
+)
+from app.models import NewPassword, UpdatePassword, User, UserUpdate
+from app.utils import generate_password_reset_token
 from tests.utils.legacy_password import (
     INVALID_PASSWORD_HASHES,
     LEGACY_BCRYPT_HASH,
@@ -208,3 +217,111 @@ def test_same_legacy_current_password_leaves_database_hash_unchanged(
         == "New password cannot be the same as the current one"
     )
     assert persisted_hash(db, legacy_account) == LEGACY_BCRYPT_HASH
+
+
+@pytest.mark.parametrize("entrypoint", ["crud", "route"])
+@pytest.mark.parametrize(
+    "event", ["reset", "change", "admin-password", "deactivate", "guest"]
+)
+def test_two_sessions_preserve_competing_password_or_policy_commit(
+    db: Session,
+    legacy_account: User,
+    monkeypatch: pytest.MonkeyPatch,
+    entrypoint: str,
+    event: str,
+) -> None:
+    account_id = legacy_account.id
+    email = legacy_account.email
+    new_password = "synthetic-competing-password"
+    reset_token = generate_password_reset_token(email=email)
+    original_verify = verify_password_and_update
+    competing_hash = LEGACY_BCRYPT_HASH
+    calls = 0
+
+    def verify_then_writer_commit(
+        password: str, stored_hash: str
+    ) -> tuple[bool, str | None]:
+        nonlocal competing_hash, calls
+        calls += 1
+        assert stored_hash == LEGACY_BCRYPT_HASH
+        result = original_verify(password, stored_hash)
+        assert result[0] and result[1] is not None
+        # B commits through unchanged writers while A still holds its loaded H0.
+        with Session(db.get_bind()) as writer:
+            competing_user = writer.get(User, account_id)
+            assert competing_user is not None
+            if event == "reset":
+                reset_password(
+                    session=writer,
+                    body=NewPassword(token=reset_token, new_password=new_password),
+                )
+            elif event == "change":
+                update_password_me(
+                    session=writer,
+                    current_user=competing_user,
+                    body=UpdatePassword(
+                        current_password=LEGACY_PASSWORD, new_password=new_password
+                    ),
+                )
+            elif event in ("admin-password", "deactivate"):
+                update = (
+                    UserUpdate(password=new_password)
+                    if event == "admin-password"
+                    else UserUpdate(is_active=False)
+                )
+                crud.update_user(session=writer, db_user=competing_user, user_in=update)
+            else:
+                competing_user.is_guest = True
+                writer.add(competing_user)
+                writer.commit()
+            writer.refresh(competing_user)
+            competing_hash = competing_user.hashed_password
+        return result
+
+    with monkeypatch.context() as patch:
+        patch.setattr(crud, "verify_password_and_update", verify_then_writer_commit)
+        with Session(db.get_bind()) as login_session:
+            if entrypoint == "crud":
+                assert (
+                    crud.authenticate(
+                        session=login_session, email=email, password=LEGACY_PASSWORD
+                    )
+                    is None
+                )
+            else:
+                with pytest.raises(HTTPException) as exc:
+                    login_access_token(
+                        login_session,
+                        OAuth2PasswordRequestForm(
+                            username=email, password=LEGACY_PASSWORD
+                        ),
+                    )
+                assert exc.value.status_code == 400
+
+            # A's identity map must not keep serving its pre-reset/policy snapshot.
+            reloaded = login_session.get(User, account_id)
+            assert reloaded is not None
+            assert reloaded.hashed_password == competing_hash
+            assert reloaded.is_active is (event != "deactivate")
+            assert reloaded.is_guest is (event == "guest")
+
+    assert calls == 1  # The loser fails closed, with no unconditional retry.
+    assert persisted_hash(db, legacy_account) == competing_hash
+    with Session(db.get_bind()) as reader:
+        current_user = reader.get(User, account_id)
+        assert current_user is not None
+        assert current_user.is_active is (event != "deactivate")
+        assert current_user.is_guest is (event == "guest")
+        if event in ("reset", "change", "admin-password"):
+            assert verify_password(new_password, current_user.hashed_password)
+            assert not verify_password(LEGACY_PASSWORD, current_user.hashed_password)
+            assert (
+                crud.authenticate(session=reader, email=email, password=LEGACY_PASSWORD)
+                is None
+            )
+            assert (
+                crud.authenticate(session=reader, email=email, password=new_password)
+                is current_user
+            )
+        else:
+            assert current_user.hashed_password == LEGACY_BCRYPT_HASH
