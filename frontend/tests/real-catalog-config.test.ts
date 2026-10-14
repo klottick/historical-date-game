@@ -4,6 +4,9 @@ import { existsSync, readFileSync } from "node:fs"
 import { test } from "node:test"
 
 test("test_real_catalog_suite_does_not_discover_fixture_journeys", () => {
+  const env = { ...process.env }
+  delete env.REAL_CATALOG_API_ORIGIN
+  delete env.REAL_CATALOG_UI_ORIGIN
   assert.ok(
     existsSync("playwright.real-catalog.config.ts"),
     "separate real configuration is missing",
@@ -20,7 +23,7 @@ test("test_real_catalog_suite_does_not_discover_fixture_journeys", () => {
       projects:c.projects.map(p=>({name:p.name,dependencies:p.dependencies,storageState:p.use?.storageState}))}));
   `,
     ],
-    { encoding: "utf8" },
+    { env, encoding: "utf8" },
   )
   assert.equal(result.status, 0, result.stderr)
   const c = JSON.parse(result.stdout.trim())

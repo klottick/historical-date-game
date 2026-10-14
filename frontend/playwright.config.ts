@@ -1,5 +1,6 @@
 import { defineConfig, devices } from '@playwright/test';
 import 'dotenv/config'
+import { boardEvidence } from './tests/utils/boardEvidence.ts'
 
 const isCI = process.env.CI === 'true' || process.env.CI === '1'
 
@@ -17,7 +18,7 @@ export default defineConfig({
   // These controlled harnesses must run with their own no-account configuration
   // and fixed origins, not this authenticated real-backend fixture environment.
   testIgnore: ['**/game-session-bootstrap.spec.ts', '**/game-identity-recovery.spec.ts', '**/board-navigation.spec.ts', '**/board-ux.spec.ts', '**/game-board-ux.spec.ts'],
-  outputDir: '../.superpowers/sdd/2026-10-13-historical-date-game-guest-play/task-5-evidence/fixture-browser-results',
+  outputDir: `${boardEvidence}/fixture-browser-results`,
   /* Run tests in files in parallel */
   fullyParallel: true,
   /* Fail the build on CI if you accidentally left test.only in the source code. */

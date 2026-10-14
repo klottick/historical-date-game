@@ -1,4 +1,5 @@
 import { defineConfig, devices } from "@playwright/test"
+import { boardEvidence } from "./tests/utils/boardEvidence.ts"
 
 export const realCatalogAPI = `${(process.env.REAL_CATALOG_API_ORIGIN || "http://localhost:8010").replace(/\/$/, "")}/api/v1`
 export const realCatalogUIOrigin =
@@ -13,8 +14,7 @@ export default defineConfig({
   workers: 1,
   retries: 0,
   forbidOnly: true,
-  outputDir:
-    "../.superpowers/sdd/2026-10-13-historical-date-game-guest-play/task-5-evidence/real-browser-results",
+  outputDir: `${boardEvidence}/real-browser-results`,
   use: { baseURL: realCatalogUIOrigin, trace: "retain-on-failure" },
   projects: [
     { name: "setup", testMatch: /.*\.setup\.ts/ },

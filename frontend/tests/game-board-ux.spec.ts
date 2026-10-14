@@ -618,7 +618,30 @@ test("outside_pointer_drop_preserves_the_previous_preview", async ({
   ).toBeEnabled()
   expect(state.moves).toHaveLength(0)
 })
+test("mobile_keyboard_docked_hand_reveals_whole_preview", async ({ page }) => {
+  await page.setViewportSize({ width: 393, height: 727 })
+  const run = controlledRun(3)
+  run.mode = "daily"
+  run.daily_date = "2026-10-14"
+  const state = await controlledBoard(page, run)
+  await page.mouse.wheel(0, 300)
+  await expect.poll(() => page.evaluate(() => scrollY)).toBeGreaterThan(0)
+  await page.locator(".pending-draggable").focus()
+  await keyboardPreview(page, 0)
+  await expect(page.locator(".pending-draggable")).toBeInViewport({ ratio: 1 })
+  expect(
+    await page
+      .locator(".timeline-viewport")
+      .evaluate((element) => element.scrollLeft),
+  ).toBe(0)
+  expect(state.moves).toHaveLength(0)
+})
 test("owner_change_interrupts_active_native_pan", async ({ page }) => {
+  const lifecycleWarnings: string[] = []
+  page.on("console", (message) => {
+    if (message.text().includes("useInsertionEffect must not schedule updates"))
+      lifecycleWarnings.push(message.text())
+  })
   const state = await controlledBoard(page, controlledRun(20))
   const tile = (await page.locator(".pending-draggable").boundingBox())!
   const board = (await page.locator(".timeline-viewport").boundingBox())!
@@ -637,6 +660,8 @@ test("owner_change_interrupts_active_native_pan", async ({ page }) => {
   await expect(page.locator(".timeline-viewport")).toHaveCount(0)
   await page.mouse.up()
   expect(state.moves).toHaveLength(0)
+  // Triage evidence, not warning suppression or a claim of a lifecycle fix.
+  console.log("owner teardown lifecycle diagnostics:", lifecycleWarnings)
 })
 for (const count of [100, 500])
   test(`synthetic long sequence ${count}`, async ({ page }) => {

@@ -1,16 +1,21 @@
 import { randomUUID } from "node:crypto"
+import { existsSync } from "node:fs"
 import { appendFile, writeFile } from "node:fs/promises"
+import { resolve } from "node:path"
 import { test as base, devices, expect, type Page } from "@playwright/test"
 import {
   realCatalogAPI as api,
   realCatalogUIOrigin,
 } from "../playwright.real-catalog.config"
 import type { RunPublic } from "../src/client/types.gen"
+import {
+  boardEvidence,
+  verificationRuntime,
+} from "../tests/utils/boardEvidence"
 import { keyboardPreview } from "../tests/utils/boardInteraction"
 import { loadCatalog, slugs } from "./catalog"
 
-const evidence =
-  "../.superpowers/sdd/2026-10-13-historical-date-game-guest-play/task-5-evidence"
+const evidence = boardEvidence
 type Player = { token: string; headers: Record<string, string> }
 const test = base.extend<{
   players: Player[]
@@ -133,7 +138,36 @@ export async function lock(
     pending.locator('a[href*="wikipedia.org/"],a[href*="wikidata.org/"]'),
   ).toHaveCount(0)
   await keyboardPreview(page, index)
-  if (mobile) await expect(pending).toBeInViewport({ ratio: 1 })
+  if (mobile) {
+    try {
+      await expect(pending).toBeInViewport({ ratio: 1 })
+    } catch (error) {
+      console.log(
+        "mobile pending geometry",
+        await pending.evaluate((element) => ({
+          tile: element.getBoundingClientRect().toJSON(),
+          stage: element
+            .closest(".timeline-stage")
+            ?.getBoundingClientRect()
+            .toJSON(),
+          viewport: document
+            .querySelector(".timeline-viewport")
+            ?.getBoundingClientRect()
+            .toJSON(),
+          window: [innerWidth, innerHeight, scrollX, scrollY],
+          visual: [
+            visualViewport?.width,
+            visualViewport?.height,
+            visualViewport?.scale,
+          ],
+          offset: document
+            .querySelector(".timeline-viewport")
+            ?.getAttribute("data-offset"),
+        })),
+      )
+      throw error
+    }
+  }
   const response = page.waitForResponse(
     (r) => r.request().method() === "POST" && r.url().endsWith("/placements"),
   )
@@ -278,6 +312,25 @@ test("actual release options, readable safe credits, asset HTTP and private arti
   }
   expect(assetChecks).toHaveLength(8)
   const frontendDenied = []
+  for (const file of [
+    resolve("../.env"),
+    resolve("playwright/.auth/real-catalog-players.json"),
+    resolve("tests-real-catalog/catalog.ts"),
+    resolve(verificationRuntime, "seed.json"),
+    ...(process.env.GAME_EVENT_LINKS_FILE
+      ? [process.env.GAME_EVENT_LINKS_FILE]
+      : []),
+    resolve(process.env.REAL_CATALOG_RELEASE_DIR!, "events.jsonl"),
+    resolve(process.env.REAL_CATALOG_RELEASE_DIR!, "manifest.json"),
+  ]) {
+    expect(existsSync(file), "denial must target a real private file").toBe(
+      true,
+    )
+    const path = `/@fs${file}`
+    const response = await page.request.get(`${realCatalogUIOrigin}${path}`)
+    expect([403, 404]).toContain(response.status())
+    frontendDenied.push({ path, status: response.status() })
+  }
   for (const path of [
     "/playwright/.auth/real-catalog-players.json",
     "/playwright/.auth/real-catalog.json",
@@ -326,8 +379,22 @@ test("actual release options, readable safe credits, asset HTTP and private arti
   await expect(
     pending.getByRole("img", { name: /Image unavailable/ }),
   ).toBeVisible()
+  await page
+    .getByRole("button", { name: "Credits/Sources", exact: true })
+    .click()
+  const artwork = page
+    .getByRole("dialog")
+    .locator("section")
+    .filter({ hasText: run.pending!.prompt })
+    .filter({ has: page.getByRole("heading", { name: /^Artwork for / }) })
+  await expect(artwork).toContainText(run.pending!.media.url)
+  await expect(artwork).toContainText(run.pending!.media.fallback_url)
   for (const credit of run.pending!.media.credits)
-    await expect(pending).toContainText(credit.label)
+    await expect(artwork).toContainText(credit.label)
+  await page.keyboard.press("Escape")
+  await expect(
+    page.getByRole("button", { name: "Credits/Sources", exact: true }),
+  ).toBeFocused()
   expect(await readRun(page, run, players[0])).toEqual(run)
   await writeFile(
     `${evidence}/privacy-${info.project.name}.json`,
@@ -403,6 +470,9 @@ test("genuine two-year range and pairwise gap win with keyboard drop preview", a
     catalog.manifest.release_id,
   )
   await page.keyboard.press("Escape")
+  await expect(
+    page.getByRole("button", { name: "Run details", exact: true }),
+  ).toBeFocused()
   const revealed = page
     .locator(".game-card-revealed")
     .filter({ hasText: run.feedback!.card.prompt })

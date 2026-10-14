@@ -1,7 +1,7 @@
 // Actual owned backend + immutable real release. Answers remain in Node only.
 import { execFileSync } from "node:child_process"
 import { createHash, randomUUID } from "node:crypto"
-import { appendFileSync, mkdirSync, writeFileSync } from "node:fs"
+import { appendFileSync, existsSync, mkdirSync, writeFileSync } from "node:fs"
 import { resolve } from "node:path"
 import { expect, type Page, test } from "@playwright/test"
 import type {
@@ -9,12 +9,16 @@ import type {
   PlaceCommand,
   RunPublic,
 } from "../src/client/types.gen"
+import {
+  boardEvidence,
+  verificationDatabase,
+  verificationRuntime,
+} from "../tests/utils/boardEvidence"
 import { keyboardPreview } from "../tests/utils/boardInteraction"
+import { ownedBackend as owned } from "../tests/utils/ownedVerification"
 import { loadCatalog } from "../tests-real-catalog/catalog"
 
-const evidence = resolve(
-  "../.superpowers/sdd/2026-10-13-historical-date-game-guest-play/task-5-evidence",
-)
+const evidence = boardEvidence
 const backend = resolve("../backend")
 const python = resolve(backend, ".venv/bin/python")
 const api = "http://localhost:8020/api/v1"
@@ -154,33 +158,6 @@ async function move(
   privateFree(next)
   return next
 }
-function owned(command: "launch" | "stop") {
-  const output = execFileSync(
-    python,
-    [
-      "-m",
-      "tests.browser.guest_test_environment",
-      command,
-      "--target",
-      "real",
-      "--component",
-      "backend",
-    ],
-    {
-      cwd: backend,
-      env: {
-        ...process.env,
-        POSTGRES_SERVER: "127.0.0.1",
-        POSTGRES_PORT: "5433",
-        POSTGRES_DB: "historical_date_game_guest_test",
-        ENVIRONMENT: "local",
-      },
-      timeout: 60_000,
-      encoding: "utf8",
-    },
-  )
-  appendFileSync(`${evidence}/browser-restarts.log`, output, { mode: 0o600 })
-}
 
 test("fresh no-login Home, secure cookie boundary, real media and private HTTP denial", async ({
   page,
@@ -258,13 +235,32 @@ test("fresh no-login Home, secure cookie boundary, real media and private HTTP d
         .digest("hex"),
     ).toBe(hash)
   }
+  const existingPrivateFiles = [
+    resolve("../.env"),
+    resolve("playwright/.auth/guest-denial-probe.json"),
+    resolve("tests-real-catalog/catalog.ts"),
+    resolve(verificationRuntime, "seed.json"),
+    ...(process.env.GAME_EVENT_LINKS_FILE
+      ? [process.env.GAME_EVENT_LINKS_FILE]
+      : []),
+    resolve(process.env.REAL_CATALOG_RELEASE_DIR!, "events.jsonl"),
+    resolve(process.env.REAL_CATALOG_RELEASE_DIR!, "manifest.json"),
+  ]
+  for (const file of existingPrivateFiles) {
+    expect(
+      existsSync(file),
+      "disclosure probes must target existing files",
+    ).toBe(true)
+    expect([403, 404]).toContain(
+      (await request.get(`http://localhost:5184/@fs${file}`)).status(),
+    )
+  }
   for (const path of [
     "/playwright/.auth/guest-denial-probe.json",
     "/tests-real-catalog/catalog.ts?raw",
     "/tests-guest-catalog/game-guest.spec.ts?raw",
     "/.env",
     "/.env?raw",
-    `/@fs${evidence}/real-runtime/seed.json`,
     `/@fs${process.env.REAL_CATALOG_RELEASE_DIR}/events.jsonl`,
     `/@fs${process.env.REAL_CATALOG_RELEASE_DIR}/manifest.json`,
   ]) {
@@ -541,7 +537,7 @@ with Session(engine) as session:
           cwd: backend,
           env: {
             ...process.env,
-            POSTGRES_DB: "historical_date_game_guest_test",
+            POSTGRES_DB: verificationDatabase,
             POSTGRES_SERVER: "127.0.0.1",
             POSTGRES_PORT: "5433",
           },

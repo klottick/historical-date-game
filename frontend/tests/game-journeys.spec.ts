@@ -10,10 +10,10 @@ import type { RunPublic } from "../src/client/types.gen"
 import { hundredCardRun } from "./fixtures/game-public"
 
 import { fixtureAPI as api } from "./utils/apiOrigin"
+import { boardEvidence } from "./utils/boardEvidence"
 import { dragTile, keyboardPreview } from "./utils/boardInteraction"
 
-const evidence =
-  "../.superpowers/sdd/2026-10-14-game-board-redesign/integration/fixture-artifacts"
+const evidence = boardEvidence
 type Player = {
   token: string
   headers: Record<string, string>
@@ -102,6 +102,8 @@ function syntheticSlot(run: RunPublic) {
     "Synthetic Milestone 1 Revision 0 lands": 1880,
     "Synthetic Milestone 2 Revision 0 is invented": 1820,
     "Synthetic Milestone 3 Revision 0 is established": 1830,
+    "Synthetic Milestone 4 Revision 0 is born": 1000,
+    "Synthetic Milestone 4 Revision 0 dies": 2000,
   }
   const year = years[run.pending!.prompt]
   expect(
@@ -878,6 +880,9 @@ test("hundred_card_timeline_every_slot_accessible", async ({
       run.pending!.media.fallback_url,
     )
     await page.keyboard.press("Escape")
+    await expect(
+      page.getByRole("button", { name: "Credits/Sources", exact: true }),
+    ).toBeFocused()
     expect(
       await page.evaluate(() => document.body.scrollWidth <= innerWidth),
     ).toBe(true)

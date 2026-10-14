@@ -9,11 +9,12 @@ import {
   realCatalogUIOrigin as origin,
 } from "../playwright.real-catalog.config.ts"
 import type { RunPublic } from "../src/client/types.gen"
+import { boardEvidence } from "../tests/utils/boardEvidence.ts"
 import { keyboardPreview } from "../tests/utils/boardInteraction.ts"
+import { ownedBackend } from "../tests/utils/ownedVerification.ts"
 import { loadCatalog, slugs } from "./catalog.ts"
 
-const evidence =
-  "../.superpowers/sdd/2026-10-13-historical-date-game-guest-play/task-5-evidence"
+const evidence = boardEvidence
 const [player] = JSON.parse(
   await readFile("playwright/.auth/real-catalog-players.json", "utf8"),
 )
@@ -23,7 +24,11 @@ try {
   assert.equal((await http.get(`${api}/utils/health-check/`)).status(), 200)
   const options = await (await http.get(`${api}/games/options`)).json()
   const catalog = loadCatalog(options.catalog_release_id)
-  if (process.argv[2] === "before") {
+  if (process.argv[2] === "restart") {
+    ownedBackend("stop")
+    ownedBackend("launch")
+    console.log("Restarted only the ownership-checked verification backend")
+  } else if (process.argv[2] === "before") {
     const runs: RunPublic[] = []
     for (const mode of ["daily", "freeplay"]) {
       const response = await http.post(`${api}/games/${mode}`, {
@@ -177,7 +182,7 @@ try {
     } finally {
       await browser.close()
     }
-  } else throw new Error("Expected before or after phase")
+  } else throw new Error("Expected before, restart or after phase")
 } finally {
   await http.dispose()
 }

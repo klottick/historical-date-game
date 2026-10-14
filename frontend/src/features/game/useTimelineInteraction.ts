@@ -237,6 +237,7 @@ export function useTimelineInteraction(args: {
   }, [])
   function end(canceled: boolean) {
     if (!active.current) return
+    const keyboardDrop = ordinal.current
     const slot = ordinal.current ? hover.current : target()
     active.current = false
     stopDrag.current = null
@@ -256,6 +257,21 @@ export function useTimelineInteraction(args: {
           viewportRef.current?.parentElement?.querySelector(
             ".pending-draggable",
           )
+        // On narrow layouts the hand is docked below the stage. A keyboard
+        // drop moves the same focused element upwards; native focus scrolling
+        // does not follow that relayout. Reveal it vertically after publication,
+        // without touching the transform-only horizontal navigator or scoring.
+        if (keyboardDrop && tile && matchMedia("(max-width: 767px)").matches) {
+          const rect = tile.getBoundingClientRect()
+          // Native scrollIntoView rounds fractional CSS bounds inward. Round
+          // outwards so even a fractional top edge is visible, and scroll only
+          // the document vertically (never a second horizontal stage offset).
+          const top =
+            rect.top < 0
+              ? Math.floor(rect.top)
+              : Math.max(0, Math.ceil(rect.bottom - innerHeight))
+          if (top) window.scrollBy({ top, left: 0, behavior: "instant" })
+        }
         settleAnimation.current =
           tile?.animate(
             [{ transform: "translateY(-4px)" }, { transform: "translateY(0)" }],

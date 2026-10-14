@@ -560,9 +560,15 @@ test("public won DTO displays exhaustion rather than mistake and Daily has no re
   await expect(
     page.getByRole("heading", { name: "Victory — catalog exhausted" }),
   ).toBeVisible()
-  await expect(
-    page.getByText(/No eligible unused event remains/),
-  ).toContainText(run.catalog_release_id)
+  await expect(page.getByText(/No eligible unused event remains/)).toBeVisible()
+  const details = page.getByRole("button", {
+    name: "Run details & leaderboard",
+    exact: true,
+  })
+  await details.click()
+  await expect(page.getByRole("dialog")).toContainText(run.catalog_release_id)
+  await page.keyboard.press("Escape")
+  await expect(details).toBeFocused()
   await expect(page.getByText("Final streak: 7", { exact: true })).toBeVisible()
   await expect(page.getByText(/cannot be replayed/)).toBeVisible()
   await expect(

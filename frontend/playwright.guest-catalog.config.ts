@@ -1,4 +1,5 @@
 import { defineConfig, devices } from "@playwright/test"
+import { boardEvidence } from "./tests/utils/boardEvidence.ts"
 
 export default defineConfig({
   testDir: "./tests-guest-catalog",
@@ -7,8 +8,7 @@ export default defineConfig({
   workers: 1,
   retries: 0,
   forbidOnly: true,
-  outputDir:
-    "../.superpowers/sdd/2026-10-13-historical-date-game-guest-play/task-5-evidence/guest-browser-results",
+  outputDir: `${boardEvidence}/guest-browser-results`,
   use: { baseURL: "http://localhost:5184", trace: "retain-on-failure" },
   projects: [
     { name: "chromium", use: { ...devices["Desktop Chrome"] } },

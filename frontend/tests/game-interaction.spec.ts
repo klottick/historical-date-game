@@ -2,6 +2,7 @@ import { chmod, mkdir, writeFile } from "node:fs/promises"
 import { test as base, expect, type Page } from "@playwright/test"
 import type { PlaceCommand, RunPublic } from "../src/client/types.gen"
 import { fixtureAPI as api, fixtureAPIOrigin } from "./utils/apiOrigin"
+import { boardEvidence } from "./utils/boardEvidence"
 import { dragTile, keyboardPreview } from "./utils/boardInteraction"
 
 const test = base.extend<{ run: RunPublic; headers: Record<string, string> }>({
@@ -68,8 +69,7 @@ const test = base.extend<{ run: RunPublic; headers: Record<string, string> }>({
     await use(run)
   },
 })
-const evidence =
-  "../.superpowers/sdd/2026-10-14-game-board-redesign/integration/fixture-artifacts"
+const evidence = boardEvidence
 async function open(page: Page, run: RunPublic) {
   await page.goto(`/play/${run.run_id}`)
   await expect(page.getByTestId("pending-card")).toBeVisible()
@@ -290,10 +290,16 @@ test("long_timeline_all_gaps_and_controls_remain_reachable", async ({
     await page
       .getByRole("button", { name: "Show beginning", exact: true })
       .click()
+    // Like dragTile, wait for the card's settle to be actionable before pickup.
+    await page
+      .locator(".pending-draggable")
+      .hover({ position: { x: 70, y: 70 } })
     const tile = (await page.locator(".pending-draggable").boundingBox())!
     const board = (await page.locator(".timeline-viewport").boundingBox())!
     await page.mouse.move(tile.x + 70, tile.y + 70)
     await page.mouse.down()
+    await page.mouse.move(tile.x + 82, tile.y + 70, { steps: 8 })
+    await expect(page.locator(".preview-status")).toContainText("Card lifted")
     await page.mouse.move(board.x + board.width - 4, board.y + 90, {
       steps: 16,
     })
@@ -518,6 +524,8 @@ test("reduced_motion_preserves_feedback", async ({ page, run }, info) => {
     "Synthetic Milestone 1 Revision 0 lands": 1880,
     "Synthetic Milestone 2 Revision 0 is invented": 1820,
     "Synthetic Milestone 3 Revision 0 is established": 1830,
+    "Synthetic Milestone 4 Revision 0 is born": 1000,
+    "Synthetic Milestone 4 Revision 0 dies": 2000,
   }
   const year = years[run.pending!.prompt]
   expect(
