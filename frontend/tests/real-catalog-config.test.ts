@@ -145,6 +145,7 @@ for (const configFile of [
   "vite.config.ts",
   "vite.real-catalog.config.ts",
   "vite.guest-catalog.config.ts",
+  "vite.board.config.ts",
 ]) {
   test(`${configFile} resolves strict private-file protection and retains installed Vite defaults`, () => {
     const result = spawnSync(
@@ -289,7 +290,7 @@ test("controlled Vite harnesses do not replace other running catalog dependency 
       `
     import {resolveConfig} from 'vite';
     const paths=[];
-    for (const configFile of ['vite.config.ts','vite.guest-catalog.config.ts','vite.bootstrap.config.ts','vite.identity.config.ts']) {
+    for (const configFile of ['vite.config.ts','vite.guest-catalog.config.ts','vite.bootstrap.config.ts','vite.identity.config.ts','vite.board.config.ts']) {
       paths.push((await resolveConfig({configFile},'serve')).cacheDir);
     }
     console.log(JSON.stringify(paths));
@@ -300,6 +301,49 @@ test("controlled Vite harnesses do not replace other running catalog dependency 
   assert.equal(result.status, 0, result.stderr)
   assert.equal(
     new Set(JSON.parse(result.stdout.trim().split("\n").pop()!)).size,
-    4,
+    5,
   )
+})
+
+test("board harness is loopback-only, no-account, isolated from fixture discovery", () => {
+  const result = spawnSync(
+    process.execPath,
+    [
+      "--input-type=module",
+      "-e",
+      `
+    import {resolveConfig} from 'vite';
+    const {default:c}=await import('./playwright.board.config.ts');
+    const {default:fixture}=await import('./playwright.config.ts');
+    const v=await resolveConfig({configFile:'vite.board.config.ts'},'serve');
+    console.log(JSON.stringify({dir:c.testDir,match:c.testMatch,workers:c.workers,retries:c.retries,
+      projects:c.projects,base:c.use.baseURL,server:c.webServer,ignore:fixture.testIgnore,
+      host:v.server.host,port:v.server.port,strict:v.server.strictPort,proxy:v.server.proxy,
+      api:v.define['import.meta.env.VITE_API_URL'],envDir:v.envDir}));
+  `,
+    ],
+    { encoding: "utf8" },
+  )
+  assert.equal(result.status, 0, result.stderr)
+  const c = JSON.parse(result.stdout.trim().split("\n").pop()!)
+  assert.equal(c.dir, "./tests")
+  assert.deepEqual(c.match, [
+    "**/board-navigation.spec.ts",
+    "**/board-ux.spec.ts",
+  ])
+  assert.equal(c.workers, 1)
+  assert.equal(c.retries, 0)
+  assert.equal(c.projects, undefined)
+  assert.equal(c.base, "http://127.0.0.1:5186")
+  assert.equal(c.server.url, c.base)
+  assert.equal(c.server.reuseExistingServer, false)
+  assert.ok(c.server.command.includes("vite.board.config.ts"))
+  assert.ok(c.ignore.includes("**/board-navigation.spec.ts"))
+  assert.ok(c.ignore.includes("**/board-ux.spec.ts"))
+  assert.equal(c.host, "127.0.0.1")
+  assert.equal(c.port, 5186)
+  assert.equal(c.strict, true)
+  assert.equal(c.proxy, undefined)
+  assert.equal(c.api, JSON.stringify(""))
+  assert.ok(c.envDir.endsWith("/frontend/tests"))
 })

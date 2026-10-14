@@ -32,10 +32,12 @@
     "playwright.real-catalog.config.ts",
     "playwright.guest-catalog.config.ts",
     "playwright.identity.config.ts",
+    "playwright.board.config.ts",
     "vite.config.ts",
     "vite.real-catalog.config.ts",
     "vite.bootstrap.config.ts",
     "vite.guest-catalog.config.ts",
-    "vite.identity.config.ts"
+    "vite.identity.config.ts",
+    "vite.board.config.ts"
   ]
 }

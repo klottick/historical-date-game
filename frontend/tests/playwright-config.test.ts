@@ -40,6 +40,8 @@ for (const value of [undefined, "false", "true"]) {
       testIgnore: [
         "**/game-session-bootstrap.spec.ts",
         "**/game-identity-recovery.spec.ts",
+        "**/board-navigation.spec.ts",
+        "**/board-ux.spec.ts",
       ],
     })
   })
