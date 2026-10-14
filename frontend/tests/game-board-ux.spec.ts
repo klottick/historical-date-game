@@ -379,6 +379,11 @@ test("long_prompt_keeps_controls_and_full_text_accessible", async ({
   )
   await expect(page.getByRole("dialog")).not.toContainText("900 CE")
   await page.keyboard.press("Escape")
+  // The closing animation restores trigger focus asynchronously. Finish that
+  // lifecycle before moving focus to the full-card keyboard drag surface.
+  await expect(
+    page.getByRole("button", { name: "Read full prompt" }),
+  ).toBeFocused()
   await page.locator(".pending-draggable").focus()
   await expect(page.locator(".pending-draggable h3")).toHaveText(
     run.pending!.prompt.trim(),

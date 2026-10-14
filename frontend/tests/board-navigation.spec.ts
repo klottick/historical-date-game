@@ -285,6 +285,11 @@ test("stationary_preview_remains_coherent_through_pan_and_reposition", async ({
   })
   await page.mouse.move(419, 180)
   await expect.poll(() => offset(page)).toBeGreaterThan(150)
+  // Opening a preview adds one stride; offset >150 can still correctly map
+  // to slot 3. Wait for the same geometric target we assert below.
+  await expect
+    .poll(() => page.evaluate(() => window.boardHarness.layout.previewSlot))
+    .toBeGreaterThan(3)
   const during = await page.evaluate(() => ({
     offset: window.boardHarness.layout.offset,
     slot: window.boardHarness.layout.previewSlot,

@@ -4,6 +4,7 @@ import hashlib
 import importlib.util
 import json
 import os
+import shutil
 from pathlib import Path
 from types import ModuleType, SimpleNamespace
 from typing import Any
@@ -27,13 +28,34 @@ def legacy_rollout() -> ModuleType:
     return guest_local_rollout
 
 
-def runner(monkeypatch: pytest.MonkeyPatch) -> tuple[ModuleType, ModuleType]:
+def runner(
+    monkeypatch: pytest.MonkeyPatch, tmp_path: Path
+) -> tuple[ModuleType, ModuleType]:
     board = rollout()
     # Simulate namespace creation in this checkout; retain the real runtime pin.
     assert board.__file__ is not None
-    monkeypatch.setattr(board, "WORKTREE", Path(board.__file__).resolve().parents[3])
+    checkout = Path(board.__file__).resolve().parents[3]
+    monkeypatch.setattr(board, "WORKTREE", checkout)
     guarded = board.guarded_rollout()
     monkeypatch.setattr(board, "guarded_rollout", lambda: guarded)
+    # After real namespace creation, model coherent linked-worktree CLI pins.
+    # Never depend on a retained beta sibling, hosted .git directory or live data.
+    for field, name in [("LIVE", "live"), ("WORKTREE", "implementation")]:
+        path = tmp_path / name
+        path.mkdir()
+        (path / ".git").write_text("gitdir: pure-test-fixture\n")
+        monkeypatch.setattr(board, field, path)
+        monkeypatch.setattr(guarded, field, path)
+    (board.LIVE / "data/game/releases" / guarded.RELEASE_ID).mkdir(parents=True)
+    (board.LIVE / "data/game/local-catalog-runtime").mkdir()
+    # Keep the real offline migration-head guard and reviewed migration scripts.
+    shutil.copytree(
+        checkout / "backend/app/alembic",
+        board.WORKTREE / "backend/app/alembic",
+        ignore=shutil.ignore_patterns("__pycache__"),
+    )
+    for module in (board, guarded):
+        monkeypatch.setattr(module, "EVIDENCE", tmp_path / "evidence")
     for name, value in {
         "POSTGRES_DB": "historical_date_game_catalog_test",
         "POSTGRES_SERVER": "127.0.0.1",
@@ -60,12 +82,74 @@ def arguments(*extra: str) -> list[str]:
 
 def test_pure_runner_creates_namespace_in_current_checkout(
     monkeypatch: pytest.MonkeyPatch,
+    tmp_path: Path,
 ) -> None:
-    board, guarded = runner(monkeypatch)
-    assert board.__file__ is not None
-    assert board.WORKTREE == Path(board.__file__).resolve().parents[3]
+    board, guarded = runner(monkeypatch, tmp_path)
+    assert guarded.__file__ == legacy_rollout().__file__
     assert guarded is not legacy_rollout()
-    assert guarded.WORKTREE == board.WORKTREE
+    assert guarded.WORKTREE == board.WORKTREE == tmp_path / "implementation"
+
+
+def test_simulated_cli_paths_do_not_depend_on_retained_sibling(
+    monkeypatch: pytest.MonkeyPatch,
+    tmp_path: Path,
+) -> None:
+    monkeypatch.setattr(rollout(), "LIVE", tmp_path / "absent-hosted-beta")
+    board, guarded = runner(monkeypatch, tmp_path)
+    guarded.require_paths(board.LIVE, board.WORKTREE)
+    assert board.LIVE.is_relative_to(tmp_path)
+    assert board.WORKTREE.is_relative_to(tmp_path)
+    assert not (tmp_path / "absent-hosted-beta").exists()
+
+
+@pytest.mark.parametrize(
+    "field,flag",
+    [("LIVE", "--live-worktree"), ("WORKTREE", "--implementation-worktree")],
+)
+@pytest.mark.parametrize("change", ["wrong", "missing", "symlink", "git-directory"])
+def test_simulated_pins_still_reject_invalid_paths_before_io(
+    monkeypatch: pytest.MonkeyPatch,
+    tmp_path: Path,
+    field: str,
+    flag: str,
+    change: str,
+) -> None:
+    board, guarded = runner(monkeypatch, tmp_path)
+    path = getattr(board, field)
+    if change == "git-directory":
+        (path / ".git").unlink()
+        (path / ".git").mkdir()
+    else:
+        invalid = tmp_path / "invalid"
+        if change == "symlink":
+            invalid.symlink_to(path, target_is_directory=True)
+        path = invalid
+        if change != "wrong":
+            # Even an alias/missing path matching both pins must be refused.
+            monkeypatch.setattr(board, field, path)
+            monkeypatch.setattr(guarded, field, path)
+    live = path if field == "LIVE" else board.LIVE
+    implementation = path if field == "WORKTREE" else board.WORKTREE
+    if change == "missing":
+        with pytest.raises(FileNotFoundError):
+            guarded.require_paths(live, implementation)
+    else:
+        with pytest.raises(
+            RuntimeError, match="Exact real and implementation worktrees"
+        ):
+            guarded.require_paths(live, implementation)
+    monkeypatch.setattr(
+        guarded, "verify_real_source", lambda _: pytest.fail("past path guard")
+    )
+    monkeypatch.setattr(
+        guarded, "inspect_database", lambda: pytest.fail("past path guard")
+    )
+    before = dict(os.environ)
+    assert board.main(arguments(flag, str(path), "--action", "start", "--apply")) == 1
+    assert dict(os.environ) == before
+    assert not guarded.EVIDENCE.exists()
+    if change == "missing":
+        assert not path.exists()
 
 
 def test_real_worktree_guard_rejects_before_namespace_or_io(
@@ -117,10 +201,11 @@ def test_real_worktree_guard_rejects_before_namespace_or_io(
 )
 def test_wrong_live_database_or_endpoint_refused_before_connect(
     monkeypatch: pytest.MonkeyPatch,
+    tmp_path: Path,
     field: str,
     value: Any,
 ) -> None:
-    board, guarded = runner(monkeypatch)
+    board, guarded = runner(monkeypatch, tmp_path)
     monkeypatch.setattr(guarded.settings, field, value)
     monkeypatch.setattr(guarded, "require_paths", lambda *_: pytest.fail("past target"))
     assert board.main(arguments("--action", "start", "--apply")) == 1
@@ -132,7 +217,7 @@ def test_unknown_process_or_worktree_never_signalled(
     tmp_path: Path,
     change: str,
 ) -> None:
-    board, guarded = runner(monkeypatch)
+    board, guarded = runner(monkeypatch, tmp_path)
     if change == "worktree":
         assert (
             board.main(
@@ -311,7 +396,7 @@ def test_existing_generation_outputs_not_overwritten(
     tmp_path: Path,
     name: str,
 ) -> None:
-    board, guarded = runner(monkeypatch)
+    board, guarded = runner(monkeypatch, tmp_path)
     monkeypatch.setattr(guarded, "EVIDENCE", tmp_path)
     prior = tmp_path / name
     prior.symlink_to(tmp_path / "absent")
@@ -331,7 +416,7 @@ def test_inspect_has_no_mutations(
     tmp_path: Path,
     extra: list[str],
 ) -> None:
-    board, guarded = runner(monkeypatch)
+    board, guarded = runner(monkeypatch, tmp_path)
     evidence = tmp_path / "absent"
     monkeypatch.setattr(guarded, "EVIDENCE", evidence)
     monkeypatch.setattr(guarded, "current_ip", lambda: "192.168.1.214")
@@ -360,8 +445,9 @@ def test_inspect_has_no_mutations(
 
 def test_start_delegates_migration_free_with_sidecar_env_restored(
     monkeypatch: pytest.MonkeyPatch,
+    tmp_path: Path,
 ) -> None:
-    board, guarded = runner(monkeypatch)
+    board, guarded = runner(monkeypatch, tmp_path)
     monkeypatch.setenv("GAME_EVENT_LINKS_FILE", "/ambient/private.json")
     monkeypatch.setenv("GAME_EVENT_LINKS_SHA256", "0" * 64)
     monkeypatch.setattr(
@@ -382,8 +468,10 @@ def test_start_delegates_migration_free_with_sidecar_env_restored(
     assert dict(os.environ) == before
 
 
-def test_wrong_schema_blocks_board_start(monkeypatch: pytest.MonkeyPatch) -> None:
-    board, guarded = runner(monkeypatch)
+def test_wrong_schema_blocks_board_start(
+    monkeypatch: pytest.MonkeyPatch, tmp_path: Path
+) -> None:
+    board, guarded = runner(monkeypatch, tmp_path)
     monkeypatch.setattr(
         guarded, "inspect", lambda *_: {"database": {"revision": "20261011_01"}}
     )
@@ -420,8 +508,9 @@ def test_board_factory_clears_ambient_links_and_keeps_smtp_off(
 
 def test_board_runner_keeps_old_generation_separate(
     monkeypatch: pytest.MonkeyPatch,
+    tmp_path: Path,
 ) -> None:
-    board, guarded = runner(monkeypatch)
+    board, guarded = runner(monkeypatch, tmp_path)
     guest = legacy_rollout()
 
     assert guarded.EVIDENCE != guest.EVIDENCE
@@ -527,7 +616,7 @@ def test_stop_proves_both_records_before_either_signal(
     monkeypatch: pytest.MonkeyPatch,
     tmp_path: Path,
 ) -> None:
-    board, guarded = runner(monkeypatch)
+    board, guarded = runner(monkeypatch, tmp_path)
     monkeypatch.setattr(guarded, "EVIDENCE", tmp_path)
     monkeypatch.setattr(
         guarded, "inspect", lambda *_: {"database": {"revision": "20261013_01"}}
@@ -552,7 +641,7 @@ def test_sidecar_refused_by_main_before_database_or_env_change(
     monkeypatch: pytest.MonkeyPatch,
     tmp_path: Path,
 ) -> None:
-    board, guarded = runner(monkeypatch)
+    board, guarded = runner(monkeypatch, tmp_path)
     path, _digest, _release = sidecar(tmp_path, board, monkeypatch)
     monkeypatch.setattr(
         guarded, "verify_real_source", lambda _: SimpleNamespace(files={})
@@ -579,7 +668,7 @@ def test_supplied_sidecar_environment_restored_on_failed_start(
     monkeypatch: pytest.MonkeyPatch,
     tmp_path: Path,
 ) -> None:
-    board, guarded = runner(monkeypatch)
+    board, guarded = runner(monkeypatch, tmp_path)
     path, digest, _release = sidecar(tmp_path, board, monkeypatch)
     monkeypatch.setattr(
         guarded, "verify_real_source", lambda _: SimpleNamespace(files={})
@@ -619,7 +708,7 @@ def test_supplied_sidecar_inspection_preserves_files_and_environment(
     monkeypatch: pytest.MonkeyPatch,
     tmp_path: Path,
 ) -> None:
-    board, guarded = runner(monkeypatch)
+    board, guarded = runner(monkeypatch, tmp_path)
     path, digest, _release = sidecar(tmp_path, board, monkeypatch)
     monkeypatch.setattr(guarded, "EVIDENCE", tmp_path / "absent")
     monkeypatch.setattr(guarded, "current_ip", lambda: "192.168.1.214")
