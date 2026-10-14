@@ -44,19 +44,6 @@ function ImageWindow({ media }: { media: MediaPublic }): React.JSX.Element {
           />
         )}
       </div>
-      <figcaption className="event-image-credits">
-        {media.credits.map((credit) => (
-          <span key={`${credit.label}:${credit.url}`}>
-            {credit.url ? (
-              <a href={credit.url} target="_blank" rel="noopener noreferrer">
-                {credit.label}
-              </a>
-            ) : (
-              credit.label
-            )}
-          </span>
-        ))}
-      </figcaption>
     </figure>
   )
 }

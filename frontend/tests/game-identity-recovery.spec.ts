@@ -6,6 +6,7 @@ import type {
   PlaceCommand,
   RunPublic,
 } from "../src/client/types.gen"
+import { keyboardPreview } from "./utils/boardInteraction"
 
 const runId = "11111111-1111-4111-8111-111111111111"
 const media = {
@@ -223,10 +224,10 @@ async function harness(page: Page, token = "") {
 }
 async function openBoard(page: Page) {
   await page.goto(`/play/${runId}`)
-  await expect(page.getByRole("heading", { name: "Next card" })).toBeVisible()
+  await expect(page.locator(".pending-draggable")).toBeVisible()
 }
 async function move(page: Page) {
-  await page.getByRole("button", { name: "Slot 1", exact: true }).click()
+  await keyboardPreview(page, 0)
   await page.getByRole("button", { name: "Lock it in", exact: true }).click()
 }
 async function saved(page: Page, key: string) {
@@ -394,9 +395,16 @@ test("guest_home_has_no_login_gate", async ({ page }) => {
   expect(state.bootstraps).toBeGreaterThan(0)
   await page.goto("/freeplay")
   await page.getByRole("button", { name: "Start Freeplay" }).click()
-  await expect(page.getByRole("heading", { name: "Next card" })).toBeVisible()
+  await expect(page.locator(".pending-draggable")).toBeVisible()
   await expect(page.getByTestId("pending-card")).not.toContainText("100 CE")
-  await expect(page.getByText("Fixture credit").first()).toBeVisible()
+  await page
+    .getByRole("button", { name: "Credits/Sources", exact: true })
+    .click()
+  await expect(
+    page.getByRole("dialog").getByText("Fixture credit").first(),
+  ).toBeVisible()
+  await expect(page.getByRole("dialog")).toContainText(media.url)
+  await page.keyboard.press("Escape")
 })
 test("guest_does_not_request_user_me", async ({ page }) => {
   const state = await harness(page)
@@ -502,7 +510,7 @@ test("existing_account_recovery_key_survives_transition", async ({ page }) => {
   ).toEqual(command)
   expect(await saved(page, "game-start:owner-one:freeplay")).toBeNull()
   await page.getByRole("button", { name: "Retry start" }).click()
-  await expect(page.getByRole("heading", { name: "Next card" })).toBeVisible()
+  await expect(page.locator(".pending-draggable")).toBeVisible()
   expect(state.starts).toEqual([command])
   expect(await saved(page, "game-start:owner-one:freeplay")).toBeNull()
 })
@@ -731,7 +739,7 @@ test("late public game failure on an account page cannot force login", async ({
   await page.goto("/freeplay")
   await page.getByRole("button", { name: "Start Freeplay" }).click()
   await expect.poll(() => state.starts.length).toBe(1)
-  await page.getByRole("link", { name: "Settings", exact: true }).click()
+  await page.getByRole("link", { name: "Account", exact: true }).click()
   await expect(
     page.getByRole("heading", { name: "User Settings", exact: true }),
   ).toBeVisible()

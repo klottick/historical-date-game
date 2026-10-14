@@ -176,6 +176,9 @@ base(
       await expect(
         page.getByText(`Daily · ${run.daily_date} UTC`, { exact: true }),
       ).toBeVisible()
+      await page
+        .getByRole("button", { name: "Run details & leaderboard", exact: true })
+        .click()
       await expect(
         page.getByRole("heading", {
           name: `Leaderboard · ${run.daily_date} UTC`,

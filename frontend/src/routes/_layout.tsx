@@ -43,7 +43,10 @@ function LayoutContent() {
   if (protectedRoute && !user) return <p role="status">Checking account…</p>
   if (location.pathname === "/admin" && !user?.is_superuser)
     return <Navigate to="/" />
-  if (/^\/play\/[\da-f-]+$/.test(location.pathname))
+  if (
+    /^\/play\/[\da-f-]+$/.test(location.pathname) ||
+    /^\/(freeplay|daily)$/.test(location.pathname)
+  )
     return (
       <div className="play-layout">
         <nav className="play-nav" aria-label="Game navigation">

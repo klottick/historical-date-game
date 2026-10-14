@@ -1,8 +1,8 @@
-import { mkdir, writeFile } from "node:fs/promises"
+import { chmod, mkdir, writeFile } from "node:fs/promises"
 import { test as base, expect, type Page } from "@playwright/test"
 import type { PlaceCommand, RunPublic } from "../src/client/types.gen"
-
 import { fixtureAPI as api, fixtureAPIOrigin } from "./utils/apiOrigin"
+import { dragTile, keyboardPreview } from "./utils/boardInteraction"
 
 const test = base.extend<{ run: RunPublic; headers: Record<string, string> }>({
   headers: async ({ page }, use) => {
@@ -56,106 +56,36 @@ const test = base.extend<{ run: RunPublic; headers: Record<string, string> }>({
     })
     expect(response.ok()).toBeTruthy()
     const run: RunPublic = await response.json()
-    // Normal imagery must come from real verified/mounted backend assets.
-    // Only the explicit failure tests below intercept image requests.
-    for (const card of [...run.timeline, run.pending!]) {
-      for (const url of new Set([card.media.url, card.media.fallback_url])) {
+    // Normal imagery is still verified against actual mounted backend assets.
+    for (const card of [...run.timeline, run.pending!])
+      for (const url of new Set([card.media.url, card.media.fallback_url]))
         expect(
           (
             await page.request.get(new URL(url, fixtureAPIOrigin).href)
           ).status(),
           `Actual backend media: ${url}`,
         ).toBe(200)
-      }
-    }
     await use(run)
   },
 })
-
+const evidence =
+  "../.superpowers/sdd/2026-10-14-game-board-redesign/integration/fixture-artifacts"
 async function open(page: Page, run: RunPublic) {
   await page.goto(`/play/${run.run_id}`)
-  await expect(page.getByRole("heading", { name: "Next card" })).toBeVisible()
+  await expect(page.getByTestId("pending-card")).toBeVisible()
 }
 function posts(page: Page) {
   const commands: PlaceCommand[] = []
-  page.on("request", (r) => {
-    if (r.method() === "POST" && r.url().endsWith("/placements"))
-      commands.push(r.postDataJSON())
+  page.on("request", (request) => {
+    if (request.method() === "POST" && request.url().endsWith("/placements"))
+      commands.push(request.postDataJSON())
   })
   return commands
 }
-async function drag(page: Page, target: string, touch: boolean) {
-  const handle = page.getByRole("button", { name: "Drag next card" })
-  await handle.scrollIntoViewIfNeeded()
-  const start = (await handle.boundingBox())!
-  const end = (await page.locator(target).boundingBox())!
-  const a = { x: start.x + start.width / 2, y: start.y + start.height / 2 }
-  const b = { x: end.x + end.width / 2, y: end.y + end.height / 2 }
-  if (touch) {
-    const cdp = await page.context().newCDPSession(page)
-    await cdp.send("Input.dispatchTouchEvent", {
-      type: "touchStart",
-      touchPoints: [a],
-    })
-    await page.waitForTimeout(300)
-    const height = await page.evaluate(() => innerHeight)
-    const edge = Math.min(height - 24, Math.max(24, b.y))
-    for (let i = 1; i <= 12; i++)
-      await cdp.send("Input.dispatchTouchEvent", {
-        type: "touchMove",
-        touchPoints: [
-          { x: a.x + ((b.x - a.x) * i) / 12, y: a.y + ((edge - a.y) * i) / 12 },
-        ],
-      })
-    if (b.y > height || b.y < 0) {
-      await expect
-        .poll(async () => {
-          const box = (await page.locator(target).boundingBox())!
-          return box.y >= 0 && box.y + box.height <= height
-        })
-        .toBeTruthy()
-    }
-    const visible = (await page.locator(target).boundingBox())!
-    await cdp.send("Input.dispatchTouchEvent", {
-      type: "touchMove",
-      touchPoints: [
-        { x: visible.x + visible.width / 2, y: visible.y + visible.height / 2 },
-      ],
-    })
-    await expect(page.locator(".insertion-slot-over")).toHaveCount(
-      target.includes("data-slot") ? 1 : 0,
-    )
-    await cdp.send("Input.dispatchTouchEvent", {
-      type: "touchEnd",
-      touchPoints: [],
-    })
-    await cdp.detach()
-  } else {
-    await page.mouse.move(a.x, a.y)
-    await page.mouse.down()
-    await page.mouse.move(a.x + 12, a.y, { steps: 3 })
-    await page.mouse.move(b.x, b.y, { steps: 12 })
-    await page.mouse.up()
-  }
-}
-
-async function keyboardDrop(page: Page, slot: number) {
-  const handle = page.getByRole("button", { name: "Drag next card" })
-  await handle.focus()
-  await page.keyboard.press("Space")
-  await expect(page.locator(".pending-draggable")).toHaveAttribute(
-    "data-dragging",
-    "true",
-  )
-  for (let i = 0; i <= slot; i++) await page.keyboard.press("ArrowRight")
-  await expect(page.locator(`[data-slot="${slot}"]`)).toHaveClass(
-    /insertion-slot-over/,
-  )
-  await page.keyboard.press("Space")
-  await expect(
-    page.getByRole("button", { name: `Slot ${slot + 1}`, exact: true }),
-  ).toHaveAttribute("aria-pressed", "true")
-  await expect(handle).toBeFocused()
+async function capture(page: Page, name: string) {
+  await mkdir(evidence, { recursive: true, mode: 0o700 })
+  await page.screenshot({ path: `${evidence}/${name}.png`, fullPage: true })
+  await chmod(`${evidence}/${name}.png`, 0o600)
 }
 
 test("drop_previews_reposition_and_lock", async ({
@@ -165,78 +95,12 @@ test("drop_previews_reposition_and_lock", async ({
 }, info) => {
   await open(page, run)
   const commands = posts(page)
-  await expect(page.getByRole("button", { name: /^Slot \d+$/ })).toHaveCount(
-    run.timeline.length + 1,
-  )
-  await expect(
-    page.getByRole("button", { name: "Drag next card" }),
-  ).toHaveCount(1)
-  await drag(page, '[data-slot="0"]', isMobile)
-  await expect(
-    page.getByRole("button", { name: "Slot 1", exact: true }),
-  ).toHaveAttribute("aria-pressed", "true")
-  await page.getByRole("button", { name: "Last slot", exact: true }).click()
-  await expect(
-    page.getByRole("button", {
-      name: `Slot ${run.timeline.length + 1}`,
-      exact: true,
-    }),
-  ).toHaveAttribute("aria-pressed", "true")
+  await expect(page.locator(".timeline-item")).toHaveCount(run.timeline.length)
+  await expect(page.locator(".pending-draggable")).toHaveCount(1)
+  await dragTile(page, 0, isMobile)
+  await keyboardPreview(page, run.timeline.length)
   expect(commands).toHaveLength(0)
-  const dir =
-    "../.superpowers/sdd/2026-10-13-historical-date-game-guest-play/task-5-evidence/fixture-artifacts"
-  await mkdir(dir, { recursive: true })
-  await page.screenshot({
-    path: `${dir}/U3-${info.project.name}.png`,
-    fullPage: true,
-  })
-  await info.attach("layout", {
-    body: JSON.stringify(
-      await page.evaluate(() => ({
-        viewport: [innerWidth, innerHeight],
-        body: document.body.scrollWidth,
-        timeline: document
-          .querySelector(".game-timeline")
-          ?.getBoundingClientRect()
-          .toJSON(),
-        pending: document
-          .querySelector('[data-testid="pending-card"]')
-          ?.getBoundingClientRect()
-          .toJSON(),
-      })),
-    ),
-    contentType: "application/json",
-  })
-  await writeFile(
-    `${dir}/U3-layout-${info.project.name}.json`,
-    JSON.stringify(
-      await page.evaluate(() => ({
-        viewport: [innerWidth, innerHeight],
-        body: document.body.scrollWidth,
-        timeline: document
-          .querySelector(".game-timeline")
-          ?.getBoundingClientRect()
-          .toJSON(),
-        pending: document
-          .querySelector('[data-testid="pending-card"]')
-          ?.getBoundingClientRect()
-          .toJSON(),
-        slots: Array.from(document.querySelectorAll(".insertion-slot")).map(
-          (e) => e.getBoundingClientRect().toJSON(),
-        ),
-        controls: Array.from(
-          document.querySelectorAll(
-            ".placement-actions button, .slot-shortcuts button, .drag-handle",
-          ),
-        ).map((e) => ({
-          text: e.textContent,
-          ...e.getBoundingClientRect().toJSON(),
-        })),
-      })),
-      null,
-      2,
-    ),
-  )
+  await capture(page, `U3-${info.project.name}`)
   const response = page.waitForResponse((r) => r.url().endsWith("/placements"))
   await page.getByRole("button", { name: "Lock it in", exact: true }).click()
   expect((await response).ok()).toBeTruthy()
@@ -254,16 +118,43 @@ test("outside_drop_and_escape_do_not_submit", async ({
 }) => {
   await open(page, run)
   const commands = posts(page)
-  await page.getByRole("button", { name: "Slot 1", exact: true }).click()
-  await drag(page, ".game-heading", isMobile)
-  await expect(
-    page.getByText("No slot selected.", { exact: true }),
-  ).toBeVisible()
-  const handle = page.getByRole("button", { name: "Drag next card" })
-  await handle.focus()
+  await keyboardPreview(page, 0)
+  const tile = (await page.locator(".pending-draggable").boundingBox())!
+  if (isMobile) {
+    const cdp = await page.context().newCDPSession(page)
+    await cdp.send("Input.dispatchTouchEvent", {
+      type: "touchStart",
+      touchPoints: [{ x: tile.x + 70, y: tile.y + 70 }],
+    })
+    await page.waitForTimeout(250)
+    await cdp.send("Input.dispatchTouchEvent", {
+      type: "touchMove",
+      touchPoints: [{ x: 30, y: 20 }],
+    })
+    await cdp.send("Input.dispatchTouchEvent", {
+      type: "touchEnd",
+      touchPoints: [],
+    })
+    await cdp.detach()
+  } else {
+    await page.mouse.move(tile.x + 70, tile.y + 70)
+    await page.mouse.down()
+    await page.mouse.move(30, 20, { steps: 12 })
+    await page.mouse.up()
+  }
+  // Approved contract: an outside drop preserves the previous unlocked preview.
+  await expect(page.locator("[data-preview-slot]")).toHaveAttribute(
+    "data-preview-slot",
+    "0",
+  )
+  await page
+    .getByRole("button", { name: "Return to hand", exact: true })
+    .click()
+  const surface = page.locator(".pending-draggable")
+  await surface.focus()
   await page.keyboard.press("Space")
   await page.keyboard.press("Escape")
-  await expect(handle).toBeFocused()
+  await expect(surface).toBeFocused()
   await expect(
     page.getByRole("button", { name: "Lock it in", exact: true }),
   ).toBeDisabled()
@@ -281,58 +172,54 @@ test("touch_and_keyboard_can_place_every_slot", async ({
   await open(page, run)
   const commands = posts(page)
   for (let index = 0; index <= run.timeline.length; index++) {
-    const slot = page.getByRole("button", {
-      name: `Slot ${index + 1}`,
-      exact: true,
-    })
-    const box = (await slot.boundingBox())!
+    if (index > 0)
+      await page
+        .getByRole("button", { name: "Return to hand", exact: true })
+        .click()
+    if (isMobile) await dragTile(page, index, true)
+    await keyboardPreview(page, index)
+    const box = (await page.locator(".pending-draggable").boundingBox())!
     expect(box.height).toBeGreaterThanOrEqual(44)
     expect(box.width).toBeGreaterThanOrEqual(44)
-    if (isMobile) await slot.tap()
-    else await slot.click()
-    await expect(slot).toHaveAttribute("aria-pressed", "true")
-    await slot.focus()
-    await page.keyboard.press("Enter")
-    await expect(slot).toBeFocused()
-    await keyboardDrop(page, index)
+    await expect(page.locator(".pending-draggable")).toBeInViewport({
+      ratio: 1,
+    })
   }
-  await page.getByRole("button", { name: "First slot", exact: true }).click()
-  await page.getByRole("button", { name: "Next slot", exact: true }).click()
-  await expect(
-    page.getByRole("button", { name: "Slot 2", exact: true }),
-  ).toHaveAttribute("aria-pressed", "true")
-  await page.getByRole("button", { name: "Previous slot", exact: true }).click()
-  await expect(
-    page.getByRole("button", { name: "Slot 1", exact: true }),
-  ).toHaveAttribute("aria-pressed", "true")
+  await keyboardPreview(page, 1)
+  await keyboardPreview(page, 0)
   expect(commands).toHaveLength(0)
 })
 
 test("image_failure_does_not_change_state", async ({ page, run }, info) => {
-  // Controlled public media only: failure must not change scoring or geometry.
   const media = {
     ...run.pending!.media,
     url: "/failed-primary.svg",
     fallback_url: "/failed-fallback.svg",
   }
-  await page.route(`**/games/runs/${run.run_id}`, (r) =>
-    r.fulfill({ json: { ...run, pending: { ...run.pending, media } } }),
+  await page.route(`**/games/runs/${run.run_id}`, (route) =>
+    route.fulfill({ json: { ...run, pending: { ...run.pending, media } } }),
   )
   const requests: string[] = []
-  await page.route("**/failed-*.svg", async (r) => {
-    requests.push(r.request().url())
-    await r.abort()
+  await page.route("**/failed-*.svg", async (route) => {
+    requests.push(route.request().url())
+    await route.abort()
   })
   await open(page, run)
   const commands = posts(page)
-  await page.getByRole("button", { name: "Slot 1", exact: true }).click()
+  await keyboardPreview(page, 0)
   await expect(
     page
       .getByTestId("pending-card")
       .getByRole("img", { name: /Image unavailable/ }),
   ).toBeVisible()
+  await page
+    .getByRole("button", { name: "Credits/Sources", exact: true })
+    .click()
   for (const credit of media.credits)
-    await expect(page.getByTestId("pending-card")).toContainText(credit.label)
+    await expect(page.getByRole("dialog")).toContainText(credit.label)
+  await expect(page.getByRole("dialog")).toContainText(media.url)
+  await expect(page.getByRole("dialog")).toContainText(media.fallback_url)
+  await page.keyboard.press("Escape")
   expect(requests.filter((r) => r.endsWith("failed-primary.svg"))).toHaveLength(
     1,
   )
@@ -345,14 +232,12 @@ test("image_failure_does_not_change_state", async ({ page, run }, info) => {
   await expect(
     page.getByText(`Streak: ${run.streak}`, { exact: true }),
   ).toBeVisible()
-  await expect(
-    page.getByText("Preview: slot 1.", { exact: true }),
-  ).toBeVisible()
+  await expect(page.locator("[data-preview-slot]")).toHaveAttribute(
+    "data-preview-slot",
+    "0",
+  )
   expect(commands).toHaveLength(0)
-  await page.screenshot({
-    path: `../.superpowers/sdd/2026-10-13-historical-date-game-guest-play/task-5-evidence/fixture-artifacts/U3-placeholder-${info.project.name}.png`,
-    fullPage: true,
-  })
+  await capture(page, `U3-placeholder-${info.project.name}`)
 })
 
 test("public_media_loads_from_api_origin", async ({ page, run }) => {
@@ -366,7 +251,8 @@ test("public_media_loads_from_api_origin", async ({ page, run }) => {
     .getByTestId("pending-card")
     .locator(".event-image-window")
     .boundingBox())!
-  expect(window.width / window.height).toBeCloseTo(4 / 3, 2)
+  expect(window.width).toBeGreaterThanOrEqual(80)
+  expect(window.height).toBeGreaterThanOrEqual(80)
   expect(await image.evaluate((e) => getComputedStyle(e).objectFit)).toBe(
     run.pending!.media.fit,
   )
@@ -381,85 +267,69 @@ test("long_timeline_all_gaps_and_controls_remain_reachable", async ({
   run,
   isMobile,
 }, info) => {
-  // Layout-only public DTO: repeating a revealed card exposes no new answers.
-  const cards = Array.from({ length: 8 }, (_, i) => ({
+  const cards = Array.from({ length: 8 }, (_, index) => ({
     ...run.timeline[0],
-    event_id: `layout-${i}`,
+    event_id: `layout-${index}`,
   }))
-  await page.route(`**/games/runs/${run.run_id}`, (r) =>
-    r.fulfill({ json: { ...run, timeline: cards } }),
+  await page.route(`**/games/runs/${run.run_id}`, (route) =>
+    route.fulfill({ json: { ...run, timeline: cards } }),
   )
   await open(page, run)
   const commands = posts(page)
-  await expect(page.getByRole("button", { name: /^Slot \d+$/ })).toHaveCount(9)
-  for (let index = 0; index < 9; index++) {
-    const slot = page.getByRole("button", {
-      name: `Slot ${index + 1}`,
-      exact: true,
+  await expect(page.locator(".timeline-item")).toHaveCount(8)
+  for (let index = 0; index <= 8; index++) {
+    await keyboardPreview(page, index)
+    await expect(page.locator(".pending-draggable")).toBeInViewport({
+      ratio: 1,
     })
-    await slot.scrollIntoViewIfNeeded()
-    if (isMobile) await slot.tap()
-    else {
-      await slot.focus()
-      await page.keyboard.press("Enter")
-    }
-    await expect(slot).toHaveAttribute("aria-pressed", "true")
-    await keyboardDrop(page, index)
   }
   if (!isMobile) {
-    const timeline = page.locator(".game-timeline")
-    await timeline.evaluate((e) => {
-      e.scrollLeft = 0
-    })
-    const handle = page.getByRole("button", { name: "Drag next card" })
-    await handle.scrollIntoViewIfNeeded()
-    const start = (await handle.boundingBox())!
-    const table = (await timeline.boundingBox())!
-    await page.mouse.move(start.x + start.width / 2, start.y + start.height / 2)
+    await page
+      .getByRole("button", { name: "Return to hand", exact: true })
+      .click()
+    await page
+      .getByRole("button", { name: "Show beginning", exact: true })
+      .click()
+    const tile = (await page.locator(".pending-draggable").boundingBox())!
+    const board = (await page.locator(".timeline-viewport").boundingBox())!
+    await page.mouse.move(tile.x + 70, tile.y + 70)
     await page.mouse.down()
-    await page.mouse.move(
-      table.x + table.width - 12,
-      table.y + table.height / 2,
-      { steps: 16 },
-    )
+    await page.mouse.move(board.x + board.width - 4, board.y + 90, {
+      steps: 16,
+    })
     await expect
-      .poll(() => timeline.evaluate((e) => e.scrollLeft))
+      .poll(async () =>
+        Number(
+          await page.locator(".timeline-viewport").getAttribute("data-offset"),
+        ),
+      )
       .toBeGreaterThan(0)
     await page.keyboard.press("Escape")
     await page.mouse.up()
   }
-  for (const name of [
-    "First slot",
-    "Last slot",
-    "Previous slot",
-    "Next slot",
-    "Lock it in",
-  ]) {
+  for (const name of ["Show beginning", "Show end", "Lock it in"]) {
     const control = page.getByRole("button", { name, exact: true })
-    await control.scrollIntoViewIfNeeded()
-    await expect(control).toBeInViewport()
-    const box = (await control.boundingBox())!
-    expect(box.height).toBeGreaterThanOrEqual(44)
+    await expect(control).toBeVisible()
+    expect((await control.boundingBox())!.height).toBeGreaterThanOrEqual(44)
   }
   expect(
     await page.evaluate(() => document.body.scrollWidth <= innerWidth),
-  ).toBeTruthy()
-  const dimensions = await page.locator(".game-timeline").evaluate((e) => ({
+  ).toBe(true)
+  const dimensions = await page.locator(".timeline-viewport").evaluate((e) => ({
     width: e.clientWidth,
-    scrollWidth: e.scrollWidth,
     height: e.clientHeight,
-    direction: getComputedStyle(e).flexDirection,
+    overflow: getComputedStyle(e).overflowX,
   }))
-  expect(dimensions.direction).toBe(isMobile ? "column" : "row")
-  if (!isMobile)
-    expect(dimensions.scrollWidth).toBeGreaterThan(dimensions.width)
-  console.info(
-    `U3 ${info.project.name} long timeline: ${JSON.stringify(dimensions)}`,
+  expect(dimensions.width).toBeGreaterThanOrEqual(200)
+  expect(dimensions.height).toBeGreaterThanOrEqual(320)
+  expect(dimensions.overflow).toBe("hidden")
+  await mkdir(evidence, { recursive: true, mode: 0o700 })
+  await writeFile(
+    `${evidence}/U3-long-${info.project.name}.json`,
+    JSON.stringify(dimensions),
+    { mode: 0o600 },
   )
-  await page.screenshot({
-    path: `../.superpowers/sdd/2026-10-13-historical-date-game-guest-play/task-5-evidence/fixture-artifacts/U3-long-${info.project.name}.png`,
-    fullPage: true,
-  })
+  await capture(page, `U3-long-${info.project.name}`)
   expect(commands).toHaveLength(0)
 })
 
@@ -472,33 +342,26 @@ test("slow_image_and_primary_failure_preserve_target_geometry", async ({
     url: "/slow-primary.svg",
     fallback_url: run.pending!.media.fallback_url,
   }
-  await page.route(`**/games/runs/${run.run_id}`, (r) =>
-    r.fulfill({ json: { ...run, pending: { ...run.pending, media } } }),
+  await page.route(`**/games/runs/${run.run_id}`, (route) =>
+    route.fulfill({ json: { ...run, pending: { ...run.pending, media } } }),
   )
   let release!: () => void
   const held = new Promise<void>((resolve) => {
     release = resolve
   })
-  await page.route("**/slow-primary.svg", async (r) => {
+  await page.route("**/slow-primary.svg", async (route) => {
     await held
-    await r.abort()
+    await route.abort()
   })
   try {
     await page.goto(`/play/${run.run_id}`, { waitUntil: "domcontentloaded" })
-    const slot = page.getByRole("button", { name: "Slot 1", exact: true })
-    await expect(slot).toBeVisible()
+    await expect(page.locator(".timeline-viewport")).toBeVisible()
     const geometry = () =>
-      slot.evaluate((e) => {
-        const rect = e.getBoundingClientRect()
-        return {
-          x: rect.x + scrollX,
-          y: rect.y + scrollY,
-          width: rect.width,
-          height: rect.height,
-        }
-      })
+      page
+        .locator(".timeline-viewport")
+        .evaluate((e) => e.getBoundingClientRect().toJSON())
     const before = await geometry()
-    await slot.click()
+    await keyboardPreview(page, 0)
     await expect(
       page.getByRole("button", { name: "Lock it in", exact: true }),
     ).toBeEnabled()
@@ -508,7 +371,10 @@ test("slow_image_and_primary_failure_preserve_target_geometry", async ({
       .poll(() => image.evaluate((e: HTMLImageElement) => e.naturalWidth))
       .toBeGreaterThan(0)
     expect(await geometry()).toEqual(before)
-    await expect(slot).toHaveAttribute("aria-pressed", "true")
+    await expect(page.locator("[data-preview-slot]")).toHaveAttribute(
+      "data-preview-slot",
+      "0",
+    )
     await expect(page.getByTestId("run-revision")).toHaveText(
       `Revision: ${run.revision}`,
     )
@@ -522,28 +388,28 @@ test("lifted_overlay_keeps_the_frame_and_reduced_motion_removes_decoration", asy
   run,
 }, info) => {
   await open(page, run)
-  const handle = page.getByRole("button", { name: "Drag next card" })
-  await handle.focus()
+  const tile = page.locator(".pending-draggable")
+  await tile.focus()
   await page.keyboard.press("Space")
-  const overlay = page.locator(".game-drag-overlay")
-  await expect(overlay).toBeVisible()
+  await expect(page.locator(".insertion-preview")).toBeVisible()
+  await expect(tile).toBeInViewport({ ratio: 1 })
   expect(
-    await overlay
+    await tile
       .locator(".game-card")
       .evaluate((e) => getComputedStyle(e).backgroundColor),
   ).toBe("rgb(247, 240, 223)")
-  await page.screenshot({
-    path: `../.superpowers/sdd/2026-10-13-historical-date-game-guest-play/task-5-evidence/fixture-artifacts/U3-lift-${info.project.name}.png`,
-  })
+  await capture(page, `U3-lift-${info.project.name}`)
   await page.keyboard.press("Escape")
-  await expect(overlay).toBeHidden()
+  await expect(page.locator(".insertion-preview")).toHaveCount(0)
   await page.emulateMedia({ reducedMotion: "reduce" })
-  await handle.focus()
+  await tile.focus()
   await page.keyboard.press("Space")
-  await expect(overlay).toBeVisible()
-  await expect
-    .poll(() => overlay.evaluate((e) => getComputedStyle(e).transform))
-    .toBe("none")
+  await expect(page.locator(".insertion-preview")).toBeVisible()
+  expect(
+    await page
+      .locator(".pending-position")
+      .evaluate((e) => getComputedStyle(e).transitionDuration),
+  ).toBe("0s")
   await page.keyboard.press("Escape")
   await expect(
     page.getByRole("button", { name: "Lock it in", exact: true }),
@@ -563,31 +429,35 @@ test("victory_keeps_full_width_timeline_and_navigation_nonblocking", async ({
     streak: 7,
     revision: 8,
   }
-  await page.route(`**/games/runs/${run.run_id}`, (r) =>
-    r.fulfill({ json: won }),
+  await page.route(`**/games/runs/${run.run_id}`, (route) =>
+    route.fulfill({ json: won }),
   )
   await page.goto(`/play/${run.run_id}`)
   await expect(
     page.getByRole("heading", { name: "Victory — catalog exhausted" }),
   ).toBeVisible()
   await expect(page.getByRole("dialog")).toHaveCount(0)
-  const width = (await page.locator(".timeline-panel").boundingBox())!.width
-  expect(width).toBeGreaterThan(isMobile ? 300 : 900)
-  await expect(
-    page.getByRole("link", { name: "New Freeplay", exact: true }),
-  ).toBeVisible()
-  const link = (await page
-    .getByRole("link", { name: "New Freeplay", exact: true })
-    .boundingBox())!
-  const report = (await page
-    .getByRole("button", { name: "Report content issue" })
-    .boundingBox())!
-  expect(link.height).toBeGreaterThanOrEqual(44)
-  expect(report.x - link.x - link.width).toBeGreaterThanOrEqual(8)
-  await page.screenshot({
-    path: `../.superpowers/sdd/2026-10-13-historical-date-game-guest-play/task-5-evidence/fixture-artifacts/U3-victory-${info.project.name}.png`,
-    fullPage: true,
+  expect(
+    (await page.locator(".timeline-viewport").boundingBox())!.width,
+  ).toBeGreaterThan(isMobile ? 300 : 900)
+  const link = page.getByRole("link", { name: "New Freeplay", exact: true })
+  const report = page.getByRole("button", {
+    name: "Report content issue",
+    exact: true,
   })
+  await expect(link).toBeVisible()
+  await expect(report).toBeVisible()
+  expect((await link.boundingBox())!.height).toBeGreaterThanOrEqual(44)
+  expect((await report.boundingBox())!.height).toBeGreaterThanOrEqual(44)
+  const a = (await link.boundingBox())!
+  const b = (await report.boundingBox())!
+  expect(
+    a.x + a.width <= b.x ||
+      b.x + b.width <= a.x ||
+      a.y + a.height <= b.y ||
+      b.y + b.height <= a.y,
+  ).toBe(true)
+  await capture(page, `U3-victory-${info.project.name}`)
 })
 
 test("mistake_credits_remain_readable_on_the_cream_result_in_dark_theme", async ({
@@ -601,13 +471,17 @@ test("mistake_credits_remain_readable_on_the_cream_result_in_dark_theme", async 
     pending: null,
     feedback: { correct: false, card: run.timeline[0], correct_slot: 0 },
   }
-  await page.route(`**/games/runs/${run.run_id}`, (r) =>
-    r.fulfill({ json: lost }),
+  await page.route(`**/games/runs/${run.run_id}`, (route) =>
+    route.fulfill({ json: lost }),
   )
   await page.goto(`/play/${run.run_id}`)
-  const credits = page
-    .getByRole("region", { name: "Run result" })
-    .locator(".text-muted-foreground")
+  await expect(
+    page.getByText("Old placement position unavailable.", { exact: true }),
+  ).toBeVisible()
+  await page
+    .getByRole("button", { name: "Credits/Sources", exact: true })
+    .click()
+  const credits = page.getByRole("dialog").locator("li").first()
   await expect(credits).toBeVisible()
   const contrast = await credits.evaluate((e) => {
     const luminance = (color: string) => {
@@ -624,63 +498,57 @@ test("mistake_credits_remain_readable_on_the_cream_result_in_dark_theme", async 
     }
     const a = luminance(getComputedStyle(e).color)
     const b = luminance(
-      getComputedStyle(e.closest(".move-feedback")!).backgroundColor,
+      getComputedStyle(e.closest(".game-dialog")!).backgroundColor,
     )
     return (Math.max(a, b) + 0.05) / (Math.min(a, b) + 0.05)
   })
   expect(contrast).toBeGreaterThanOrEqual(4.5)
-  await page.screenshot({
-    path: `../.superpowers/sdd/2026-10-13-historical-date-game-guest-play/task-5-evidence/fixture-artifacts/U3-mistake-${info.project.name}.png`,
-    fullPage: true,
-  })
+  for (const credit of run.timeline[0].media.credits)
+    await expect(page.getByRole("dialog")).toContainText(credit.label)
+  await capture(page, `U3-mistake-${info.project.name}`)
 })
 
-test("reduced_motion_preserves_feedback", async ({
-  page,
-  run,
-  headers,
-}, info) => {
-  await page.emulateMedia({ reducedMotion: "reduce" })
-  let current = run
-  for (let attempt = 0; attempt < 20; attempt++) {
-    await open(page, current)
-    await page.getByRole("button", { name: "Slot 1", exact: true }).click()
-    const response = page.waitForResponse((r) =>
-      r.url().endsWith("/placements"),
-    )
-    await page.getByRole("button", { name: "Lock it in", exact: true }).click()
-    const scored: RunPublic = await (await response).json()
-    await expect(page.getByTestId("move-feedback")).toContainText(
-      scored.feedback!.correct ? "Correct" : "Correct slot",
-    )
-    await expect(page.getByTestId("move-feedback")).toContainText(
-      `${scored.feedback!.card.year.value} ${scored.feedback!.card.year.era}`,
-    )
-    if (scored.feedback!.correct) {
-      await expect(page.getByTestId("move-feedback")).toContainText(
-        `Streak: ${scored.streak}`,
-      )
-      expect(
-        await page
-          .getByTestId("move-feedback")
-          .evaluate((e) => getComputedStyle(e).animationName),
-      ).toBe("none")
-      await page.screenshot({
-        path: `../.superpowers/sdd/2026-10-13-historical-date-game-guest-play/task-5-evidence/fixture-artifacts/U3-reduced-motion-${info.project.name}.png`,
-        fullPage: true,
-      })
-      return
-    }
-    current = await (
-      await page.request.post(`${api}/games/freeplay`, {
-        headers,
-        data: {
-          operation_id: crypto.randomUUID(),
-          catalog_release_id: run.catalog_release_id,
-          config: run.config,
-        },
-      })
-    ).json()
+test("reduced_motion_preserves_feedback", async ({ page, run }, info) => {
+  // The retained test_game_daily.py synthetic fixture only; no private catalog
+  // or answer is injected into the page, and no blind-trial retry loop is used.
+  const years: Record<string, number> = {
+    "Synthetic Milestone 0 Revision 0 begins": 1800,
+    "Synthetic Milestone 0 Revision 0 ends": 1870,
+    "Synthetic Milestone 1 Revision 0 is launched": 1810,
+    "Synthetic Milestone 1 Revision 0 lands": 1880,
+    "Synthetic Milestone 2 Revision 0 is invented": 1820,
+    "Synthetic Milestone 3 Revision 0 is established": 1830,
   }
-  throw new Error("No successful blind move after 20 independent runs")
+  const year = years[run.pending!.prompt]
+  expect(
+    year,
+    `Known synthetic fixture only: ${run.pending!.prompt}`,
+  ).toBeDefined()
+  const slot = run.timeline.filter(
+    (card) => card.year.era === "BCE" || card.year.value < year,
+  ).length
+  await page.emulateMedia({ reducedMotion: "reduce" })
+  await open(page, run)
+  await keyboardPreview(page, slot)
+  const response = page.waitForResponse((r) => r.url().endsWith("/placements"))
+  await page.getByRole("button", { name: "Lock it in", exact: true }).click()
+  const scored: RunPublic = await (await response).json()
+  expect(scored.feedback!.correct).toBe(true)
+  await expect(page.getByTestId("move-feedback")).toContainText("Correct")
+  await expect(
+    page.locator(
+      `.game-card[data-event-id="${scored.feedback!.card.event_id}"]`,
+    ),
+  ).toContainText(
+    `${scored.feedback!.card.year.value} ${scored.feedback!.card.year.era}`,
+  )
+  await expect(
+    page.getByText(`Streak: ${scored.streak}`, { exact: true }),
+  ).toBeVisible()
+  expect(
+    await page
+      .getByTestId("move-feedback")
+      .evaluate((e) => getComputedStyle(e).animationName),
+  ).toBe("none")
+  await capture(page, `U3-reduced-motion-${info.project.name}`)
 })

@@ -42,6 +42,7 @@ for (const value of [undefined, "false", "true"]) {
         "**/game-identity-recovery.spec.ts",
         "**/board-navigation.spec.ts",
         "**/board-ux.spec.ts",
+        "**/game-board-ux.spec.ts",
       ],
     })
   })

@@ -3,7 +3,11 @@ import { defineConfig, devices } from "@playwright/test"
 // Controlled DTO/native-DOM harness only: no account setup or backend consumer.
 export default defineConfig({
   testDir: "./tests",
-  testMatch: ["**/board-navigation.spec.ts", "**/board-ux.spec.ts"],
+  testMatch: [
+    "**/board-navigation.spec.ts",
+    "**/board-ux.spec.ts",
+    "**/game-board-ux.spec.ts",
+  ],
   fullyParallel: false,
   workers: 1,
   retries: 0,

@@ -6,6 +6,7 @@ import {
   realCatalogUIOrigin,
 } from "../playwright.real-catalog.config"
 import type { RunPublic } from "../src/client/types.gen"
+import { keyboardPreview } from "../tests/utils/boardInteraction"
 import { loadCatalog, slugs } from "./catalog"
 
 const evidence =
@@ -131,15 +132,8 @@ export async function lock(
   await expect(
     pending.locator('a[href*="wikipedia.org/"],a[href*="wikidata.org/"]'),
   ).toHaveCount(0)
-  const target = page.getByRole("button", {
-    name: `Slot ${index + 1}`,
-    exact: true,
-  })
-  if (mobile) await target.tap()
-  else {
-    await target.focus()
-    await page.keyboard.press("Enter")
-  }
+  await keyboardPreview(page, index)
+  if (mobile) await expect(pending).toBeInViewport({ ratio: 1 })
   const response = page.waitForResponse(
     (r) => r.request().method() === "POST" && r.url().endsWith("/placements"),
   )
@@ -150,7 +144,9 @@ export async function lock(
   await expect(page.getByTestId("run-revision")).toHaveText(
     `Revision: ${next.revision}`,
   )
-  await expect(page.getByTestId("move-feedback")).toContainText(
+  await expect(
+    page.locator(`.game-card[data-event-id="${next.feedback!.card.event_id}"]`),
+  ).toContainText(
     `${next.feedback!.card.year.value} ${next.feedback!.card.year.era}`,
   )
   publicOnly(next)
@@ -244,16 +240,21 @@ test("actual release options, readable safe credits, asset HTTP and private arti
       },
     ]),
   )
+  await page
+    .getByRole("button", { name: "Credits/Sources", exact: true })
+    .click()
   for (const credit of run.pending!.media.credits) {
-    await expect(pending.locator(".event-image-credits")).toContainText(
-      credit.label,
-    )
-    await expect(pending.locator(".event-image-credits")).toBeVisible()
+    await expect(page.getByRole("dialog")).toContainText(credit.label)
+    await expect(page.getByRole("dialog")).toBeVisible()
     if (credit.url)
       await expect(
-        pending.getByRole("link", { name: credit.label, exact: true }),
+        page
+          .getByRole("dialog")
+          .getByRole("link", { name: credit.label, exact: true })
+          .first(),
       ).toHaveAttribute("href", credit.url)
   }
+  await page.keyboard.press("Escape")
   const assetChecks = []
   for (const [name, digest] of Object.entries(catalog.manifest.files) as [
     string,
@@ -362,17 +363,19 @@ test("genuine two-year range and pairwise gap win with keyboard drop preview", a
     if (r.method() === "POST" && r.url().endsWith("/placements"))
       commands.push(r.postDataJSON())
   })
-  const handle = page.getByRole("button", { name: "Drag next card" })
+  const handle = page.locator(".pending-draggable")
   await handle.focus()
   await page.keyboard.press("Space")
-  await page.keyboard.press("ArrowRight")
-  await expect(
-    page.getByRole("button", { name: "Slot 1", exact: true }),
-  ).toHaveClass(/insertion-slot-over/)
+  await page.keyboard.press("Home")
+  await expect(page.locator(".timeline-viewport")).toHaveAttribute(
+    "data-hovered-slot",
+    "0",
+  )
   await page.keyboard.press("Space")
-  await expect(
-    page.getByRole("button", { name: "Slot 1", exact: true }),
-  ).toHaveAttribute("aria-pressed", "true")
+  await expect(page.locator("[data-preview-slot]")).toHaveAttribute(
+    "data-preview-slot",
+    "0",
+  )
   expect(commands).toEqual([])
   expect(await readRun(page, run, players[0])).toEqual(run)
   run = await lock(page, run, slot(run, catalog.years), isMobile)
@@ -389,21 +392,37 @@ test("genuine two-year range and pairwise gap win with keyboard drop preview", a
   await expect(
     page.getByRole("heading", { name: "Victory — catalog exhausted" }),
   ).toBeVisible()
-  await expect(page.getByRole("region", { name: "Run result" })).toContainText(
-    `${catalog.small.start} CE–${catalog.small.end} CE, minimum gap ${catalog.small.gap}`,
+  await page.getByRole("button", { name: "Run details", exact: true }).click()
+  await expect(page.getByRole("dialog")).toContainText(
+    `${catalog.small.start} CE–${catalog.small.end} CE`,
   )
-  await expect(page.getByRole("region", { name: "Run result" })).toContainText(
+  await expect(page.getByRole("dialog")).toContainText(
+    `minimum gap ${catalog.small.gap}`,
+  )
+  await expect(page.getByRole("dialog")).toContainText(
     catalog.manifest.release_id,
   )
+  await page.keyboard.press("Escape")
   const revealed = page
     .locator(".game-card-revealed")
     .filter({ hasText: run.feedback!.card.prompt })
-  await revealed.getByText("Event details & sources", { exact: true }).click()
-  await expect(revealed).toContainText(run.feedback!.card.explanation)
+  await revealed
+    .getByRole("button", { name: "Learn more", exact: true })
+    .click()
+  await page
+    .getByRole("dialog")
+    .getByText("Source/provenance details", { exact: true })
+    .click()
+  await expect(page.getByRole("dialog")).toContainText(
+    run.feedback!.card.explanation,
+  )
   for (const source of run.feedback!.card.sources)
     await expect(
-      revealed.getByRole("link", { name: source.label, exact: true }),
+      page
+        .getByRole("dialog")
+        .getByRole("link", { name: source.label, exact: true }),
     ).toHaveAttribute("href", source.url)
+  await page.keyboard.press("Escape")
   await page.reload()
   expect(await readRun(page, run, players[0])).toEqual(run)
   await expect(
@@ -488,12 +507,11 @@ test("uncertain real committed response retries same operation without double sc
       await route.abort("failed")
     } else await route.fulfill({ response })
   })
-  const target = page.getByRole("button", {
-    name: `Slot ${slot(run, catalog.years) + 1}`,
-    exact: true,
-  })
-  if (isMobile) await target.tap()
-  else await target.click()
+  await keyboardPreview(page, slot(run, catalog.years))
+  if (isMobile)
+    await expect(page.locator(".pending-draggable")).toBeInViewport({
+      ratio: 1,
+    })
   await page.getByRole("button", { name: "Lock it in", exact: true }).click()
   await expect(page.getByRole("alert")).toContainText("your run is not lost")
   expect(committed!.revision).toBe(run.revision + 1)

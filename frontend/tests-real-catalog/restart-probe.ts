@@ -9,6 +9,7 @@ import {
   realCatalogUIOrigin as origin,
 } from "../playwright.real-catalog.config.ts"
 import type { RunPublic } from "../src/client/types.gen"
+import { keyboardPreview } from "../tests/utils/boardInteraction.ts"
 import { loadCatalog, slugs } from "./catalog.ts"
 
 const evidence =
@@ -124,9 +125,7 @@ try {
           (c) =>
             (c.year.era === "CE" ? c.year.value : 1 - c.year.value) < answer!,
         ).length
-        await page
-          .getByRole("button", { name: `Slot ${slot + 1}`, exact: true })
-          .click()
+        await keyboardPreview(page, slot)
         const scored = page.waitForResponse(
           (r) =>
             r.request().method() === "POST" && r.url().endsWith("/placements"),

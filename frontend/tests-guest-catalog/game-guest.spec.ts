@@ -9,6 +9,7 @@ import type {
   PlaceCommand,
   RunPublic,
 } from "../src/client/types.gen"
+import { keyboardPreview } from "../tests/utils/boardInteraction"
 import { loadCatalog } from "../tests-real-catalog/catalog"
 
 const evidence = resolve(
@@ -133,11 +134,13 @@ async function move(
     )
     .toBe(true)
   await expect(pending.locator("details")).toHaveCount(0)
-  for (const credit of run.pending!.media.credits)
-    await expect(pending).toContainText(credit.label)
   await page
-    .getByRole("button", { name: `Slot ${index + 1}`, exact: true })
+    .getByRole("button", { name: "Credits/Sources", exact: true })
     .click()
+  for (const credit of run.pending!.media.credits)
+    await expect(page.getByRole("dialog")).toContainText(credit.label)
+  await page.keyboard.press("Escape")
+  await keyboardPreview(page, index)
   const response = page.waitForResponse(
     (r) => r.request().method() === "POST" && r.url().endsWith("/placements"),
   )
@@ -315,12 +318,7 @@ test("Freeplay correct, reload, exact committed retry, loss and new run", async 
       await route.abort("failed")
     } else await route.fulfill({ response })
   })
-  await page
-    .getByRole("button", {
-      name: `Slot ${slot(run, release.years) + 1}`,
-      exact: true,
-    })
-    .click()
+  await keyboardPreview(page, slot(run, release.years))
   await page.getByRole("button", { name: "Lock it in", exact: true }).click()
   await expect(page.getByRole("alert")).toContainText("your run is not lost")
   // Retrying a saved command must not require a NEW cryptographic operation ID.
@@ -552,7 +550,7 @@ with Session(engine) as session:
       )
       appendFileSync(`${evidence}/expiry.log`, output, { mode: 0o600 })
     }
-    await page.getByRole("button", { name: "Slot 1", exact: true }).click()
+    await keyboardPreview(page, 0)
     await page.getByRole("button", { name: "Lock it in", exact: true }).click()
     await expect(page.getByRole("alert")).toContainText("Your run is not lost")
     await page
@@ -652,7 +650,7 @@ test("optional sign-in/out and expired account never replay guest commands, prot
     commands.push(route.request().postDataJSON())
     await route.abort("failed")
   })
-  await page.getByRole("button", { name: "Slot 1", exact: true }).click()
+  await keyboardPreview(page, 0)
   await page.getByRole("button", { name: "Lock it in", exact: true }).click()
   await expect(
     page.getByRole("button", { name: "Retry same move", exact: true }),

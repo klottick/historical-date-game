@@ -10,9 +10,10 @@ import type { RunPublic } from "../src/client/types.gen"
 import { hundredCardRun } from "./fixtures/game-public"
 
 import { fixtureAPI as api } from "./utils/apiOrigin"
+import { dragTile, keyboardPreview } from "./utils/boardInteraction"
 
 const evidence =
-  "../.superpowers/sdd/2026-10-13-historical-date-game-guest-play/task-5-evidence/fixture-artifacts"
+  "../.superpowers/sdd/2026-10-14-game-board-redesign/integration/fixture-artifacts"
 type Player = {
   token: string
   headers: Record<string, string>
@@ -136,9 +137,7 @@ async function lock(
   await expect(
     pending.locator('a[href*="wikidata"], a[href*="wikipedia"]'),
   ).toHaveCount(0)
-  await page
-    .getByRole("button", { name: `Slot ${slot + 1}`, exact: true })
-    .click()
+  await keyboardPreview(page, slot)
   const response = page.waitForResponse(
     (r) => r.request().method() === "POST" && r.url().endsWith("/placements"),
   )
@@ -149,7 +148,9 @@ async function lock(
   await expect(page.getByTestId("run-revision")).toHaveText(
     `Revision: ${next.revision}`,
   )
-  await expect(page.getByTestId("move-feedback")).toContainText(
+  await expect(
+    page.locator(`.game-card[data-event-id="${next.feedback!.card.event_id}"]`),
+  ).toContainText(
     `${next.feedback!.card.year.value} ${next.feedback!.card.year.era}`,
   )
   publicOnly(next)
@@ -234,11 +235,13 @@ test("freeplay_category_bounds_gap_win_and_loss", async ({ page, players }) => {
     1800, 1810, 1870, 1880,
   ])
   expect(won.streak).toBe(3)
-  const result = page.getByRole("region", { name: "Run result" })
-  await expect(result).toContainText(
-    "1800 CE–1880 CE, minimum gap 10; categories: Battles, Exploration)",
-  )
+  await page.getByRole("button", { name: "Run details", exact: true }).click()
+  const result = page.getByRole("dialog")
+  await expect(result).toContainText("1800 CE–1880 CE")
+  await expect(result).toContainText("minimum gap 10")
+  await expect(result).toContainText("Categories: Battles, Exploration")
   await expect(result).toContainText(won.catalog_release_id)
+  await page.keyboard.press("Escape")
   await page.reload()
   await expect(
     page.getByRole("button", { name: "Lock it in", exact: true }),
@@ -260,8 +263,12 @@ test("freeplay_category_bounds_gap_win_and_loss", async ({ page, players }) => {
   await expect(
     page.getByRole("heading", { name: "Mistake — run complete" }),
   ).toBeVisible()
-  await expect(page.getByRole("region", { name: "Run result" })).toContainText(
-    `Correct slot: ${lost.feedback!.correct_slot + 1}`,
+  await expect(page.locator(".correct-location")).toHaveAttribute(
+    "data-correct-slot",
+    String(
+      lost.feedback!.correct_slot +
+        (lost.feedback!.attempted_slot! <= lost.feedback!.correct_slot ? 1 : 0),
+    ),
   )
   await expect(
     page.getByRole("button", { name: "Lock it in", exact: true }),
@@ -526,7 +533,7 @@ test("keyboard_focus_and_rendered_text_control_contrast", async ({
       theme,
     )
     await page.reload()
-    const handle = page.getByRole("button", { name: "Drag next card" })
+    const handle = page.locator(".pending-draggable")
     await handle.focus()
     await page.keyboard.press("Tab")
     await page.keyboard.press("Shift+Tab")
@@ -540,7 +547,7 @@ test("keyboard_focus_and_rendered_text_control_contrast", async ({
     measurements[`${theme}-focus-control`] = await renderedContrast(
       handle,
       "outline-color",
-      ".drag-handle",
+      ".pending-draggable",
     )
     expect(measurements[`${theme}-focus-control`]).toBeGreaterThanOrEqual(3)
     measurements[`${theme}-focus-dark-table`] = await renderedContrast(
@@ -562,18 +569,12 @@ test("keyboard_focus_and_rendered_text_control_contrast", async ({
       ".game-card-category",
       ".game-card h3",
       ".game-card-year",
-      ".event-image-credits",
     ]) {
       const element = page.getByTestId("pending-card").locator(selector)
       measurements[`${theme}-${selector}`] = await renderedContrast(element)
       expect(measurements[`${theme}-${selector}`]).toBeGreaterThanOrEqual(4.5)
     }
-    for (const name of [
-      "First slot",
-      "Last slot",
-      "Previous slot",
-      "Next slot",
-    ]) {
+    for (const name of ["Show beginning", "Show end"]) {
       const control = page.getByRole("button", { name, exact: true })
       await control.focus()
       await expect(control).toBeFocused()
@@ -582,10 +583,19 @@ test("keyboard_focus_and_rendered_text_control_contrast", async ({
         true,
       )
       expect(
-        await renderedContrast(control, "color", ".slot-shortcuts button"),
+        await renderedContrast(control, "color", ".timeline-overview button"),
       ).toBeGreaterThanOrEqual(4.5)
     }
-    await page.getByRole("button", { name: "First slot", exact: true }).click()
+    await page
+      .getByRole("button", { name: "Credits/Sources", exact: true })
+      .click()
+    const credits = page.getByRole("dialog").locator("li").first()
+    await expect(credits).toBeVisible()
+    expect(
+      await renderedContrast(credits, "color", ".game-dialog"),
+    ).toBeGreaterThanOrEqual(4.5)
+    await page.keyboard.press("Escape")
+    await keyboardPreview(page, 0)
     const lockButton = page.getByRole("button", {
       name: "Lock it in",
       exact: true,
@@ -677,9 +687,9 @@ test("bce_ce_settings_and_readonly_daily_labels_remain_readable", async ({
   const run = await startFreeplay(page)
   expect(run.config.start).toEqual({ value: 1, era: "BCE" })
   const won = await finishWin(page, run)
-  await expect(page.getByRole("region", { name: "Run result" })).toContainText(
-    "1 BCE–1880 CE",
-  )
+  await page.getByRole("button", { name: "Run details", exact: true }).click()
+  await expect(page.getByRole("dialog")).toContainText("1 BCE–1880 CE")
+  await page.keyboard.press("Escape")
   expect(await readRun(page, run.run_id, players[0])).toEqual(won)
   await writeFile(
     `${evidence}/U4-settings-contrast-${info.project.name}.json`,
@@ -716,9 +726,8 @@ test("hundred_card_timeline_every_slot_accessible", async ({
   })
   try {
     await page.goto(`/play/${run.run_id}`, { waitUntil: "domcontentloaded" })
-    const slots = page.getByRole("button", { name: /^Slot \d+$/ })
-    await expect(slots).toHaveCount(101)
-    const first = slots.first()
+    await expect(page.locator(".timeline-item")).toHaveCount(100)
+    const first = page.locator(".timeline-viewport")
     const geometry = () =>
       first.evaluate((e) => {
         const r = e.getBoundingClientRect()
@@ -734,13 +743,10 @@ test("hundred_card_timeline_every_slot_accessible", async ({
     expect(await geometry()).toEqual(before)
     const visited = []
     for (let i = 0; i <= 100; i++) {
-      const slot = slots.nth(i)
-      await slot.scrollIntoViewIfNeeded()
-      await slot.focus()
-      await page.keyboard.press("Enter")
-      if (isMobile) await slot.tap()
-      await expect(slot).toHaveAttribute("aria-pressed", "true")
-      await expect(slot).toBeInViewport()
+      await keyboardPreview(page, i)
+      const slot = page.locator(".pending-draggable")
+      await expect(slot).toBeFocused()
+      await expect(slot).toBeInViewport({ ratio: 1 })
       const dimensions = await slot.evaluate((e) => {
         const r = e.getBoundingClientRect()
         const x = Math.max(0, Math.min(innerWidth - 1, r.x + r.width / 2))
@@ -761,16 +767,20 @@ test("hundred_card_timeline_every_slot_accessible", async ({
         })
     }
     // Native keyboard drag through all 101 ordinal targets, including scroll.
-    const handle = page.getByRole("button", { name: "Drag next card" })
+    const handle = page.locator(".pending-draggable")
     await handle.focus()
     await page.keyboard.press("Space")
+    await page.keyboard.press("Home")
     for (let i = 0; i <= 100; i++) {
-      await page.keyboard.press("ArrowRight")
+      if (i > 0) await page.keyboard.press("ArrowRight")
       // Stable dnd-kit 0.5.0 recomputes scroll collisions after 50ms. A keyboard
       // target must survive that settling, not just flash before it is cleared.
       await page.waitForTimeout(80)
       try {
-        await expect(slots.nth(i)).toHaveClass(/insertion-slot-over/)
+        await expect(page.locator(".timeline-viewport")).toHaveAttribute(
+          "data-hovered-slot",
+          String(i),
+        )
       } catch (error) {
         await writeFile(
           `${evidence}/U4-keyboard-failure-${info.project.name}.json`,
@@ -782,9 +792,9 @@ test("hundred_card_timeline_every_slot_accessible", async ({
                 dragging: document
                   .querySelector(".pending-draggable")
                   ?.getAttribute("data-dragging"),
-                over: Array.from(
-                  document.querySelectorAll(".insertion-slot-over"),
-                ).map((e) => e.getAttribute("data-slot")),
+                over: document
+                  .querySelector(".timeline-viewport")
+                  ?.getAttribute("data-hovered-slot"),
                 scroll: scrollY,
               }),
               i,
@@ -798,16 +808,22 @@ test("hundred_card_timeline_every_slot_accessible", async ({
         })
         throw error
       }
-      await expect(slots.nth(i)).toBeInViewport()
+      await expect(handle).toBeInViewport({ ratio: 1 })
     }
     await page.keyboard.press("Space")
     await expect(handle).toBeFocused()
-    await expect(slots.last()).toHaveAttribute("aria-pressed", "true")
+    await expect(page.locator("[data-preview-slot]")).toHaveAttribute(
+      "data-preview-slot",
+      "100",
+    )
     if (!isMobile) {
-      const timeline = page.locator(".game-timeline")
-      await timeline.evaluate((e) => {
-        e.scrollLeft = 0
-      })
+      const timeline = page.locator(".timeline-viewport")
+      await page
+        .getByRole("button", { name: "Return to hand", exact: true })
+        .click()
+      await page
+        .getByRole("button", { name: "Show beginning", exact: true })
+        .click()
       await handle.scrollIntoViewIfNeeded()
       const start = (await handle.boundingBox())!
       const table = (await timeline.boundingBox())!
@@ -822,88 +838,46 @@ test("hundred_card_timeline_every_slot_accessible", async ({
         { steps: 16 },
       )
       await expect
-        .poll(() => timeline.evaluate((e) => e.scrollLeft))
+        .poll(() =>
+          timeline.evaluate((e) => Number(e.getAttribute("data-offset"))),
+        )
         .toBeGreaterThan(0)
       await page.keyboard.press("Escape")
       await page.mouse.up()
     }
     // A pointer/touch drag after the ordinal keyboard operation must still use
     // normal geometry: this catches collision detection not being restored.
-    await page.locator(".game-timeline").evaluate((e) => {
-      e.scrollLeft = 0
-    })
-    await handle.scrollIntoViewIfNeeded()
-    const source = (await handle.boundingBox())!
-    const a = {
-      x: source.x + source.width / 2,
-      y: source.y + source.height / 2,
-    }
-    if (isMobile) {
-      const cdp = await page.context().newCDPSession(page)
-      try {
-        await cdp.send("Input.dispatchTouchEvent", {
-          type: "touchStart",
-          touchPoints: [a],
-        })
-        await page.waitForTimeout(300) // real hold-to-drag activation threshold
-        const viewport = page.viewportSize()!
-        await cdp.send("Input.dispatchTouchEvent", {
-          type: "touchMove",
-          touchPoints: [{ x: a.x, y: viewport.height - 24 }],
-        })
-        await expect
-          .poll(async () => {
-            const box = (await first.boundingBox())!
-            return box.y >= 0 && box.y + box.height <= viewport.height
-          })
-          .toBe(true)
-        const box = (await first.boundingBox())!
-        await cdp.send("Input.dispatchTouchEvent", {
-          type: "touchMove",
-          touchPoints: [
-            { x: box.x + box.width / 2, y: box.y + box.height / 2 },
-          ],
-        })
-        await expect(first).toHaveClass(/insertion-slot-over/)
-        await cdp.send("Input.dispatchTouchEvent", {
-          type: "touchEnd",
-          touchPoints: [],
-        })
-      } finally {
-        await cdp.detach()
-      }
-    } else {
-      const box = (await first.boundingBox())!
-      await page.mouse.move(a.x, a.y)
-      await page.mouse.down()
-      await page.mouse.move(a.x + 12, a.y, { steps: 3 })
-      await page.mouse.move(box.x + box.width / 2, box.y + box.height / 2, {
-        steps: 12,
-      })
-      await expect(first).toHaveClass(/insertion-slot-over/)
-      await page.mouse.up()
-    }
-    await expect(first).toHaveAttribute("aria-pressed", "true")
+    if (isMobile)
+      await page
+        .getByRole("button", { name: "Return to hand", exact: true })
+        .click()
+    await page
+      .getByRole("button", { name: "Show beginning", exact: true })
+      .click()
+    await dragTile(page, 0, isMobile)
+    await expect(page.locator("[data-preview-slot]")).toHaveAttribute(
+      "data-preview-slot",
+      "0",
+    )
     for (const name of [
-      "First slot",
-      "Last slot",
-      "Previous slot",
-      "Next slot",
+      "Show beginning",
+      "Show end",
       "Lock it in",
-      "Cancel preview",
+      "Return to hand",
     ]) {
       const control = page.getByRole("button", { name, exact: true })
       await control.scrollIntoViewIfNeeded()
       await expect(control).toBeInViewport()
       expect((await control.boundingBox())!.height).toBeGreaterThanOrEqual(44)
     }
-    await expect(page.getByTestId("pending-card")).toContainText("CC0 1.0")
-    const credits = page
-      .getByTestId("pending-card")
-      .locator(".event-image-credits")
-    const creditRect = (await credits.boundingBox())!
-    const handleRect = (await handle.boundingBox())!
-    expect(creditRect.y + creditRect.height).toBeLessThanOrEqual(handleRect.y)
+    await page
+      .getByRole("button", { name: "Credits/Sources", exact: true })
+      .click()
+    await expect(page.getByRole("dialog")).toContainText("CC0 1.0")
+    await expect(page.getByRole("dialog")).toContainText(
+      run.pending!.media.fallback_url,
+    )
+    await page.keyboard.press("Escape")
     expect(
       await page.evaluate(() => document.body.scrollWidth <= innerWidth),
     ).toBe(true)
@@ -912,12 +886,12 @@ test("hundred_card_timeline_every_slot_accessible", async ({
     ).toHaveCount(0)
     expect(
       await page
-        .locator(".game-card")
+        .locator(".timeline-item")
         .first()
         .evaluate((e) => getComputedStyle(e).transitionDuration),
     ).toBe("0s")
     expect(commands).toEqual([])
-    await page.getByRole("button", { name: "First slot", exact: true }).click()
+    await keyboardPreview(page, 0)
     if (!isMobile)
       await page.screenshot({
         path: `${evidence}/U4-100-full-${info.project.name}.png`,

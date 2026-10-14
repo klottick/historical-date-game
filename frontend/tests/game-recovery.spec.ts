@@ -2,6 +2,7 @@ import { test as base, expect, type Page } from "@playwright/test"
 import type { PlaceCommand, RunPublic } from "../src/client/types.gen"
 
 import { fixtureAPI as api } from "./utils/apiOrigin"
+import { keyboardPreview } from "./utils/boardInteraction"
 
 const test = base.extend<{
   player: {
@@ -116,7 +117,7 @@ test("committed_move_response_lost_then_retry", async ({
       await route.abort("timedout") // Only lose the response AFTER verified commit.
     } else await route.continue()
   })
-  await page.getByRole("button", { name: "Slot 1", exact: true }).click()
+  await keyboardPreview(page, 0)
   await page.getByRole("button", { name: "Lock it in", exact: true }).click()
   await expect(
     page.getByRole("button", { name: "Retry same move" }),
@@ -167,7 +168,7 @@ for (const committed of [false, true]) {
       const response = page.waitForResponse(
         (value) => value.url() === `${runURL(initial)}/placements`,
       )
-      await page.getByRole("button", { name: "Slot 1", exact: true }).click()
+      await keyboardPreview(page, 0)
       await page
         .getByRole("button", { name: "Lock it in", exact: true })
         .click()
@@ -210,7 +211,7 @@ for (const committed of [false, true]) {
         } else await route.continue()
       },
     )
-    await page.getByRole("button", { name: "Slot 1", exact: true }).click()
+    await keyboardPreview(page, 0)
     await page.getByRole("button", { name: "Lock it in", exact: true }).click()
     await expect(
       page.getByRole("button", { name: "Retry same move" }),
@@ -347,7 +348,7 @@ test("equal revision focus and reconnect preserve an uncertain command", async (
     if (commands.length === 1) await route.abort("timedout")
     else await route.continue()
   })
-  await page.getByRole("button", { name: "Slot 1", exact: true }).click()
+  await keyboardPreview(page, 0)
   await page.getByRole("button", { name: "Lock it in", exact: true }).click()
   await expect(
     page.getByRole("button", { name: "Retry same move" }),
@@ -365,9 +366,10 @@ test("equal revision focus and reconnect preserve an uncertain command", async (
     await expect(
       page.getByRole("button", { name: "Retry same move" }),
     ).toBeVisible()
-    await expect(
-      page.getByRole("button", { name: "Slot 2", exact: true }),
-    ).toBeDisabled()
+    await expect(page.locator(".pending-draggable")).toHaveAttribute(
+      "aria-disabled",
+      "true",
+    )
   }
   await page.reload()
   await expect(
@@ -402,7 +404,7 @@ test("validation and service failure are not historical losses", async ({
       },
     }),
   )
-  await page.getByRole("button", { name: "Slot 1", exact: true }).click()
+  await keyboardPreview(page, 0)
   await page.getByRole("button", { name: "Lock it in", exact: true }).click()
   await expect(page.getByRole("alert")).toContainText("Invalid placement")
   await expect(
@@ -457,7 +459,7 @@ test("delayed authoritative read cannot roll back a committed move", async ({
   await page.evaluate(() => window.dispatchEvent(new Event("visibilitychange")))
   await ready
   try {
-    await page.getByRole("button", { name: "Slot 1", exact: true }).click()
+    await keyboardPreview(page, 0)
     await page.getByRole("button", { name: "Lock it in", exact: true }).click()
     await expect(page.getByTestId("run-revision")).toHaveText(
       `Revision: ${run.revision + 1}`,
@@ -494,7 +496,7 @@ test("placement authentication renewal keeps the exact recoverable command", asy
     if (request.method() === "POST" && request.url().endsWith("/placements"))
       commands.push(request.postDataJSON())
   })
-  await page.getByRole("button", { name: "Slot 1", exact: true }).click()
+  await keyboardPreview(page, 0)
   // Expire authorization at the server boundary, without pretending that a
   // bearer replacement is the same identity. Retain the original exact move.
   await page.route(`**/games/runs/${run.run_id}/placements`, async (route) => {
@@ -574,8 +576,8 @@ test("two_tabs_one_authoritative_move", async ({
   const second = await context.newPage()
   try {
     await openRun(second, run)
-    await page.getByRole("button", { name: "Slot 1", exact: true }).click()
-    await second.getByRole("button", { name: "Slot 1", exact: true }).click()
+    await keyboardPreview(page, 0)
+    await keyboardPreview(second, 0)
     await page.getByRole("button", { name: "Lock it in", exact: true }).click()
     await expect(page.getByTestId("run-revision")).toHaveText(
       `Revision: ${run.revision + 1}`,
@@ -608,7 +610,7 @@ test("reload_and_login_renewal_preserve_progress", async ({
   run,
 }) => {
   await openRun(page, run)
-  await page.getByRole("button", { name: "Slot 1", exact: true }).click()
+  await keyboardPreview(page, 0)
   await page.getByRole("button", { name: "Lock it in", exact: true }).click()
   await expect(page.getByTestId("run-revision")).toHaveText(
     `Revision: ${run.revision + 1}`,
@@ -653,11 +655,9 @@ test("preview sends no move and feedback instructions work on active cards and r
     if (request.method() === "POST" && request.url().endsWith("/placements"))
       posts.push(request.url())
   })
-  await expect(page.getByRole("button", { name: /^Slot \d+$/ })).toHaveCount(
-    run.timeline.length + 1,
-  )
-  await page.getByRole("button", { name: "Slot 1", exact: true }).click()
-  await page.getByRole("button", { name: "Cancel preview" }).click()
+  await expect(page.locator(".timeline-item")).toHaveCount(run.timeline.length)
+  await keyboardPreview(page, 0)
+  await page.getByRole("button", { name: "Return to hand" }).click()
   expect(posts).toEqual([])
   await page.getByRole("button", { name: "Report content issue" }).click()
   await expect(page.getByRole("dialog")).toContainText(run.pending!.event_id)
@@ -717,19 +717,30 @@ test("preview sends no move and feedback instructions work on active cards and r
     await expect(
       page.getByRole("heading", { name: "Mistake — run complete" }),
     ).toBeVisible()
-    await expect(
-      page.getByText(`Correct slot: ${current.feedback!.correct_slot + 1}`, {
-        exact: true,
-      }),
-    ).toBeVisible()
-    await expect(
-      page.getByRole("region", { name: "Run result" }),
-    ).toContainText(
+    await expect(page.locator(".correct-location")).toHaveAttribute(
+      "data-correct-slot",
+      String(
+        current.feedback!.correct_slot +
+          (current.feedback!.attempted_slot! <= current.feedback!.correct_slot
+            ? 1
+            : 0),
+      ),
+    )
+    const wrongCard = page.locator(".timeline-item[data-wrong=true]")
+    await expect(wrongCard).toContainText(
       `${current.feedback!.card.year.value} ${current.feedback!.card.year.era}`,
     )
-    await expect(
-      page.getByRole("region", { name: "Run result" }),
-    ).toContainText(current.feedback!.card.explanation)
+    await wrongCard
+      .getByRole("button", { name: "Learn more", exact: true })
+      .click()
+    await page
+      .getByRole("dialog")
+      .getByText("Source/provenance details", { exact: true })
+      .click()
+    await expect(page.getByRole("dialog")).toContainText(
+      current.feedback!.card.explanation,
+    )
+    await page.keyboard.press("Escape")
   }
   await page
     .getByRole("button", { name: "Report content issue" })

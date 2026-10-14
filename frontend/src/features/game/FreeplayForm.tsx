@@ -120,7 +120,7 @@ export function FreeplayForm({
 
   return (
     <form
-      className="max-w-2xl space-y-6 rounded-xl border border-[#426d73]/40 bg-card p-6"
+      className="freeplay-form"
       noValidate
       onSubmit={(event) => {
         event.preventDefault()
@@ -138,7 +138,7 @@ export function FreeplayForm({
         mutation.mutate(command)
       }}
     >
-      <fieldset disabled={locked} className="space-y-6">
+      <fieldset disabled={locked}>
         <legend className="font-semibold">Build your timeline</legend>
         <p className="text-sm text-muted-foreground">
           Categories are combined as a union, without duplicate events or years.

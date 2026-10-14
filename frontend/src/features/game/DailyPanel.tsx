@@ -34,7 +34,7 @@ export function DailyLeaderboard({
   })
   useGameSessionError(board.error, context)
   return (
-    <section className="space-y-3">
+    <section className="daily-leaderboard space-y-3">
       <h2 className="text-xl font-semibold">Leaderboard · {day} UTC</h2>
       <p className="text-sm text-muted-foreground">
         Completed runs only. Equal streaks share a rank.
@@ -186,8 +186,8 @@ export function DailyPanel({ context }: { context: GameSessionPublic }) {
     .join(":")
 
   return (
-    <div className="space-y-6">
-      <section className="max-w-2xl space-y-4 rounded-xl border border-[#426d73]/40 bg-card p-6">
+    <div className="daily-entry">
+      <section className="daily-start-panel max-w-2xl space-y-3 rounded-xl border border-[#426d73]/40 p-4">
         <p>
           One scored attempt per{" "}
           {context.kind === "guest" ? "browser" : "account"} per UTC day.

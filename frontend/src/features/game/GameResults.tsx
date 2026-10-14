@@ -1,55 +1,14 @@
 import { Link } from "@tanstack/react-router"
-import type { GameSessionPublic, RevealedCard, RunPublic } from "@/client"
-import { ContentIssueDialog } from "./ContentIssueDialog"
+import type { GameSessionPublic, RunPublic } from "@/client"
+import {
+  Dialog,
+  DialogContent,
+  DialogDescription,
+  DialogTitle,
+  DialogTrigger,
+} from "@/components/ui/dialog"
 import { formatYear } from "./config"
 import { DailyLeaderboard } from "./DailyPanel"
-
-export function CardDetails({
-  card,
-}: {
-  card: RevealedCard
-}): React.JSX.Element {
-  return (
-    <>
-      <h3 className="font-semibold">
-        {card.prompt} · {formatYear(card.year)}
-      </h3>
-      <p>{card.explanation}</p>
-      <ul>
-        {card.sources.map((source) => (
-          <li key={source.url}>
-            <a
-              className="underline"
-              href={source.url}
-              target="_blank"
-              rel="noopener noreferrer"
-            >
-              {source.label}
-            </a>
-          </li>
-        ))}
-      </ul>
-      <ul className="text-sm text-muted-foreground">
-        {card.media.credits.map((credit) => (
-          <li key={`${credit.label}:${credit.url}`}>
-            {credit.url ? (
-              <a
-                className="underline"
-                href={credit.url}
-                target="_blank"
-                rel="noopener noreferrer"
-              >
-                {credit.label}
-              </a>
-            ) : (
-              credit.label
-            )}
-          </li>
-        ))}
-      </ul>
-    </>
-  )
-}
 
 export function GameResults({
   run,
@@ -57,66 +16,61 @@ export function GameResults({
 }: {
   run: RunPublic
   context: GameSessionPublic
-}): React.JSX.Element {
+}) {
   return (
-    <section className="space-y-4" aria-label="Run result">
-      <h2 className="font-serif text-2xl">
+    <section className="game-results" aria-label="Run result">
+      <h2>
         {run.status === "won"
           ? "Victory — catalog exhausted"
           : "Mistake — run complete"}
       </h2>
       <p>Final streak: {run.streak}</p>
-      {run.status === "won" ? (
+      {run.status === "won" && (
         <p>
-          You placed every eligible event in this frozen configuration (
-          {formatYear(run.config.start)}–{formatYear(run.config.end)}, minimum
-          gap {run.config.min_gap}; categories:{" "}
-          {run.categories
-            .filter((category) => run.config.category_ids.includes(category.id))
-            .map((category) => category.label)
-            .join(", ")}
-          ). No eligible unused event remains in catalog release{" "}
-          {run.catalog_release_id}.
+          You placed every eligible event in this frozen configuration. No
+          eligible unused event remains.
         </p>
-      ) : (
-        run.feedback && (
-          <div className="rounded-xl border p-4 space-y-2">
-            <CardDetails card={run.feedback.card} />
-            <p>Correct slot: {run.feedback.correct_slot + 1}</p>
-            <p>
-              The mistaken card does not increase your final streak. The correct
-              slot is numbered among the gaps in your timeline.
-            </p>
-            <ContentIssueDialog
-              runId={run.run_id}
-              eventId={run.feedback.card.event_id}
-            />
-          </div>
-        )
       )}
+      <Dialog>
+        <DialogTrigger asChild>
+          <button type="button">
+            Run details{run.mode === "daily" ? " & leaderboard" : ""}
+          </button>
+        </DialogTrigger>
+        <DialogContent className="game-dialog">
+          <DialogTitle>Run details</DialogTitle>
+          <DialogDescription>
+            Frozen run configuration and outcome.
+          </DialogDescription>
+          <p>
+            {formatYear(run.config.start)}–{formatYear(run.config.end)} ·
+            minimum gap {run.config.min_gap}
+          </p>
+          <p>
+            Categories:{" "}
+            {run.categories
+              .filter((category) =>
+                run.config.category_ids.includes(category.id),
+              )
+              .map((category) => category.label)
+              .join(", ")}
+          </p>
+          <p>Catalog release: {run.catalog_release_id}</p>
+          {run.mode === "daily" && run.daily_date && (
+            <DailyLeaderboard day={run.daily_date} context={context} />
+          )}
+        </DialogContent>
+      </Dialog>
       {run.mode === "daily" ? (
         <>
           <p>
-            This Daily attempt is complete and cannot be replayed. The next
-            challenge starts at the next UTC reset.
+            This Daily attempt is complete and cannot be replayed. Next
+            challenge at the next UTC reset.
           </p>
-          {run.daily_date && (
-            <DailyLeaderboard day={run.daily_date} context={context} />
-          )}
-          <Link to="/daily" className="underline">
-            Daily challenge
-          </Link>
+          <Link to="/daily">Daily challenge</Link>
         </>
       ) : (
-        <Link to="/freeplay" className="underline">
-          New Freeplay
-        </Link>
-      )}
-      {run.status === "won" && run.timeline.length > 0 && (
-        <ContentIssueDialog
-          runId={run.run_id}
-          eventId={run.timeline[run.timeline.length - 1].event_id}
-        />
+        <Link to="/freeplay">New Freeplay</Link>
       )}
     </section>
   )
