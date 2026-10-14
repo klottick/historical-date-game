@@ -110,10 +110,12 @@ def seed_browser(target: str, release: Path | None) -> None:
     runtime = config["runtime"]
     runtime.mkdir(parents=True, exist_ok=True, mode=0o700)
     with _maintenance_connection() as connection:
-        if connection.execute(
+        activity = connection.execute(
             "SELECT count(*) FROM pg_stat_activity WHERE datname = %s",
             (config["database"],),
-        ).fetchone()[0]:
+        ).fetchone()
+        assert activity is not None  # COUNT always returns one row.
+        if activity[0]:
             raise RuntimeError("Refusing seed while the browser database is in use")
     proof_engine = create_engine(
         str(settings.SQLALCHEMY_DATABASE_URI).rsplit("/", 1)[0]
@@ -142,6 +144,7 @@ def seed_browser(target: str, release: Path | None) -> None:
                 )
                 if not manifest.fixture or manifest.event_count != 8:
                     raise RuntimeError("Verified eight-event fixture required")
+            assert release is not None  # Verified above for either target.
             _project_media(release, manifest, runtime)
             activate_catalog(
                 session, release, release / "media", require_beta=target == "real"
@@ -208,6 +211,32 @@ def _require_free_port(port: int) -> None:
         listener.bind(("127.0.0.1", port))
 
 
+def browser_email_policy(target: str) -> dict[str, Any]:
+    browser_target(target)  # Reject unknown targets before applying a policy.
+    fixture = target == "fixture"
+    return {
+        "SMTP_HOST": "127.0.0.1" if fixture else None,
+        "SMTP_PORT": 1025 if fixture else 587,
+        "SMTP_TLS": False,
+        "SMTP_SSL": False,
+        "SMTP_USER": None,
+        "SMTP_PASSWORD": None,
+        "EMAILS_FROM_EMAIL": "guest-verification@example.com" if fixture else None,
+    }
+
+
+def browser_app() -> Any:
+    """Uvicorn factory: enforce email isolation before routes capture settings."""
+    policy = browser_email_policy(os.environ.get("HDG_GUEST_BROWSER_TARGET", ""))
+    # Settings ignores empty env values, allowing .env to restore SMTP credentials.
+    # Apply the known literal policy to the shared object before importing the app.
+    for field, value in policy.items():
+        setattr(settings, field, value)
+    from app.main import app
+
+    return app
+
+
 def owned_process(target: str, component: str, stop: bool = False) -> None:
     config = browser_target(target)
     require_owned_guest_database(config["database"])
@@ -253,25 +282,25 @@ def owned_process(target: str, component: str, stop: bool = False) -> None:
         GAME_DATA_DIR=str(config["runtime"]),
         PUBLIC_REGISTRATION_ENABLED="false" if target == "real" else "true",
         VITE_API_URL=f"http://localhost:{config['backend_port']}",
+        HDG_GUEST_BROWSER_TARGET=target,
     )
-    if target == "fixture":
-        # Existing account password-recovery suite uses the owned local catcher.
-        # Never send verification account mail through an external SMTP server.
-        env.update(
-            SMTP_HOST="127.0.0.1",
-            SMTP_PORT="1025",
-            SMTP_TLS="false",
-            SMTP_SSL="false",
-            SMTP_USER="",
-            SMTP_PASSWORD="",
-            EMAILS_FROM_EMAIL="guest-verification@example.com",
-        )
+    env.update(
+        {
+            field: ""
+            if value is None
+            else str(value).lower()
+            if isinstance(value, bool)
+            else str(value)
+            for field, value in browser_email_policy(target).items()
+        }
+    )
     if component == "backend":
         command = [
             sys.executable,
             "-m",
             "uvicorn",
-            "app.main:app",
+            "tests.browser.guest_test_environment:browser_app",
+            "--factory",
             "--host",
             "127.0.0.1",
             "--port",
@@ -300,7 +329,28 @@ def owned_process(target: str, component: str, stop: bool = False) -> None:
             stderr=output,
             start_new_session=True,
         )
-    record = wait_process_identity(process, cwd, command)
+    try:
+        record = wait_process_identity(process, cwd, command)
+    except OSError, ValueError, RuntimeError:
+        # This Popen child is ours, but its executable identity is unconfirmed.
+        # Preserve diagnostic context only; never turn it into a stop ledger or
+        # signal a PID that failed the normal ownership proof.
+        diagnostic = EVIDENCE / f"{target}-{component}-unconfirmed-{process.pid}.json"
+        with os.fdopen(
+            os.open(diagnostic, os.O_WRONLY | os.O_CREAT | os.O_EXCL, 0o600), "w"
+        ) as output:
+            json.dump(
+                {
+                    "pid": process.pid,
+                    "parent_pid": os.getpid(),
+                    "cwd": str(cwd),
+                    "expected_command": command,
+                    "ownership_confirmed": False,
+                },
+                output,
+                indent=2,
+            )
+        raise
     record_path.write_text(json.dumps(record, indent=2))
     record_path.chmod(0o600)
     url = f"http://127.0.0.1:{config[f'{component}_port']}" + (
