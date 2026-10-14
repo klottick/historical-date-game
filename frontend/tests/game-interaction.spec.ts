@@ -4,6 +4,7 @@ import type { PlaceCommand, RunPublic } from "../src/client/types.gen"
 import { fixtureAPI as api, fixtureAPIOrigin } from "./utils/apiOrigin"
 import { boardEvidence } from "./utils/boardEvidence"
 import { dragTile, keyboardPreview } from "./utils/boardInteraction"
+import { readGameOptions } from "./utils/gameOptions"
 
 const test = base.extend<{ run: RunPublic; headers: Record<string, string> }>({
   headers: async ({ page }, use) => {
@@ -39,9 +40,9 @@ const test = base.extend<{ run: RunPublic; headers: Record<string, string> }>({
     }
   },
   run: async ({ page, headers }, use) => {
-    const options = await (
-      await page.request.get(`${api}/games/options`, { headers })
-    ).json()
+    const options = await readGameOptions(
+      await page.request.get(`${api}/games/options`, { headers }),
+    )
     const response = await page.request.post(`${api}/games/freeplay`, {
       headers,
       data: {

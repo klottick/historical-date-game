@@ -204,7 +204,10 @@ with `docker compose -p hdg-beta-baseline stop db mailcatcher`. Never use broad
 
 ## Game API, beta enrollment, and immutable media
 
-All `/api/v1/games` endpoints require the existing bearer authentication. Commands
+`GET /api/v1/games/options` is public. Supported game operations accept either
+account bearer authentication or the game-only guest cookie; account/settings
+and administrator routes still require an account bearer. See
+[guest-play operations](docs/beta/guest-play.md) for cookie/bootstrap boundaries. Commands
 accept only the public DTO fields; answers, scores, seeds, pools, and ordering
 remain server-side. Daily always uses the server's timezone-aware UTC date;
 client day/seed/config inputs cannot select a scored attempt. Game service errors
@@ -216,8 +219,19 @@ catalog/Daily policy. Missing credentials return 401.
 tests. **Explicitly set `PUBLIC_REGISTRATION_ENABLED=false` for the friends beta.**
 This disables only public `/users/signup` (403); administrator enrollment, login,
 account management, and password recovery remain unchanged. Unauthenticated
-`GET /api/v1/utils/public-config` contains only `registration_open`; authenticated
+`GET /api/v1/utils/public-config` contains only `registration_open`; public
 game options mirror that same flag and do not expose private catalog fields.
+
+Playwright CI provisions a new ownership-commented synthetic fixture database in
+each disposable hosted Compose job before browser consumers start. The existing
+C3/C4/C5 fixture builder verifies and activates eight synthetic events; only the
+matching release-scoped opaque-hash public media is mounted read-only into the
+backend. Private catalog/build files stay outside frontend and container build
+contexts. `tests.browser.ci_fixture` is CI-only and refuses existing runtime/DB
+state; it is not a local/live catalog tool or part of production startup. Docker
+browser tests use a same-origin Vite API/media proxy so the actual Lax guest
+cookie works after logout. Board/bootstrap/identity controlled harnesses run
+separately, serially with zero retries, without account, DB, or SMTP fixtures.
 
 `GAME_DATA_DIR/media/<release_id>/<sha256>.svg` and `.webp` are the only served
 paths under `/media`. Provision each release's retained public assets into this

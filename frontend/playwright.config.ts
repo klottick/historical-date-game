@@ -102,7 +102,9 @@ export default defineConfig({
 
   /* Run your local dev server before starting the tests */
   webServer: {
-    command: 'npm run dev',
+    command: process.env.PLAYWRIGHT_API_PROXY
+      ? 'npm run dev -- --config vite.playwright.config.ts'
+      : 'npm run dev',
     url: 'http://localhost:5173',
     reuseExistingServer: !isCI,
   },
