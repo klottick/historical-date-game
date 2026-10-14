@@ -4,6 +4,7 @@ Nothing here changes the sealed corpus or its selection policy. Missing evidence
 is a source link, not a search request, guess, or review queue.
 """
 
+import asyncio
 import fcntl
 import hashlib
 import html
@@ -373,13 +374,25 @@ def resolve_event_link(
         )
         return fallback.model_copy(update={"reason": reason})
     candidates: dict[str, tuple[int, CanonicalPage]] = {}
-    missing_canonical = False
+    unresolved_lengths = []
     for title, label in entry.links:
         if not _ordinary_title(title) or not _contiguous(label, event.prompt, 3):
             continue
         page = canonical_pages.get(title)
-        if page is None:
-            missing_canonical = True
+        length = sum(t not in STOPWORDS for t in _tokens(label))
+        if page is None or (
+            not page.missing
+            and not page.disambiguation
+            and page.namespace == 0
+            and (
+                not page.categories
+                or page.page_id is None
+                or page.page_id <= 0
+                or page.revision_id is None
+                or page.revision_id <= 0
+            )
+        ):
+            unresolved_lengths.append(length)
             continue
         if not _validated(page) or not _canonical_subject(page, event.prompt, 3):
             continue
@@ -391,16 +404,18 @@ def resolve_event_link(
                 continue
         elif not (set(_tokens(title)) & SUBJECTS):
             continue
-        candidates[page.url] = (sum(t not in STOPWORDS for t in _tokens(label)), page)
+        candidates[page.url] = (length, page)
     if not candidates:
         return fallback.model_copy(
             update={
                 "reason": "canonical_unavailable"
-                if missing_canonical
+                if unresolved_lengths
                 else "subject_unresolved"
             }
         )
     longest = max(length for length, _ in candidates.values())
+    if any(length >= longest for length in unresolved_lengths):
+        return fallback.model_copy(update={"reason": "canonical_unavailable"})
     best = [page for length, page in candidates.values() if length == longest]
     if len(best) != 1:
         return fallback.model_copy(update={"reason": "ambiguous_subject"})
@@ -409,12 +424,12 @@ def resolve_event_link(
     )
 
 
-def _private_path(path: Path, release: Path) -> Path:
+def _private_path(path: Path, release: Path | None = None) -> Path:
     path = _safe_root(path)
     if (
-        path.is_relative_to(release)
+        (release is not None and path.is_relative_to(release))
         or any(part in {"public", "media"} for part in path.parts)
-        or any((parent / "manifest.json").exists() for parent in path.parents)
+        or any((parent / "manifest.json").exists() for parent in (path, *path.parents))
     ):
         raise ValueError("event_links_must_remain_private")
     return path
@@ -451,9 +466,10 @@ class EvidenceCache(AbstractContextManager["EvidenceCache"]):
     """
 
     def __init__(self, root: Path, *, offline: bool) -> None:
-        self.root = _safe_root(root)
+        self.root = _private_path(root)
         self.offline = offline
-        self.client: httpx.Client | None = None
+        self.client: httpx.AsyncClient | None = None
+        self.runner: asyncio.Runner | None = None
         self.last_request: float | None = None
         self.lock: Any = None
 
@@ -464,7 +480,8 @@ class EvidenceCache(AbstractContextManager["EvidenceCache"]):
         lock_path.chmod(0o600)
         fcntl.flock(self.lock, fcntl.LOCK_EX)
         if not self.offline:
-            self.client = httpx.Client(
+            self.runner = asyncio.Runner()
+            self.client = httpx.AsyncClient(
                 timeout=10,
                 follow_redirects=False,
                 trust_env=False,
@@ -475,15 +492,38 @@ class EvidenceCache(AbstractContextManager["EvidenceCache"]):
         return self
 
     def __exit__(self, *args: Any) -> None:
-        if self.client:
-            self.client.close()
-        if self.lock:
-            self.lock.close()
+        try:
+            if self.client and self.runner:
+                self.runner.run(self.client.aclose())
+        finally:
+            try:
+                if self.runner:
+                    self.runner.close()
+            finally:
+                if self.lock:
+                    self.lock.close()
+
+    async def _read_response(
+        self, params: dict[str, str]
+    ) -> tuple[httpx.Response, bytes | None]:
+        assert self.client is not None
+        # Native async reads can be cancelled during header acquisition or any
+        # body read. An idle timeout/check after a buffered yield cannot bound a
+        # continuously trickling provider. No worker thread owns the socket.
+        deadline = asyncio.get_running_loop().time() + 10
+        async with asyncio.timeout_at(deadline):
+            async with self.client.stream("GET", API_URL, params=params) as response:
+                body = bytearray()
+                async for chunk in response.aiter_bytes():
+                    if len(body) + len(chunk) > MAX_RESPONSE_BYTES:
+                        return response, None
+                    body.extend(chunk)
+                return response, bytes(body)
 
     def _fetch(
         self, params: dict[str, str]
     ) -> tuple[dict[str, Any] | None, str | None]:
-        assert self.client is not None
+        assert self.client is not None and self.runner is not None
         reason = "acquisition_unavailable"
         for attempt in range(3):
             if self.last_request is not None:
@@ -492,36 +532,32 @@ class EvidenceCache(AbstractContextManager["EvidenceCache"]):
                 time.sleep(1)
             self.last_request = time.monotonic()
             try:
-                with self.client.stream("GET", API_URL, params=params) as response:
-                    body = bytearray()
-                    for chunk in response.iter_bytes(64 * 1024):
-                        if (
-                            len(body) + len(chunk) > MAX_RESPONSE_BYTES
-                            or time.monotonic() - self.last_request > 10
-                        ):
-                            return None, "response_limits"
-                        body.extend(chunk)
-                    if response.status_code in {429, 503}:
-                        reason = "provider_unavailable"
-                        if attempt < 2:
-                            time.sleep(_retry_seconds(response.headers, utc_now())[0])
-                            continue
-                        return None, reason
-                    data = _json(bytes(body))
-                    if not isinstance(data, dict):
-                        return None, "malformed_evidence"
-                    error = data.get("error", {})
-                    if isinstance(error, dict) and error.get("code") in {
-                        "maxlag",
-                        "ratelimited",
-                    }:
-                        reason = "provider_unavailable"
-                        if attempt < 2:
-                            time.sleep(_retry_seconds(response.headers, utc_now())[0])
-                            continue
-                    if response.status_code != 200 or error:
-                        return None, reason
-                    return data, None
+                response, body = self.runner.run(self._read_response(params))
+                if body is None:
+                    return None, "response_limits"
+                if response.status_code in {429, 503}:
+                    reason = "provider_unavailable"
+                    if attempt < 2:
+                        time.sleep(_retry_seconds(response.headers, utc_now())[0])
+                        continue
+                    return None, reason
+                data = _json(body)
+                if not isinstance(data, dict):
+                    return None, "malformed_evidence"
+                error = data.get("error", {})
+                if isinstance(error, dict) and error.get("code") in {
+                    "maxlag",
+                    "ratelimited",
+                }:
+                    reason = "provider_unavailable"
+                    if attempt < 2:
+                        time.sleep(_retry_seconds(response.headers, utc_now())[0])
+                        continue
+                if response.status_code != 200 or error:
+                    return None, reason
+                return data, None
+            except TimeoutError:
+                return None, "response_deadline"
             except httpx.HTTPError:
                 reason = "transport_unavailable"
             except ValueError, TypeError:
@@ -597,6 +633,19 @@ class EvidenceCache(AbstractContextManager["EvidenceCache"]):
                 continue
             try:
                 query = data["query"]
+                if not isinstance(query, dict) or not isinstance(
+                    query.get("pages"), list
+                ):
+                    raise ValueError("malformed_canonical_query")
+                for group in ("normalized", "redirects"):
+                    rows = query.get(group, [])
+                    if not isinstance(rows, list) or any(
+                        not isinstance(row, dict)
+                        or not isinstance(row.get("from"), str)
+                        or not isinstance(row.get("to"), str)
+                        for row in rows
+                    ):
+                        raise ValueError("malformed_canonical_aliases")
                 aliases = {
                     r["from"]: r["to"]
                     for group in ("normalized", "redirects")
@@ -604,13 +653,26 @@ class EvidenceCache(AbstractContextManager["EvidenceCache"]):
                 }
                 returned = {}
                 for row in query["pages"]:
+                    if not isinstance(row, dict) or not isinstance(
+                        row.get("pageprops", {}), dict
+                    ):
+                        raise ValueError("malformed_canonical_page")
                     # Absence of pageprops in MediaWiki means no properties,
                     # whereas absent categories is insufficient evidence.
                     if "categories" not in row:
                         continue
+                    if not isinstance(row["categories"], list) or any(
+                        not isinstance(category, dict)
+                        or not isinstance(category.get("title"), str)
+                        for category in row["categories"]
+                    ):
+                        raise ValueError("malformed_canonical_categories")
+                    url = row.get("canonicalurl", row.get("fullurl", ""))
+                    if not isinstance(url, str):
+                        raise ValueError("malformed_canonical_url")
                     page = CanonicalPage(
                         title=row["title"],
-                        url=row.get("canonicalurl", row.get("fullurl", "")),
+                        url=url,
                         page_id=row.get("pageid"),
                         revision_id=row.get("lastrevid"),
                         namespace=row["ns"],

@@ -1,10 +1,14 @@
 """Canned evidence exercises conservative resolution, acquisition and publication."""
 
+import asyncio
 import hashlib
 import importlib
 import json
 import subprocess
 import sys
+import threading
+import time
+from contextlib import suppress
 from datetime import UTC, datetime
 from pathlib import Path
 from typing import Any
@@ -107,6 +111,32 @@ def test_ambiguous_subject_uses_source() -> None:
         ),
     }
     assert_source(links().resolve_event_link(event(prompt=prompt), html, pages))
+
+
+@pytest.mark.parametrize(
+    "competitor", ["Siege of Blue River", "Siege of Blue River Valley"]
+)
+@pytest.mark.parametrize("evidence", ["absent", "incomplete", "invalid_ids"])
+def test_unresolved_equal_or_longer_competitor_preserves_uncertainty(
+    competitor: str, evidence: str
+) -> None:
+    prompt = f"The Battle of Red River and the {competitor} begin."
+    html = HTML.replace(
+        " begins.",
+        f' and the <a href="/wiki/{competitor.replace(" ", "_")}">{competitor}</a> begin.',
+    )
+    pages = {"Battle of Red River": page()}
+    if evidence != "absent":
+        pages[competitor] = page(
+            title=competitor,
+            url="https://en.wikipedia.org/wiki/" + competitor.replace(" ", "_"),
+            categories=() if evidence == "incomplete" else ("Category:Battles",),
+            page_id=0 if evidence == "invalid_ids" else 42,
+            revision_id=0 if evidence == "invalid_ids" else 101,
+        )
+    record = links().resolve_event_link(event(prompt=prompt), html, pages)
+    assert_source(record)
+    assert record.reason == "canonical_unavailable"
 
 
 @pytest.mark.parametrize(
@@ -333,6 +363,52 @@ def test_build_cannot_write_inside_another_sealed_release(tmp_path: Path) -> Non
     assert (other / "manifest.json").read_text() == "sealed sentinel"
 
 
+@pytest.mark.parametrize("offline", [True, False])
+def test_cache_cannot_be_another_sealed_release_root(
+    tmp_path: Path, offline: bool
+) -> None:
+    release = synthetic_release(tmp_path)
+    sealed = tmp_path / "other-sealed"
+    sealed.mkdir(mode=0o755)
+    (sealed / "manifest.json").write_bytes(b"immutable manifest")
+    (sealed / ".lock").write_bytes(b"immutable lock-name artifact")
+    (sealed / ".lock").chmod(0o644)
+
+    def snapshot() -> dict[str, tuple[int, bytes | None]]:
+        return {
+            str(p.relative_to(sealed)): (
+                p.stat().st_mode,
+                p.read_bytes() if p.is_file() else None,
+            )
+            for p in (sealed, *sealed.rglob("*"))
+        }
+
+    before = snapshot()
+    with pytest.raises(ValueError, match="event_links_must_remain_private"):
+        links().build_event_links(
+            release, sealed, tmp_path / "links.json", offline=offline
+        )
+    assert snapshot() == before
+    assert not (tmp_path / "links.json").exists()
+
+
+def test_direct_evidence_cache_cannot_touch_a_sealed_root(tmp_path: Path) -> None:
+    sealed = tmp_path / "sealed"
+    sealed.mkdir(mode=0o755)
+    (sealed / "manifest.json").write_bytes(b"sealed sentinel")
+    before = {
+        str(p): (p.stat().st_mode, p.read_bytes() if p.is_file() else None)
+        for p in (sealed, *sealed.rglob("*"))
+    }
+    with pytest.raises(ValueError, match="event_links_must_remain_private"):
+        with links().EvidenceCache(sealed, offline=True):
+            pass
+    assert before == {
+        str(p): (p.stat().st_mode, p.read_bytes() if p.is_file() else None)
+        for p in (sealed, *sealed.rglob("*"))
+    }
+
+
 def test_cache_lock_symlink_does_not_touch_an_unowned_file(tmp_path: Path) -> None:
     cache_root = tmp_path / "cache"
     cache_root.mkdir()
@@ -361,6 +437,7 @@ def test_offline_build_is_deterministic_create_only_and_preserves_release(
         pytest.fail("offline acquisition used transport")
 
     monkeypatch.setattr(httpx.Client, "stream", forbidden)
+    monkeypatch.setattr(httpx.AsyncClient, "stream", forbidden)
     output = tmp_path / "private" / "links.json"
     first = links().build_event_links(release, tmp_path / "cache", output, offline=True)
     second = links().build_event_links(
@@ -509,6 +586,92 @@ def install_transport(monkeypatch: pytest.MonkeyPatch, handler: Any) -> None:
         httpx,
         "Client",
         lambda **kwargs: original(**kwargs, transport=httpx.MockTransport(handler)),
+    )
+    asynchronous = httpx.AsyncClient
+    monkeypatch.setattr(
+        httpx,
+        "AsyncClient",
+        lambda **kwargs: asynchronous(**kwargs, transport=httpx.MockTransport(handler)),
+    )
+
+
+@pytest.mark.parametrize(
+    "response",
+    [
+        {"query": None},
+        {"query": []},
+        {"query": {"pages": ["categories"]}},
+        {"query": {"pages": [], "redirects": [None]}},
+    ],
+)
+@pytest.mark.parametrize("offline", [False, True])
+def test_malformed_canonical_online_and_cache_publish_safe_sources(
+    tmp_path: Path,
+    monkeypatch: pytest.MonkeyPatch,
+    response: dict[str, Any],
+    offline: bool,
+) -> None:
+    from app.content.importer import import_snapshot
+    from app.content.media import pipeline
+    from app.content.publish import canonical
+    from tests.content.test_media import SELECTION
+    from tests.content.test_onthisday import fixture_snapshot, row
+
+    adapter, snapshot_root = fixture_snapshot(
+        tmp_path, monkeypatch, [row(event=PROMPT)]
+    )
+    workspace = tmp_path / "work"
+    import_snapshot(adapter, snapshot_root, workspace)
+    pipeline.assign_chronology_media(SELECTION, workspace)
+    assert all(r.passed for r in pipeline.finalize_media_receipts(workspace))
+    publish_release(workspace, tmp_path / "releases", "malformed-fixture", fixture=True)
+    release = tmp_path / "releases" / "malformed-fixture"
+    cache_root = tmp_path / "cache"
+    if offline:
+        cache_root.mkdir(mode=0o700)
+        for params, body in [
+            (
+                {"action": "parse", "page": "January 1", "prop": "text|revid"},
+                {"parse": {"title": "January 1", "text": HTML, "revid": 991}},
+            ),
+            (
+                {
+                    "action": "query",
+                    "titles": "Battle of Red River",
+                    "redirects": "1",
+                    "prop": "info|pageprops|categories",
+                    "inprop": "url",
+                    "cllimit": "max",
+                },
+                response,
+            ),
+        ]:
+            params.update({"format": "json", "formatversion": "2", "maxlag": "5"})
+            (
+                cache_root / (hashlib.sha256(canonical(params)).hexdigest() + ".json")
+            ).write_bytes(
+                canonical({"params": params, "response": body, "reason": None})
+            )
+
+    def handler(request: httpx.Request) -> httpx.Response:
+        assert not offline, "offline cache must never invoke transport"
+        if request.url.params["action"] == "parse":
+            return httpx.Response(
+                200, json={"parse": {"title": "January 1", "text": HTML, "revid": 991}}
+            )
+        return httpx.Response(200, json=response)
+
+    install_transport(monkeypatch, handler)
+    monkeypatch.setattr(links().time, "sleep", lambda _delay: None)
+    output = tmp_path / "links.json"
+    summary = links().build_event_links(release, cache_root, output, offline=offline)
+    assert (summary.total, summary.article, summary.source) == (1, 0, 1)
+    assert summary.reasons == {"canonical_unavailable": 1}
+    record = next(iter(json.loads(output.read_bytes())["records"].values()))
+    assert (record["kind"], record["label"], record["url"]) == (
+        "source",
+        "Wikipedia calendar source",
+        SOURCE,
     )
 
 
@@ -673,3 +836,156 @@ def test_slow_request_still_leaves_one_second_before_next_request(
         assert cache.calendar("January 1")[0] == HTML
         assert cache.calendar("January 2")[0] == HTML
     assert sleeps == [1.0]
+
+
+@pytest.mark.parametrize("phase", ["headers", "slow_trickle"])
+def test_absolute_acquisition_deadline_cancels_headers_and_stream_reads(
+    tmp_path: Path, monkeypatch: pytest.MonkeyPatch, phase: str
+) -> None:
+    # Both transport interfaces model the same delayed provider so RED exercises
+    # the old sync reader, while GREEN exercises native cancellable async reads.
+    state = {"finished": False, "closed": False, "requests": 0}
+
+    class Stream(httpx.SyncByteStream, httpx.AsyncByteStream):
+        def __iter__(self) -> Any:
+            for _ in range(24):
+                time.sleep(0.5)
+                yield b" "
+            state["finished"] = True
+
+        async def __aiter__(self) -> Any:
+            for _ in range(24):
+                await asyncio.sleep(0.5)
+                yield b" "
+            state["finished"] = True
+
+        def close(self) -> None:
+            state["closed"] = True
+
+        async def aclose(self) -> None:
+            state["closed"] = True
+
+    class Transport(httpx.BaseTransport, httpx.AsyncBaseTransport):
+        def handle_request(self, _request: httpx.Request) -> httpx.Response:
+            state["requests"] += 1
+            if phase == "headers":
+                try:
+                    time.sleep(11)
+                    state["finished"] = True
+                    return httpx.Response(200, content=b"{}")
+                finally:
+                    state["closed"] = True
+            return httpx.Response(200, stream=Stream())
+
+        async def handle_async_request(self, _request: httpx.Request) -> httpx.Response:
+            state["requests"] += 1
+            if phase == "headers":
+                try:
+                    await asyncio.sleep(11)
+                    state["finished"] = True
+                    return httpx.Response(200, content=b"{}")
+                finally:
+                    state["closed"] = True
+            return httpx.Response(200, stream=Stream())
+
+    sync, asynchronous = httpx.Client, httpx.AsyncClient
+    monkeypatch.setattr(
+        httpx, "Client", lambda **kwargs: sync(**kwargs, transport=Transport())
+    )
+    monkeypatch.setattr(
+        httpx,
+        "AsyncClient",
+        lambda **kwargs: asynchronous(**kwargs, transport=Transport()),
+    )
+    threads = {thread.ident for thread in threading.enumerate()}
+    started = time.monotonic()
+    with links().EvidenceCache(tmp_path / "cache", offline=False) as cache:
+        result = cache.calendar("January 1")
+    elapsed = time.monotonic() - started
+    assert elapsed < 10.8, (
+        f"{phase} acquisition took {elapsed:.2f}s, beyond the 10s deadline"
+    )
+    assert result == (None, None, "response_deadline")
+    assert state == {"finished": False, "closed": True, "requests": 1}
+    assert {thread.ident for thread in threading.enumerate()} == threads
+    with links().EvidenceCache(tmp_path / "cache", offline=True) as cache:
+        assert cache.calendar("January 1") == result
+    assert state["requests"] == 1
+
+
+@pytest.mark.parametrize("phase", ["headers", "slow_trickle"])
+def test_native_http_transport_deadline_closes_loopback_connection(
+    tmp_path: Path, monkeypatch: pytest.MonkeyPatch, phase: str
+) -> None:
+    # Exercise pinned httpx/httpcore parsing and native cancellable socket reads,
+    # not just a canned completed Response. The URL rewrite exists only here.
+    state = {"port": 0, "requests": 0, "closed": 0, "finished": False}
+    tasks: set[asyncio.Task[Any]] = set()
+
+    async def provider(
+        reader: asyncio.StreamReader, writer: asyncio.StreamWriter
+    ) -> None:
+        task = asyncio.current_task()
+        assert task is not None
+        tasks.add(task)
+        try:
+            await reader.readuntil(b"\r\n\r\n")
+            state["requests"] += 1
+            if phase == "headers":
+                await asyncio.sleep(11)
+                writer.write(b"HTTP/1.1 200 OK\r\nContent-Length: 2\r\n\r\n{}")
+                await writer.drain()
+            else:
+                writer.write(b"HTTP/1.1 200 OK\r\nContent-Length: 24\r\n\r\n")
+                await writer.drain()
+                for _ in range(24):
+                    await asyncio.sleep(0.5)
+                    writer.write(b" ")
+                    await writer.drain()
+            state["finished"] = True
+        finally:
+            writer.close()
+            with suppress(ConnectionError):
+                await writer.wait_closed()
+            state["closed"] += 1
+
+    async def start_server() -> asyncio.Server:
+        server = await asyncio.start_server(provider, "127.0.0.1", 0)
+        state["port"] = server.sockets[0].getsockname()[1]
+        return server
+
+    async def stop_server(server: asyncio.Server) -> None:
+        server.close()
+        for task in tasks:
+            task.cancel()
+        await asyncio.gather(*tasks, return_exceptions=True)
+        await server.wait_closed()
+
+    class LoopbackTransport(httpx.AsyncHTTPTransport):
+        async def handle_async_request(self, request: httpx.Request) -> httpx.Response:
+            assert str(request.url).startswith("https://en.wikipedia.org/w/api.php?")
+            request.url = request.url.copy_with(
+                scheme="http", host="127.0.0.1", port=state["port"]
+            )
+            return await super().handle_async_request(request)
+
+    original = httpx.AsyncClient
+    monkeypatch.setattr(
+        httpx,
+        "AsyncClient",
+        lambda **kwargs: original(**kwargs, transport=LoopbackTransport()),
+    )
+    threads = {thread.ident for thread in threading.enumerate()}
+    with links().EvidenceCache(tmp_path / "cache", offline=False) as cache:
+        server = cache.runner.run(start_server())
+        started = time.monotonic()
+        try:
+            result = cache.calendar("January 1")
+        finally:
+            cache.runner.run(stop_server(server))
+        elapsed = time.monotonic() - started
+    assert result == (None, None, "response_deadline")
+    assert elapsed < 10.8, f"native {phase} read took {elapsed:.2f}s"
+    assert state["requests"] == state["closed"] == 1 and state["finished"] is False
+    assert all(task.done() for task in tasks)
+    assert {thread.ident for thread in threading.enumerate()} == threads
