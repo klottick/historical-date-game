@@ -2,7 +2,8 @@ import { mkdir, writeFile } from "node:fs/promises"
 import { test as base, expect, type Page } from "@playwright/test"
 import type { PlaceCommand, RunPublic } from "../src/client/types.gen"
 
-const api = "http://localhost:8000/api/v1"
+import { fixtureAPI as api, fixtureAPIOrigin } from "./utils/apiOrigin"
+
 const test = base.extend<{ run: RunPublic; headers: Record<string, string> }>({
   headers: async ({ page }, use) => {
     await page.goto("/")
@@ -61,7 +62,7 @@ const test = base.extend<{ run: RunPublic; headers: Record<string, string> }>({
       for (const url of new Set([card.media.url, card.media.fallback_url])) {
         expect(
           (
-            await page.request.get(new URL(url, "http://localhost:8000").href)
+            await page.request.get(new URL(url, fixtureAPIOrigin).href)
           ).status(),
           `Actual backend media: ${url}`,
         ).toBe(200)
@@ -183,7 +184,7 @@ test("drop_previews_reposition_and_lock", async ({
   ).toHaveAttribute("aria-pressed", "true")
   expect(commands).toHaveLength(0)
   const dir =
-    "../.superpowers/sdd/2026-10-11-historical-date-game-beta/artifacts"
+    "../.superpowers/sdd/2026-10-13-historical-date-game-guest-play/task-5-evidence/fixture-artifacts"
   await mkdir(dir, { recursive: true })
   await page.screenshot({
     path: `${dir}/U3-${info.project.name}.png`,
@@ -349,7 +350,7 @@ test("image_failure_does_not_change_state", async ({ page, run }, info) => {
   ).toBeVisible()
   expect(commands).toHaveLength(0)
   await page.screenshot({
-    path: `../.superpowers/sdd/2026-10-11-historical-date-game-beta/artifacts/U3-placeholder-${info.project.name}.png`,
+    path: `../.superpowers/sdd/2026-10-13-historical-date-game-guest-play/task-5-evidence/fixture-artifacts/U3-placeholder-${info.project.name}.png`,
     fullPage: true,
   })
 })
@@ -371,7 +372,7 @@ test("public_media_loads_from_api_origin", async ({ page, run }) => {
   )
   if (run.pending!.media.url.startsWith("/"))
     expect(await image.getAttribute("src")).toBe(
-      `http://localhost:8000${run.pending!.media.url}`,
+      `${fixtureAPIOrigin}${run.pending!.media.url}`,
     )
 })
 
@@ -456,7 +457,7 @@ test("long_timeline_all_gaps_and_controls_remain_reachable", async ({
     `U3 ${info.project.name} long timeline: ${JSON.stringify(dimensions)}`,
   )
   await page.screenshot({
-    path: `../.superpowers/sdd/2026-10-11-historical-date-game-beta/artifacts/U3-long-${info.project.name}.png`,
+    path: `../.superpowers/sdd/2026-10-13-historical-date-game-guest-play/task-5-evidence/fixture-artifacts/U3-long-${info.project.name}.png`,
     fullPage: true,
   })
   expect(commands).toHaveLength(0)
@@ -532,7 +533,7 @@ test("lifted_overlay_keeps_the_frame_and_reduced_motion_removes_decoration", asy
       .evaluate((e) => getComputedStyle(e).backgroundColor),
   ).toBe("rgb(247, 240, 223)")
   await page.screenshot({
-    path: `../.superpowers/sdd/2026-10-11-historical-date-game-beta/artifacts/U3-lift-${info.project.name}.png`,
+    path: `../.superpowers/sdd/2026-10-13-historical-date-game-guest-play/task-5-evidence/fixture-artifacts/U3-lift-${info.project.name}.png`,
   })
   await page.keyboard.press("Escape")
   await expect(overlay).toBeHidden()
@@ -584,7 +585,7 @@ test("victory_keeps_full_width_timeline_and_navigation_nonblocking", async ({
   expect(link.height).toBeGreaterThanOrEqual(44)
   expect(report.x - link.x - link.width).toBeGreaterThanOrEqual(8)
   await page.screenshot({
-    path: `../.superpowers/sdd/2026-10-11-historical-date-game-beta/artifacts/U3-victory-${info.project.name}.png`,
+    path: `../.superpowers/sdd/2026-10-13-historical-date-game-guest-play/task-5-evidence/fixture-artifacts/U3-victory-${info.project.name}.png`,
     fullPage: true,
   })
 })
@@ -629,7 +630,7 @@ test("mistake_credits_remain_readable_on_the_cream_result_in_dark_theme", async 
   })
   expect(contrast).toBeGreaterThanOrEqual(4.5)
   await page.screenshot({
-    path: `../.superpowers/sdd/2026-10-11-historical-date-game-beta/artifacts/U3-mistake-${info.project.name}.png`,
+    path: `../.superpowers/sdd/2026-10-13-historical-date-game-guest-play/task-5-evidence/fixture-artifacts/U3-mistake-${info.project.name}.png`,
     fullPage: true,
   })
 })
@@ -665,7 +666,7 @@ test("reduced_motion_preserves_feedback", async ({
           .evaluate((e) => getComputedStyle(e).animationName),
       ).toBe("none")
       await page.screenshot({
-        path: `../.superpowers/sdd/2026-10-11-historical-date-game-beta/artifacts/U3-reduced-motion-${info.project.name}.png`,
+        path: `../.superpowers/sdd/2026-10-13-historical-date-game-guest-play/task-5-evidence/fixture-artifacts/U3-reduced-motion-${info.project.name}.png`,
         fullPage: true,
       })
       return

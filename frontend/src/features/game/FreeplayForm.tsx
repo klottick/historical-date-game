@@ -20,6 +20,7 @@ import {
 import { defaultConfig, parseSafeInteger, validateConfig } from "./config"
 import { useGameSession } from "./GameSessionProvider"
 import { gameQueryKey, sessionFailure, startStorageKey } from "./identityState"
+import { operationId } from "./operationId"
 
 export function FreeplayForm({
   options,
@@ -128,7 +129,7 @@ export function FreeplayForm({
         const command = saveStartOperation(
           key,
           operation ?? {
-            operation_id: crypto.randomUUID(),
+            operation_id: operationId(),
             catalog_release_id: options.catalog_release_id,
             config: structuredClone(config),
           },

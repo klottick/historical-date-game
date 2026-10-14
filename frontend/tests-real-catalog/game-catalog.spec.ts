@@ -1,12 +1,15 @@
 import { randomUUID } from "node:crypto"
 import { appendFile, writeFile } from "node:fs/promises"
 import { test as base, devices, expect, type Page } from "@playwright/test"
-import { realCatalogAPI as api } from "../playwright.real-catalog.config"
+import {
+  realCatalogAPI as api,
+  realCatalogUIOrigin,
+} from "../playwright.real-catalog.config"
 import type { RunPublic } from "../src/client/types.gen"
 import { loadCatalog, slugs } from "./catalog"
 
 const evidence =
-  "../.superpowers/sdd/2026-10-12-historical-date-game-beta-followup/F2-evidence"
+  "../.superpowers/sdd/2026-10-13-historical-date-game-guest-play/task-5-evidence"
 type Player = { token: string; headers: Record<string, string> }
 const test = base.extend<{
   players: Player[]
@@ -258,7 +261,7 @@ test("actual release options, readable safe credits, asset HTTP and private arti
   ][]) {
     if (!name.startsWith("media/")) continue
     const response = await page.request.get(
-      `http://localhost:8010/media/${catalog.manifest.release_id}/${name.slice("media/".length)}`,
+      `${new URL(api).origin}/media/${catalog.manifest.release_id}/${name.slice("media/".length)}`,
     )
     expect(response.status()).toBe(200)
     const { createHash } = await import("node:crypto")
@@ -283,7 +286,7 @@ test("actual release options, readable safe credits, asset HTTP and private arti
     `/@fs${process.env.REAL_CATALOG_RELEASE_DIR}/events.jsonl`,
     `/@fs${process.env.REAL_CATALOG_RELEASE_DIR}/manifest.json`,
   ]) {
-    const response = await page.request.get(`http://localhost:5174${path}`)
+    const response = await page.request.get(`${realCatalogUIOrigin}${path}`)
     expect([403, 404]).toContain(response.status())
     frontendDenied.push({ path, status: response.status() })
   }
@@ -313,7 +316,7 @@ test("actual release options, readable safe credits, asset HTTP and private arti
     ].map((name) => `/media/${catalog.manifest.release_id}/${name}`),
     `/data/game/releases/${catalog.manifest.release_id}/manifest.json`,
   ]) {
-    const response = await page.request.get(`http://localhost:8010${path}`)
+    const response = await page.request.get(`${new URL(api).origin}${path}`)
     expect([403, 404]).toContain(response.status())
     denied.push({ path, status: response.status() })
   }
@@ -524,12 +527,12 @@ test("two fresh Daily players share real correct prefix, one attempt and owned r
 }, info) => {
   const context = await browser.newContext({
     ...devices[isMobile ? "Pixel 5" : "Desktop Chrome"],
-    baseURL: "http://localhost:5174",
+    baseURL: realCatalogUIOrigin,
     storageState: {
       cookies: [],
       origins: [
         {
-          origin: "http://localhost:5174",
+          origin: realCatalogUIOrigin,
           localStorage: [{ name: "access_token", value: players[1].token }],
         },
       ],

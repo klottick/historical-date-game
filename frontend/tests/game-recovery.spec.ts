@@ -1,7 +1,8 @@
 import { test as base, expect, type Page } from "@playwright/test"
 import type { PlaceCommand, RunPublic } from "../src/client/types.gen"
 
-const api = "http://localhost:8000/api/v1"
+import { fixtureAPI as api } from "./utils/apiOrigin"
+
 const test = base.extend<{
   player: {
     email: string

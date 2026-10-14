@@ -8,12 +8,17 @@ import hashlib
 import json
 import os
 import secrets
+import shutil
+import signal
+import socket
 import subprocess
 import sys
+import time
 from datetime import UTC, datetime
 from pathlib import Path
 from tempfile import NamedTemporaryFile, TemporaryDirectory
 from typing import Any
+from urllib.request import urlopen
 from uuid import UUID, uuid4
 
 import psycopg
@@ -31,6 +36,313 @@ GUEST_DATABASES = frozenset(
     }
 )
 MIGRATION_DATABASE = "historical_date_game_guest_migration_test"
+EVIDENCE = (
+    WORKTREE
+    / ".superpowers/sdd/2026-10-13-historical-date-game-guest-play/task-5-evidence"
+)
+NODE = Path("/tmp/opencode/node-v26.11.1-linux-x64/bin/node")
+MANIFEST_SHA = "804ec52ccfc3e19cd955913b05cbfd59158f562408e45c1916fa8626d3ac50d3"
+
+
+def browser_target(target: str) -> dict[str, Any]:
+    if target not in {"real", "fixture"}:
+        raise ValueError("Unknown owned browser target")
+    real = target == "real"
+    return {
+        "database": "historical_date_game_guest_test"
+        if real
+        else "historical_date_game_guest_fixture_test",
+        "backend_port": 8020 if real else 8021,
+        "ui_port": 5184 if real else 5173,
+        "cookie": "hdg_guest_verification" if real else "hdg_guest_fixture",
+        "runtime": EVIDENCE / f"{target}-runtime",
+    }
+
+
+def verify_real_source(release: Path) -> Any:
+    from app.content.publish import verify_release
+
+    if (
+        not release.is_absolute()
+        or hashlib.sha256((release / "manifest.json").read_bytes()).hexdigest()
+        != MANIFEST_SHA
+    ):
+        raise RuntimeError("Real source must match the absolute pinned manifest")
+    manifest = verify_release(release, release / "media", require_beta=True)
+    if manifest.fixture or manifest.event_count != 1276:
+        raise RuntimeError("Reviewed real catalog identity changed")
+    return manifest
+
+
+def _project_media(release: Path, manifest: Any, runtime: Path) -> None:
+    """Copy only verified manifest media, under the exact release-scoped prefix."""
+    for name, digest in manifest.files.items():
+        if not name.startswith("media/"):
+            continue
+        source = (release / name).resolve(strict=True)
+        if (
+            not source.is_relative_to(release.resolve())
+            or hashlib.sha256(source.read_bytes()).hexdigest() != digest
+        ):
+            raise RuntimeError("Public media source failed integrity")
+        destination = (
+            runtime / "media" / manifest.release_id / name.removeprefix("media/")
+        )
+        destination.parent.mkdir(parents=True, exist_ok=True)
+        if destination.exists():
+            if hashlib.sha256(destination.read_bytes()).hexdigest() != digest:
+                raise RuntimeError("Existing public media differs; refusing overwrite")
+        else:
+            shutil.copyfile(source, destination)
+
+
+def seed_browser(target: str, release: Path | None) -> None:
+    from app.content.publish import verify_release
+    from app.core.db import init_db
+    from app.game.catalog_repository import activate_catalog
+    from tests.api.routes.test_game_daily import release as build_fixture
+
+    config = browser_target(target)
+    require_owned_guest_database(config["database"])
+    # Seeding is never coupled to pytest cleanup, nor allowed during browser use.
+    for component in ("backend", "ui"):
+        _require_free_port(config[f"{component}_port"])
+    runtime = config["runtime"]
+    runtime.mkdir(parents=True, exist_ok=True, mode=0o700)
+    with _maintenance_connection() as connection:
+        if connection.execute(
+            "SELECT count(*) FROM pg_stat_activity WHERE datname = %s",
+            (config["database"],),
+        ).fetchone()[0]:
+            raise RuntimeError("Refusing seed while the browser database is in use")
+    proof_engine = create_engine(
+        str(settings.SQLALCHEMY_DATABASE_URI).rsplit("/", 1)[0]
+        + "/"
+        + config["database"]
+    )
+    try:
+        if target == "real":
+            if release is None:
+                raise RuntimeError("Absolute reviewed real release required")
+            manifest = verify_real_source(release)
+        with Session(proof_engine) as session:
+            init_db(session)
+            if target == "fixture":
+                state = runtime / "fixture-state.json"
+                if state.exists():
+                    release = Path(json.loads(state.read_text())["release"])
+                else:
+                    build = runtime / ("fixture-build-" + uuid4().hex)
+                    release_id = build_fixture(session, build)
+                    release = build / "releases" / release_id
+                    state.write_text(json.dumps({"release": str(release)}))
+                    state.chmod(0o600)
+                manifest = verify_release(
+                    release, release / "media", require_beta=False
+                )
+                if not manifest.fixture or manifest.event_count != 8:
+                    raise RuntimeError("Verified eight-event fixture required")
+            _project_media(release, manifest, runtime)
+            activate_catalog(
+                session, release, release / "media", require_beta=target == "real"
+            )
+            session.commit()
+        summary = {
+            "target": target,
+            "database": config["database"],
+            "release_id": manifest.release_id,
+            "events": manifest.event_count,
+            "manifest_sha256": hashlib.sha256(
+                (release / "manifest.json").read_bytes()
+            ).hexdigest(),
+            "files": dict(manifest.files),
+        }
+        (runtime / "seed.json").write_text(json.dumps(summary, indent=2))
+        (runtime / "seed.json").chmod(0o600)
+        sys.stdout.write(
+            f"{target}: verified catalog activated; public media projected; no cleanup\n"
+        )
+    finally:
+        proof_engine.dispose()
+
+
+def _process_identity(pid: int) -> dict[str, Any]:
+    root = Path(f"/proc/{pid}")
+    return {
+        "pid": pid,
+        "cwd": str((root / "cwd").resolve(strict=True)),
+        "command": (root / "cmdline").read_bytes().decode().rstrip("\0").split("\0"),
+        "start_ticks": (root / "stat").read_text().rsplit(")", 1)[1].split()[19],
+    }
+
+
+def require_process_identity(record: dict[str, Any]) -> None:
+    try:
+        actual = _process_identity(record["pid"])
+    except OSError, ValueError:
+        raise RuntimeError("Owned process ownership is no longer proven")
+    if actual != record or actual["cwd"] not in {
+        str(WORKTREE / "backend"),
+        str(WORKTREE / "frontend"),
+    }:
+        raise RuntimeError("Owned process ownership is not proven")
+
+
+def wait_process_identity(
+    process: Any, cwd: Path, command: list[str]
+) -> dict[str, Any]:
+    """/proc/cmdline can be empty between spawn and exec; never ledger that race."""
+    for _ in range(100):
+        if process.poll() is not None:
+            raise RuntimeError("Owned process exited before identity confirmation")
+        record = _process_identity(process.pid)
+        if record["cwd"] == str(cwd) and record["command"] == command:
+            return record
+        time.sleep(0.01)
+    raise RuntimeError("Owned process command/cwd did not become verifiable")
+
+
+def _require_free_port(port: int) -> None:
+    with socket.socket() as listener:
+        listener.setsockopt(socket.SOL_SOCKET, socket.SO_REUSEADDR, 1)
+        listener.bind(("127.0.0.1", port))
+
+
+def owned_process(target: str, component: str, stop: bool = False) -> None:
+    config = browser_target(target)
+    require_owned_guest_database(config["database"])
+    EVIDENCE.mkdir(parents=True, exist_ok=True, mode=0o700)
+    record_path = EVIDENCE / f"{target}-{component}-process.json"
+    if stop:
+        record = json.loads(record_path.read_text())
+        require_process_identity(record)
+        # Verify the exact cwd/command/start-time PID before signalling only it.
+        os.kill(record["pid"], signal.SIGTERM)
+        for _ in range(100):
+            try:
+                _require_free_port(config[f"{component}_port"])
+                break
+            except OSError:
+                time.sleep(0.1)
+        else:
+            raise RuntimeError("Owned process did not release its port")
+        record_path.rename(
+            EVIDENCE / f"{target}-{component}-stopped-{record['pid']}.json"
+        )
+        sys.stdout.write(f"{target} {component}: stopped owned PID {record['pid']}\n")
+        return
+    if record_path.exists():
+        raise RuntimeError(
+            "Process ledger exists; explicit ownership-checked stop required"
+        )
+    _require_free_port(config[f"{component}_port"])
+    if not (config["runtime"] / "seed.json").exists():
+        raise RuntimeError("Verified seed required before launch")
+    ui_origin = f"http://localhost:{config['ui_port']}"
+    env = dict(
+        os.environ,
+        POSTGRES_DB=config["database"],
+        POSTGRES_SERVER="127.0.0.1",
+        POSTGRES_PORT="5433",
+        ENVIRONMENT="local",
+        FRONTEND_HOST=ui_origin,
+        BACKEND_CORS_ORIGINS=json.dumps(
+            [ui_origin, "http://guest.test:5184"] if target == "real" else [ui_origin]
+        ),
+        GAME_GUEST_COOKIE_NAME=config["cookie"],
+        GAME_DATA_DIR=str(config["runtime"]),
+        PUBLIC_REGISTRATION_ENABLED="false" if target == "real" else "true",
+        VITE_API_URL=f"http://localhost:{config['backend_port']}",
+    )
+    if target == "fixture":
+        # Existing account password-recovery suite uses the owned local catcher.
+        # Never send verification account mail through an external SMTP server.
+        env.update(
+            SMTP_HOST="127.0.0.1",
+            SMTP_PORT="1025",
+            SMTP_TLS="false",
+            SMTP_SSL="false",
+            SMTP_USER="",
+            SMTP_PASSWORD="",
+            EMAILS_FROM_EMAIL="guest-verification@example.com",
+        )
+    if component == "backend":
+        command = [
+            sys.executable,
+            "-m",
+            "uvicorn",
+            "app.main:app",
+            "--host",
+            "127.0.0.1",
+            "--port",
+            str(config["backend_port"]),
+            "--no-access-log",
+        ]
+    else:
+        command = [
+            str(NODE),
+            "node_modules/vite/bin/vite.js",
+            "--config",
+            "vite.guest-catalog.config.ts" if target == "real" else "vite.config.ts",
+            "--host",
+            "127.0.0.1",
+            "--port",
+            str(config["ui_port"]),
+            "--strictPort",
+        ]
+    cwd = WORKTREE / ("backend" if component == "backend" else "frontend")
+    with open(EVIDENCE / f"{target}-{component}.log", "ab") as output:
+        process = subprocess.Popen(
+            command,
+            cwd=cwd,
+            env=env,
+            stdout=output,
+            stderr=output,
+            start_new_session=True,
+        )
+    record = wait_process_identity(process, cwd, command)
+    record_path.write_text(json.dumps(record, indent=2))
+    record_path.chmod(0o600)
+    url = f"http://127.0.0.1:{config[f'{component}_port']}" + (
+        "/api/v1/utils/health-check/" if component == "backend" else "/"
+    )
+    for _ in range(200):
+        if process.poll() is not None:
+            raise RuntimeError("Owned process exited before readiness")
+        try:
+            with urlopen(url, timeout=1) as response:
+                if response.status == 200:
+                    require_process_identity(record)
+                    sys.stdout.write(
+                        f"{target} {component}: ready loopback owned PID {process.pid}\n"
+                    )
+                    return
+        except OSError:
+            time.sleep(0.1)
+    raise RuntimeError("Owned process readiness timed out")
+
+
+def audit_browser(target: str) -> None:
+    config = browser_target(target)
+    require_owned_guest_database(config["database"])
+    seed = json.loads((config["runtime"] / "seed.json").read_text())
+    for name, digest in seed["files"].items():
+        if name.startswith("media/"):
+            asset = (
+                config["runtime"]
+                / "media"
+                / seed["release_id"]
+                / name.removeprefix("media/")
+            )
+            if hashlib.sha256(asset.read_bytes()).hexdigest() != digest:
+                raise RuntimeError("Projected asset integrity failed")
+    for component in ("backend", "ui"):
+        record_path = EVIDENCE / f"{target}-{component}-process.json"
+        if record_path.exists():
+            require_process_identity(json.loads(record_path.read_text()))
+    sys.stdout.write(
+        f"{target}: exact DB/process ownership and all public media hashes verified\n"
+    )
 
 
 def require_guest_test_target(database: str, host: str, environment: str) -> None:
@@ -330,6 +642,15 @@ def main(argv: list[str] | None = None) -> int:
     prepare = subparsers.add_parser("prepare-db")
     prepare.add_argument("--database", required=True)
     subparsers.add_parser("migration-proof")
+    real = subparsers.add_parser("seed-real")
+    real.add_argument("--release", type=Path, required=True)
+    subparsers.add_parser("seed-fixture")
+    audit = subparsers.add_parser("audit")
+    audit.add_argument("--target", choices=["real", "fixture"], required=True)
+    for operation in ("launch", "stop"):
+        process = subparsers.add_parser(operation)
+        process.add_argument("--target", choices=["real", "fixture"], required=True)
+        process.add_argument("--component", choices=["backend", "ui"], required=True)
     args = parser.parse_args(argv)
     try:
         if args.command == "migration-proof":
@@ -337,6 +658,14 @@ def main(argv: list[str] | None = None) -> int:
             sys.stdout.write(
                 f"Migration preservation proof passed; owned DB removed; private evidence: {evidence}\n"
             )
+        elif args.command == "seed-real":
+            seed_browser("real", args.release)
+        elif args.command == "seed-fixture":
+            seed_browser("fixture", None)
+        elif args.command == "audit":
+            audit_browser(args.target)
+        elif args.command in {"launch", "stop"}:
+            owned_process(args.target, args.component, args.command == "stop")
         else:
             created = prepare_database(args.database)
             run_migration(args.database, "upgrade", "head")

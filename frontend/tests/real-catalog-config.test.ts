@@ -141,7 +141,11 @@ test("real catalog UI binds all IPv4 interfaces with same-origin API and media",
   assert.equal(actual.apiBase, JSON.stringify(""))
 })
 
-for (const configFile of ["vite.config.ts", "vite.real-catalog.config.ts"]) {
+for (const configFile of [
+  "vite.config.ts",
+  "vite.real-catalog.config.ts",
+  "vite.guest-catalog.config.ts",
+]) {
   test(`${configFile} resolves strict private-file protection and retains installed Vite defaults`, () => {
     const result = spawnSync(
       process.execPath,
@@ -169,6 +173,7 @@ for (const configFile of ["vite.config.ts", "vite.real-catalog.config.ts"]) {
       ...actual.defaults,
       "**/playwright/.auth/**",
       "**/tests-real-catalog/**",
+      "**/tests-guest-catalog/**",
       "**/.superpowers/**",
       "**/data/game/**",
     ])
@@ -178,3 +183,123 @@ for (const configFile of ["vite.config.ts", "vite.real-catalog.config.ts"]) {
       )
   })
 }
+
+test("isolated real and fixture runners accept explicit test origins", () => {
+  const result = spawnSync(
+    process.execPath,
+    [
+      "--input-type=module",
+      "-e",
+      `
+    const real=await import('./playwright.real-catalog.config.ts');
+    const fixture=await import('./tests/utils/apiOrigin.ts');
+    console.log(JSON.stringify({api:real.realCatalogAPI,ui:real.realCatalogUIOrigin,
+      base:real.default.use.baseURL,fixture:fixture.fixtureAPI,origin:fixture.fixtureAPIOrigin}));
+  `,
+    ],
+    {
+      encoding: "utf8",
+      env: {
+        ...process.env,
+        REAL_CATALOG_API_ORIGIN: "http://localhost:8020",
+        REAL_CATALOG_UI_ORIGIN: "http://localhost:5184",
+        VITE_API_URL: "http://localhost:8021",
+      },
+    },
+  )
+  assert.equal(result.status, 0, result.stderr)
+  assert.deepEqual(JSON.parse(result.stdout.trim()), {
+    api: "http://localhost:8020/api/v1",
+    ui: "http://localhost:5184",
+    base: "http://localhost:5184",
+    fixture: "http://localhost:8021/api/v1",
+    origin: "http://localhost:8021",
+  })
+})
+
+test("guest runner has no authentication setup and uses a genuine insecure browser hostname", () => {
+  const result = spawnSync(
+    process.execPath,
+    [
+      "--input-type=module",
+      "-e",
+      `
+    const {default:c}=await import('./playwright.guest-catalog.config.ts');
+    console.log(JSON.stringify({dir:c.testDir,workers:c.workers,server:c.webServer,
+      projects:c.projects.map(p=>({name:p.name,dependencies:p.dependencies,state:p.use?.storageState,
+        base:p.use?.baseURL,args:p.use?.launchOptions?.args}))}));
+  `,
+    ],
+    { encoding: "utf8" },
+  )
+  assert.equal(result.status, 0, result.stderr)
+  const c = JSON.parse(result.stdout.trim())
+  assert.equal(c.dir, "./tests-guest-catalog")
+  assert.equal(c.workers, 1)
+  assert.equal(c.server, undefined)
+  assert.equal(c.projects.length, 3)
+  for (const project of c.projects) {
+    assert.equal(project.dependencies, undefined)
+    assert.equal(project.state, undefined)
+  }
+  const insecure = c.projects.find(
+    (p: { name: string }) => p.name === "insecure-chromium",
+  )
+  assert.equal(insecure.base, "http://guest.test:5184")
+  assert.ok(
+    insecure.args.includes("--host-resolver-rules=MAP guest.test 127.0.0.1"),
+  )
+})
+
+test("guest Vite binds strict loopback with only controlled additional hostname", () => {
+  const result = spawnSync(
+    process.execPath,
+    [
+      "--input-type=module",
+      "-e",
+      `
+    import {resolveConfig} from 'vite';
+    const c=await resolveConfig({configFile:'vite.guest-catalog.config.ts'},'serve');
+    console.log(JSON.stringify({host:c.server.host,port:c.server.port,strict:c.server.strictPort,
+      hosts:[...new Set(c.server.allowedHosts)],proxy:c.server.proxy,api:c.define['import.meta.env.VITE_API_URL']}));
+  `,
+    ],
+    { encoding: "utf8" },
+  )
+  assert.equal(result.status, 0, result.stderr)
+  assert.deepEqual(JSON.parse(result.stdout.trim().split("\n").pop()!), {
+    host: "127.0.0.1",
+    port: 5184,
+    strict: true,
+    hosts: ["guest.test", "127.0.0.1"],
+    proxy: {
+      "/api/": "http://127.0.0.1:8020",
+      "/media/": "http://127.0.0.1:8020",
+    },
+    api: JSON.stringify(""),
+  })
+})
+
+test("controlled Vite harnesses do not replace other running catalog dependency caches", () => {
+  const result = spawnSync(
+    process.execPath,
+    [
+      "--input-type=module",
+      "-e",
+      `
+    import {resolveConfig} from 'vite';
+    const paths=[];
+    for (const configFile of ['vite.config.ts','vite.guest-catalog.config.ts','vite.bootstrap.config.ts','vite.identity.config.ts']) {
+      paths.push((await resolveConfig({configFile},'serve')).cacheDir);
+    }
+    console.log(JSON.stringify(paths));
+  `,
+    ],
+    { encoding: "utf8" },
+  )
+  assert.equal(result.status, 0, result.stderr)
+  assert.equal(
+    new Set(JSON.parse(result.stdout.trim().split("\n").pop()!)).size,
+    4,
+  )
+})

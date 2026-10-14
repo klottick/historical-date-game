@@ -9,9 +9,10 @@ import {
 import type { RunPublic } from "../src/client/types.gen"
 import { hundredCardRun } from "./fixtures/game-public"
 
-const api = "http://localhost:8000/api/v1"
+import { fixtureAPI as api } from "./utils/apiOrigin"
+
 const evidence =
-  "../.superpowers/sdd/2026-10-11-historical-date-game-beta/artifacts"
+  "../.superpowers/sdd/2026-10-13-historical-date-game-guest-play/task-5-evidence/fixture-artifacts"
 type Player = {
   token: string
   headers: Record<string, string>

@@ -18,6 +18,7 @@ import {
 } from "./api"
 import { useGameSession, useGameSessionError } from "./GameSessionProvider"
 import { gameQueryKey, sessionFailure, startStorageKey } from "./identityState"
+import { operationId } from "./operationId"
 
 export function DailyLeaderboard({
   day,
@@ -255,7 +256,7 @@ export function DailyPanel({ context }: { context: GameSessionPublic }) {
                   if (!current() || mutation.isPending) return
                   const command = saveStartOperation(
                     key,
-                    operation ?? { operation_id: crypto.randomUUID() },
+                    operation ?? { operation_id: operationId() },
                   )
                   setOperation(command)
                   mutation.mutate(command)

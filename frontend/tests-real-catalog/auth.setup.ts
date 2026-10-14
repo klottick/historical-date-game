@@ -1,9 +1,11 @@
 import { randomUUID } from "node:crypto"
+import { existsSync } from "node:fs"
 import { chmod, mkdir, writeFile } from "node:fs/promises"
 import { expect, test as setup } from "@playwright/test"
 import {
   realCatalogAPI as api,
   realCatalogAuthFile,
+  realCatalogUIOrigin,
 } from "../playwright.real-catalog.config"
 import { loadCatalog } from "./catalog"
 
@@ -57,6 +59,13 @@ setup("restricted real-catalog player authentication", async ({ request }) => {
   }
   await mkdir("playwright/.auth", { recursive: true, mode: 0o700 })
   await chmod("playwright/.auth", 0o700)
+  // The private-file denial check must target a real artifact, not SPA fallback.
+  const denialProbe = "playwright/.auth/real-catalog-restart-players.json"
+  if (!existsSync(denialProbe))
+    await writeFile(denialProbe, JSON.stringify({ privateDenialProbe: true }), {
+      mode: 0o600,
+      flag: "wx",
+    })
   await writeFile(
     "playwright/.auth/real-catalog-players.json",
     JSON.stringify(players),
@@ -69,7 +78,7 @@ setup("restricted real-catalog player authentication", async ({ request }) => {
       cookies: [],
       origins: [
         {
-          origin: "http://localhost:5174",
+          origin: realCatalogUIOrigin,
           localStorage: [{ name: "access_token", value: players[0].token }],
         },
       ],

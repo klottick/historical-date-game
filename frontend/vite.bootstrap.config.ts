@@ -6,6 +6,8 @@ export default defineConfig(async (environment) => {
   if (!appConfig)
     throw new Error("Application private-file protection is required")
   return {
+    cacheDir:
+      "../.superpowers/sdd/2026-10-13-historical-date-game-guest-play/task-5-evidence/vite-bootstrap-cache",
     server: {
       ...appConfig.config.server,
       // Public module imports in the storage-denial sandbox need CORS. This

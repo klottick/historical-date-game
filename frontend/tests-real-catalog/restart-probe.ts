@@ -4,13 +4,15 @@ import assert from "node:assert/strict"
 import { randomUUID } from "node:crypto"
 import { readFile, writeFile } from "node:fs/promises"
 import { chromium, request } from "@playwright/test"
+import {
+  realCatalogAPI as api,
+  realCatalogUIOrigin as origin,
+} from "../playwright.real-catalog.config.ts"
 import type { RunPublic } from "../src/client/types.gen"
 import { loadCatalog, slugs } from "./catalog.ts"
 
-const origin = "http://localhost:5174"
-const api = "http://localhost:8010/api/v1"
 const evidence =
-  "../.superpowers/sdd/2026-10-12-historical-date-game-beta-followup/F2-evidence"
+  "../.superpowers/sdd/2026-10-13-historical-date-game-guest-play/task-5-evidence"
 const [player] = JSON.parse(
   await readFile("playwright/.auth/real-catalog-players.json", "utf8"),
 )

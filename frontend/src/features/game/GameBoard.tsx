@@ -36,6 +36,7 @@ import {
   placementStorageKey,
   sessionFailure,
 } from "./identityState"
+import { operationId } from "./operationId"
 import { Timeline } from "./Timeline"
 import "./game.css"
 import {
@@ -212,7 +213,10 @@ function OwnedBoard({
   async function submit() {
     const before = current.current
     if (!before) return
-    const sending = beginPlacement(before, crypto.randomUUID())
+    const sending = beginPlacement(
+      before,
+      before.command?.operation_id ?? operationId(),
+    )
     if (sending === before || !sending.command) return
     update(sending)
     setMessage(null)

@@ -21,6 +21,7 @@ export default defineConfig({
         "**/.git/**",
         "**/playwright/.auth/**",
         "**/tests-real-catalog/**",
+        "**/tests-guest-catalog/**",
         "**/.superpowers/**",
         "**/data/game/**",
       ],

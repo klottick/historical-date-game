@@ -85,7 +85,8 @@ test("Successful log out", async ({ page }) => {
 
   await page.getByTestId("user-menu").click()
   await page.getByRole("menuitem", { name: "Log out" }).click()
-  await page.waitForURL("/login")
+  await page.waitForURL("/")
+  await expect(page.getByText(/Welcome! Play without an account/)).toBeVisible()
 })
 
 test("Logged-out user cannot access protected routes", async ({ page }) => {
@@ -102,7 +103,8 @@ test("Logged-out user cannot access protected routes", async ({ page }) => {
 
   await page.getByTestId("user-menu").click()
   await page.getByRole("menuitem", { name: "Log out" }).click()
-  await page.waitForURL("/login")
+  await page.waitForURL("/")
+  await expect(page.getByText(/Welcome! Play without an account/)).toBeVisible()
 
   await page.goto("/settings")
   await page.waitForURL("/login")

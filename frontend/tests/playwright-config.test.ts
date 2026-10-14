@@ -22,6 +22,7 @@ for (const value of [undefined, "false", "true"]) {
           workers: config.workers,
           reporter: config.reporter,
           reuseExistingServer: config.webServer.reuseExistingServer,
+          testIgnore: config.testIgnore,
         }));`,
       ],
       { env, encoding: "utf8" },
@@ -36,6 +37,10 @@ for (const value of [undefined, "false", "true"]) {
       ...(isCI ? { workers: 1 } : {}),
       reporter: isCI ? "blob" : "html",
       reuseExistingServer: !isCI,
+      testIgnore: [
+        "**/game-session-bootstrap.spec.ts",
+        "**/game-identity-recovery.spec.ts",
+      ],
     })
   })
 }

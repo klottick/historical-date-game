@@ -1,4 +1,5 @@
 import { test as base, expect } from "@playwright/test"
+import { fixtureAPI as api } from "./utils/apiOrigin"
 
 // Each authenticated mode test owns its account, including across projects.
 // Public enrollment deliberately has no login; the Daily lifecycle below
@@ -12,7 +13,6 @@ const test = base.extend<{ modePlayer: undefined }>({
       )
       const email = `mode-preview-${crypto.randomUUID()}@example.com`
       const password = "GameBrowser123!"
-      const api = "http://localhost:8000/api/v1"
       expect(
         (
           await page.request.post(`${api}/users/`, {
@@ -56,10 +56,9 @@ test("daily_preview_does_not_start", async ({ page }) => {
   await expect(page.getByRole("button", { name: "Start Daily" })).toBeVisible()
   expect(starts).toEqual([])
   const token = await page.evaluate(() => localStorage.getItem("access_token"))
-  const overview = await page.request.get(
-    "http://localhost:8000/api/v1/games/daily",
-    { headers: { Authorization: `Bearer ${token}` } },
-  )
+  const overview = await page.request.get(`${api}/games/daily`, {
+    headers: { Authorization: `Bearer ${token}` },
+  })
   expect((await overview.json()).attempt_run_id).toBeNull()
 })
 
@@ -122,18 +121,14 @@ base(
     })()
     const email = `modes-${crypto.randomUUID()}@example.com`
     const password = "GameBrowser123!"
-    const created = await page.request.post(
-      "http://localhost:8000/api/v1/users/",
-      {
-        headers: { Authorization: `Bearer ${adminToken}` },
-        data: { email, password, full_name: "Daily modes" },
-      },
-    )
+    const created = await page.request.post(`${api}/users/`, {
+      headers: { Authorization: `Bearer ${adminToken}` },
+      data: { email, password, full_name: "Daily modes" },
+    })
     expect(created.ok()).toBeTruthy()
-    const login = await page.request.post(
-      "http://localhost:8000/api/v1/login/access-token",
-      { form: { username: email, password } },
-    )
+    const login = await page.request.post(`${api}/login/access-token`, {
+      form: { username: email, password },
+    })
     const token = (await login.json()).access_token
     await page.evaluate(
       (value) => localStorage.setItem("access_token", value),
@@ -145,7 +140,7 @@ base(
       await page.getByRole("button", { name: "Start Daily" }).click()
       await expect(page).toHaveURL(/\/play\/[\da-f-]+$/)
       const id = page.url().split("/").pop()
-      const url = `http://localhost:8000/api/v1/games/runs/${id}`
+      const url = `${api}/games/runs/${id}`
       let run = await (await page.request.get(url, { headers })).json()
       await expect(
         page.getByText(`Daily · ${run.daily_date} UTC`, { exact: true }),
@@ -187,7 +182,7 @@ base(
         }),
       ).toBeVisible()
     } finally {
-      await page.request.delete("http://localhost:8000/api/v1/users/me", {
+      await page.request.delete(`${api}/users/me`, {
         headers,
       })
     }
@@ -213,7 +208,7 @@ test("freeplay defaults, sparse error, start, and owned resume", async ({
   await page.getByLabel("Minimum year gap").fill("9999")
   const token = await page.evaluate(() => localStorage.getItem("access_token"))
   const headers = { Authorization: `Bearer ${token}` }
-  const activeURL = "http://localhost:8000/api/v1/games/active-runs"
+  const activeURL = `${api}/games/active-runs`
   const before = await (await page.request.get(activeURL, { headers })).json()
   const failedStart = page.waitForResponse(
     (response) =>
