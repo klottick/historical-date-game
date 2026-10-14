@@ -597,6 +597,10 @@ test("keyboard_focus_and_rendered_text_control_contrast", async ({
       await renderedContrast(credits, "color", ".game-dialog"),
     ).toBeGreaterThanOrEqual(4.5)
     await page.keyboard.press("Escape")
+    // Finish asynchronous dialog focus restoration before starting placement.
+    await expect(
+      page.getByRole("button", { name: "Credits/Sources", exact: true }),
+    ).toBeFocused()
     await keyboardPreview(page, 0)
     const lockButton = page.getByRole("button", {
       name: "Lock it in",
