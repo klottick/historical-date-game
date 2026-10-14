@@ -242,6 +242,7 @@ def test_cache_failure_uses_source_without_network_in_scoring(
     monkeypatch.setattr(httpx.Client, "stream", forbidden)
     monkeypatch.setattr(httpx.Client, "send", forbidden)
     monkeypatch.setattr(httpx.AsyncClient, "send", forbidden)
+    monkeypatch.setattr("app.content.event_links.acquire", forbidden)
     monkeypatch.setattr(Path, "read_bytes", forbidden)
     response = start(db, game_context)
     outcome = submit_placement(

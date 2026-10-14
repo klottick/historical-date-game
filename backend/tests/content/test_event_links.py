@@ -4,6 +4,8 @@ import asyncio
 import hashlib
 import importlib
 import json
+import os
+import socket
 import subprocess
 import sys
 import threading
@@ -438,6 +440,7 @@ def test_offline_build_is_deterministic_create_only_and_preserves_release(
 
     monkeypatch.setattr(httpx.Client, "stream", forbidden)
     monkeypatch.setattr(httpx.AsyncClient, "stream", forbidden)
+    monkeypatch.setattr(links(), "acquire", forbidden)
     output = tmp_path / "private" / "links.json"
     first = links().build_event_links(release, tmp_path / "cache", output, offline=True)
     second = links().build_event_links(
@@ -593,6 +596,22 @@ def install_transport(monkeypatch: pytest.MonkeyPatch, handler: Any) -> None:
         "AsyncClient",
         lambda **kwargs: asynchronous(**kwargs, transport=httpx.MockTransport(handler)),
     )
+    install_local_reader(monkeypatch)
+
+
+def install_local_reader(
+    monkeypatch: pytest.MonkeyPatch, runner: asyncio.Runner | None = None
+) -> None:
+    """Reader/business-policy unit tests; separate tests cover real child IPC."""
+    transport = importlib.import_module("app.content.event_links_transport")
+
+    def read(params: dict[str, str]) -> tuple[httpx.Response, bytes | None]:
+        if runner is not None:
+            return runner.run(transport.read_response(params))
+        with asyncio.Runner() as owned:
+            return owned.run(transport.read_response(params))
+
+    monkeypatch.setattr(links(), "acquire", read)
 
 
 @pytest.mark.parametrize(
@@ -897,6 +916,7 @@ def test_absolute_acquisition_deadline_cancels_headers_and_stream_reads(
         "AsyncClient",
         lambda **kwargs: asynchronous(**kwargs, transport=Transport()),
     )
+    install_local_reader(monkeypatch)
     threads = {thread.ident for thread in threading.enumerate()}
     started = time.monotonic()
     with links().EvidenceCache(tmp_path / "cache", offline=False) as cache:
@@ -976,16 +996,246 @@ def test_native_http_transport_deadline_closes_loopback_connection(
         lambda **kwargs: original(**kwargs, transport=LoopbackTransport()),
     )
     threads = {thread.ident for thread in threading.enumerate()}
-    with links().EvidenceCache(tmp_path / "cache", offline=False) as cache:
-        server = cache.runner.run(start_server())
-        started = time.monotonic()
-        try:
-            result = cache.calendar("January 1")
-        finally:
-            cache.runner.run(stop_server(server))
-        elapsed = time.monotonic() - started
+    with asyncio.Runner() as runner:
+        install_local_reader(monkeypatch, runner)
+        with links().EvidenceCache(tmp_path / "cache", offline=False) as cache:
+            server = runner.run(start_server())
+            started = time.monotonic()
+            try:
+                result = cache.calendar("January 1")
+            finally:
+                runner.run(stop_server(server))
+            elapsed = time.monotonic() - started
     assert result == (None, None, "response_deadline")
     assert elapsed < 10.8, f"native {phase} read took {elapsed:.2f}s"
     assert state["requests"] == state["closed"] == 1 and state["finished"] is False
     assert all(task.done() for task in tasks)
     assert {thread.ident for thread in threading.enumerate()} == threads
+
+
+def install_worker_fixture(
+    monkeypatch: pytest.MonkeyPatch, mode: str, marker: Path
+) -> list[subprocess.Popen[bytes]]:
+    """Launch the real parent IPC/lifecycle against a controlled child provider."""
+    original = subprocess.Popen
+    children: list[subprocess.Popen[bytes]] = []
+
+    def spawn(command: Any, **kwargs: Any) -> subprocess.Popen[bytes]:
+        assert command[-2:] == ["-m", "app.content.event_links_transport"]
+        assert all(child.returncode is not None for child in children)
+        child = original(
+            [
+                sys.executable,
+                "-m",
+                "tests.content.event_links_worker",
+                mode,
+                str(marker),
+            ],
+            **kwargs,
+        )
+        children.append(child)
+        return child
+
+    monkeypatch.setattr(subprocess, "Popen", spawn)
+    return children
+
+
+def assert_workers_reaped(children: list[subprocess.Popen[bytes]]) -> None:
+    assert children
+    for child in children:
+        assert child.returncode is not None
+        assert child.stdin is not None and child.stdin.closed
+        assert child.stdout is not None and child.stdout.closed
+        with pytest.raises(ChildProcessError):
+            os.waitpid(child.pid, os.WNOHANG)
+
+
+def test_native_dns_stall_is_killed_and_reaped_before_cache_unlock(
+    tmp_path: Path, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    import fcntl
+
+    marker = tmp_path / "dns"
+    children = install_worker_fixture(monkeypatch, "dns", marker)
+
+    def stalled_dns(host: Any, *_args: Any, **_kwargs: Any) -> Any:
+        # RED: the old client invokes this in the parent executor. GREEN: only
+        # the independently killable child invokes its identical DNS fixture.
+        assert host in ("en.wikipedia.org", b"en.wikipedia.org")
+        marker.with_suffix(".started").write_text("native hostname resolver")
+        time.sleep(12)
+        marker.with_suffix(".finished").write_text("resolver finished")
+        raise socket.gaierror("controlled stall, no external DNS")
+
+    monkeypatch.setattr(socket, "getaddrinfo", stalled_dns)
+    threads = {thread.ident for thread in threading.enumerate()}
+    started = time.monotonic()
+    with links().EvidenceCache(tmp_path / "cache", offline=False) as cache:
+        result = cache.calendar("January 1")
+    elapsed = time.monotonic() - started
+    assert elapsed < 11.2, f"DNS acquisition/cleanup took {elapsed:.2f}s beyond 10+1s"
+    assert result == (None, None, "response_deadline")
+    assert marker.with_suffix(".started").exists()
+    assert marker.with_suffix(".dns").read_text() == "en.wikipedia.org"
+    assert not marker.with_suffix(".finished").exists()
+    assert len(children) == 1 and children[0].returncode == -9
+    assert_workers_reaped(children)
+    assert {thread.ident for thread in threading.enumerate()} == threads
+    with (tmp_path / "cache" / ".lock").open("a") as lock:
+        fcntl.flock(lock, fcntl.LOCK_EX | fcntl.LOCK_NB)
+    with links().EvidenceCache(tmp_path / "cache", offline=True) as cache:
+        assert cache.calendar("January 1") == result
+    assert len(children) == 1
+    assert_source(links().resolve_event_link(event(), None, {}))
+
+
+@pytest.mark.parametrize(
+    "phase", ["headers", "slow_trickle", "startup", "partial_output_stall"]
+)
+def test_isolated_attempt_bounds_native_reads_startup_and_pipe_cleanup(
+    tmp_path: Path, monkeypatch: pytest.MonkeyPatch, phase: str
+) -> None:
+    # Losing the process-level deadline/reap or failing to drain a full stdout
+    # pipe must fail this test, not merely a test of completed canned responses.
+    marker = tmp_path / phase
+    children = install_worker_fixture(monkeypatch, phase, marker)
+    transport = importlib.import_module("app.content.event_links_transport")
+    threads = {thread.ident for thread in threading.enumerate()}
+    started = time.monotonic()
+    with pytest.raises(TimeoutError):
+        transport.acquire({"action": "parse", "page": "January 1", "maxlag": "5"})
+    elapsed = time.monotonic() - started
+    assert elapsed < 11.2, (
+        f"{phase} acquisition/cleanup took {elapsed:.2f}s beyond 10+1s"
+    )
+    assert marker.with_suffix(".started").exists()
+    assert not marker.with_suffix(".finished").exists()
+    if phase in {"headers", "slow_trickle"}:
+        assert marker.with_suffix(".request").exists()
+    assert len(children) == 1 and children[0].returncode == -9
+    assert_workers_reaped(children)
+    assert {thread.ident for thread in threading.enumerate()} == threads
+
+
+@pytest.mark.parametrize(
+    "mode",
+    [
+        "success",
+        "oversize",
+        "redirect",
+        "throttle",
+        "transport_error",
+        "crash",
+        "malformed_ipc",
+    ],
+)
+def test_worker_ipc_keeps_response_limits_retries_and_source_fallback(
+    tmp_path: Path, monkeypatch: pytest.MonkeyPatch, mode: str
+) -> None:
+    marker = tmp_path / mode
+    children = install_worker_fixture(monkeypatch, mode, marker)
+    # Guard the old parent reader against any real network if boundary is absent.
+    original = httpx.AsyncClient
+    monkeypatch.setattr(
+        httpx,
+        "AsyncClient",
+        lambda **kwargs: original(
+            **kwargs,
+            transport=httpx.MockTransport(
+                lambda _request: httpx.Response(200, json={})
+            ),
+        ),
+    )
+    sleeps: list[float] = []
+    monkeypatch.setattr(links().time, "sleep", sleeps.append)
+    with links().EvidenceCache(tmp_path / "cache", offline=False) as cache:
+        os.set_inheritable(cache.lock.fileno(), True)
+        text, revision, reason = cache.calendar("January 1")
+    if mode == "success":
+        assert text == "x" * (4 * 1024 * 1024) and revision == 991 and reason is None
+    else:
+        assert text is revision is None
+        assert (
+            reason
+            == {
+                "oversize": "response_limits",
+                "redirect": "acquisition_unavailable",
+                "throttle": "provider_unavailable",
+                "transport_error": "transport_unavailable",
+                "crash": "transport_unavailable",
+                "malformed_ipc": "malformed_evidence",
+            }[mode]
+        )
+        assert_source(links().resolve_event_link(event(), text, {}))
+    assert len(children) == (
+        3 if mode in {"throttle", "transport_error", "crash"} else 1
+    )
+    if mode == "throttle":
+        assert sleeps == [7.0, 1, 7.0, 1]
+    assert_workers_reaped(children)
+    with links().EvidenceCache(tmp_path / "cache", offline=True) as cache:
+        assert cache.calendar("January 1") == (text, revision, reason)
+    assert all(child.returncode is not None for child in children)
+
+
+def test_acquisition_worker_launch_is_independent_of_callers_cwd(
+    tmp_path: Path, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    children = install_worker_fixture(monkeypatch, "success", tmp_path / "cwd")
+    monkeypatch.chdir(tmp_path)
+    transport = importlib.import_module("app.content.event_links_transport")
+    response, body = transport.acquire(
+        {"action": "parse", "page": "January 1", "maxlag": "5"}
+    )
+    assert response.status_code == 200 and body is not None
+    assert json.loads(body)["parse"]["revid"] == 991
+    assert_workers_reaped(children)
+
+
+def test_parent_interrupt_drains_and_reaps_worker(
+    tmp_path: Path, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    children = install_worker_fixture(monkeypatch, "startup", tmp_path / "interrupt")
+    original_spawn = subprocess.Popen
+    timeouts: list[float] = []
+
+    def spawn(command: Any, **kwargs: Any) -> subprocess.Popen[bytes]:
+        child = original_spawn(command, **kwargs)
+        communicate = child.communicate
+
+        def interrupted(**values: Any) -> Any:
+            timeouts.append(values["timeout"])
+            if len(timeouts) == 1:
+                with pytest.raises(subprocess.TimeoutExpired):
+                    communicate(input=values["input"], timeout=0.3)
+                raise KeyboardInterrupt
+            return communicate(**values)
+
+        monkeypatch.setattr(child, "communicate", interrupted)
+        return child
+
+    monkeypatch.setattr(subprocess, "Popen", spawn)
+    transport = importlib.import_module("app.content.event_links_transport")
+    with pytest.raises(KeyboardInterrupt):
+        transport.acquire({"action": "parse", "page": "January 1", "maxlag": "5"})
+    assert len(timeouts) == 2 and 0 <= timeouts[0] <= 10 and 0 <= timeouts[1] <= 1
+    assert len(children) == 1 and children[0].returncode == -9
+    assert_workers_reaped(children)
+
+
+def test_worker_start_failure_is_cached_as_safe_source(
+    tmp_path: Path, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    def unavailable(*_args: Any, **_kwargs: Any) -> Any:
+        raise OSError("controlled worker creation failure")
+
+    monkeypatch.setattr(subprocess, "Popen", unavailable)
+    sleeps: list[float] = []
+    monkeypatch.setattr(links().time, "sleep", sleeps.append)
+    with links().EvidenceCache(tmp_path / "cache", offline=False) as cache:
+        assert cache.calendar("January 1") == (None, None, "transport_unavailable")
+    assert sleeps == [1, 1]
+    with links().EvidenceCache(tmp_path / "cache", offline=True) as cache:
+        assert cache.calendar("January 1") == (None, None, "transport_unavailable")
+    assert sleeps == [1, 1]
+    assert_source(links().resolve_event_link(event(), None, {}))

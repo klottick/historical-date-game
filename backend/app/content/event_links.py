@@ -4,7 +4,6 @@ Nothing here changes the sealed corpus or its selection policy. Missing evidence
 is a source link, not a search request, guess, or review queue.
 """
 
-import asyncio
 import fcntl
 import hashlib
 import html
@@ -26,12 +25,11 @@ from pydantic import model_validator
 
 from app.content.adapters.onthisday import MONTHS, _json
 from app.content.commons_transport import _retry_seconds, utc_now
+from app.content.event_links_transport import MAX_RESPONSE_BYTES, acquire
 from app.content.publish import _safe_root, canonical, verify_release
 from app.content.schemas import SHA256, ContentModel, EventRecord, NonEmpty
 from app.game.years import from_year_index
 
-API_URL = "https://en.wikipedia.org/w/api.php"
-MAX_RESPONSE_BYTES = 5 * 1024 * 1024
 STOPWORDS = frozenset("a an and as at by for from in of on or the to with".split())
 SUBJECTS = frozenset(
     "battle siege war treaty revolution election referendum invasion expedition mission flight landing eruption earthquake invention".split()
@@ -459,17 +457,16 @@ def _private_write(path: Path, body: bytes, *, create_only: bool) -> None:
 
 
 class EvidenceCache(AbstractContextManager["EvidenceCache"]):
-    """One sequential client under a cache lock; no HTTP redirect following.
+    """Sequential isolated attempts under a cache lock; no HTTP redirects.
 
     A query with continuation is incomplete evidence and deliberately unresolved.
     Cached failures stay failures on subsequent/offline builds.
+    Online attempts have a 10s acquisition budget plus at most 1s kill/reap.
     """
 
     def __init__(self, root: Path, *, offline: bool) -> None:
         self.root = _private_path(root)
         self.offline = offline
-        self.client: httpx.AsyncClient | None = None
-        self.runner: asyncio.Runner | None = None
         self.last_request: float | None = None
         self.lock: Any = None
 
@@ -479,51 +476,16 @@ class EvidenceCache(AbstractContextManager["EvidenceCache"]):
         self.lock = lock_path.open("a")
         lock_path.chmod(0o600)
         fcntl.flock(self.lock, fcntl.LOCK_EX)
-        if not self.offline:
-            self.runner = asyncio.Runner()
-            self.client = httpx.AsyncClient(
-                timeout=10,
-                follow_redirects=False,
-                trust_env=False,
-                headers={
-                    "User-Agent": "HistoricalDateGame/1.0 (https://github.com/klottick/historical-date-game; offline event-link enrichment)"
-                },
-            )
         return self
 
     def __exit__(self, *args: Any) -> None:
-        try:
-            if self.client and self.runner:
-                self.runner.run(self.client.aclose())
-        finally:
-            try:
-                if self.runner:
-                    self.runner.close()
-            finally:
-                if self.lock:
-                    self.lock.close()
-
-    async def _read_response(
-        self, params: dict[str, str]
-    ) -> tuple[httpx.Response, bytes | None]:
-        assert self.client is not None
-        # Native async reads can be cancelled during header acquisition or any
-        # body read. An idle timeout/check after a buffered yield cannot bound a
-        # continuously trickling provider. No worker thread owns the socket.
-        deadline = asyncio.get_running_loop().time() + 10
-        async with asyncio.timeout_at(deadline):
-            async with self.client.stream("GET", API_URL, params=params) as response:
-                body = bytearray()
-                async for chunk in response.aiter_bytes():
-                    if len(body) + len(chunk) > MAX_RESPONSE_BYTES:
-                        return response, None
-                    body.extend(chunk)
-                return response, bytes(body)
+        if self.lock:
+            self.lock.close()
 
     def _fetch(
         self, params: dict[str, str]
     ) -> tuple[dict[str, Any] | None, str | None]:
-        assert self.client is not None and self.runner is not None
+        assert not self.offline
         reason = "acquisition_unavailable"
         for attempt in range(3):
             if self.last_request is not None:
@@ -532,7 +494,7 @@ class EvidenceCache(AbstractContextManager["EvidenceCache"]):
                 time.sleep(1)
             self.last_request = time.monotonic()
             try:
-                response, body = self.runner.run(self._read_response(params))
+                response, body = acquire(params)
                 if body is None:
                     return None, "response_limits"
                 if response.status_code in {429, 503}:
