@@ -1,6 +1,6 @@
 import { useDroppable } from "@dnd-kit/react"
 import { useContext } from "react"
-import type { PendingCard } from "@/client"
+import type { PendingCard, RevealedCard } from "@/client"
 import { GameCard } from "./GameCard"
 import type { TimelineDisplayItem } from "./lossTimeline"
 import { PendingTile, TimelineLockContext } from "./PendingTile"
@@ -11,12 +11,14 @@ export function TimelineStage({
   pending,
   previewSlot,
   correctDisplaySlot,
+  legacyWrongCard = null,
   interaction,
 }: {
   items: TimelineDisplayItem[]
   pending: PendingCard | null
   previewSlot: number | null
   correctDisplaySlot: number | null
+  legacyWrongCard?: RevealedCard | null
   interaction: TimelineInteraction
 }) {
   const { ref } = useDroppable({ id: "timeline", disabled: !pending })
@@ -33,8 +35,13 @@ export function TimelineStage({
     <section
       className="timeline-stage"
       data-has-pending={pending !== null}
+      data-has-legacy={legacyWrongCard !== null}
       aria-label="Event timeline"
       onKeyDown={(event) => interaction.keyboard(event.nativeEvent)}
+      onFocus={(event) => {
+        const item = event.target.closest<HTMLElement>(".timeline-item")
+        if (item) interaction.centerCard(Number(item.dataset.displayIndex))
+      }}
     >
       {pending && (
         <h2 className="hand-label">
@@ -47,7 +54,9 @@ export function TimelineStage({
           interaction.viewportRef.current = element
         }}
         className="timeline-viewport"
-        style={{ marginLeft: pending ? "var(--hand-reserve)" : 0 }}
+        style={{
+          marginLeft: pending || legacyWrongCard ? "var(--hand-reserve)" : 0,
+        }}
         data-offset={offset}
         data-hovered-slot={interaction.hoveredSlot ?? ""}
       >
@@ -103,6 +112,15 @@ export function TimelineStage({
           )}
         </div>
       </div>
+      {legacyWrongCard && (
+        <div className="legacy-loss">
+          <p>Old placement position unavailable.</p>
+          <div className="legacy-loss-card">
+            <strong className="wrong-marker">Wrong</strong>
+            <GameCard card={legacyWrongCard} revealed />
+          </div>
+        </div>
+      )}
       {pending && (
         <div
           className="pending-position"

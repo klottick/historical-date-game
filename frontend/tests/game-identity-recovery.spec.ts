@@ -238,6 +238,8 @@ for (const accountState of ["inactive", "deleted"] as const) {
   test(`${accountState} account owned read offers session recovery without replacement`, async ({
     page,
   }) => {
+    const pageErrors: string[] = []
+    page.on("pageerror", (error) => pageErrors.push(error.message))
     const state = await harness(page, "one")
     let release!: () => void
     state.delayRead = new Promise<void>((resolve) => {
@@ -269,11 +271,14 @@ for (const accountState of ["inactive", "deleted"] as const) {
     expect(state.moves).toHaveLength(0)
     expect(state.starts).toHaveLength(0)
     expect(state.dailyStarts).toHaveLength(0)
+    expect(pageErrors).toEqual([])
   })
 
   test(`${accountState} account placement retains exact UUID and body through explicit guest continuation`, async ({
     page,
   }) => {
+    const pageErrors: string[] = []
+    page.on("pageerror", (error) => pageErrors.push(error.message))
     const state = await harness(page, "one")
     await openBoard(page)
     let release!: () => void
@@ -308,6 +313,7 @@ for (const accountState of ["inactive", "deleted"] as const) {
     expect(await saved(page, key)).toBe(original)
     expect(state.moves).toHaveLength(1)
     expect(await saved(page, `game:guest-one:placement:${runId}`)).toBeNull()
+    expect(pageErrors).toEqual([])
   })
 
   for (const mode of ["daily", "freeplay"] as const) {

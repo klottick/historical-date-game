@@ -410,9 +410,10 @@ test("validation and service failure are not historical losses", async ({
   await expect(
     page.getByRole("button", { name: "Lock it in", exact: true }),
   ).toBeEnabled()
-  await expect(
-    page.getByText("Preview: slot 1.", { exact: true }),
-  ).toBeVisible()
+  await expect(page.locator("[data-preview-slot]")).toHaveAttribute(
+    "data-preview-slot",
+    "0",
+  )
   status = 503
   await page.getByRole("button", { name: "Lock it in", exact: true }).click()
   await expect(page.getByRole("alert")).toContainText(
@@ -432,7 +433,13 @@ test("validation and service failure are not historical losses", async ({
   await expect(
     page.getByRole("button", { name: "Lock it in", exact: true }),
   ).toBeEnabled()
-  await expect(page.getByRole("heading", { name: "Next card" })).toBeVisible()
+  await expect(
+    page.getByTestId("pending-card").locator(".game-card"),
+  ).toHaveAttribute("data-event-id", run.pending!.event_id)
+  await expect(page.locator("[data-preview-slot]")).toHaveAttribute(
+    "data-preview-slot",
+    "0",
+  )
 })
 
 test("delayed authoritative read cannot roll back a committed move", async ({

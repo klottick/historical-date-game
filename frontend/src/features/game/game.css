@@ -94,12 +94,12 @@
   flex: 1;
   min-height: 358px;
   min-width: 0;
-  overflow: hidden;
+  overflow: clip;
 }
 .timeline-viewport {
   position: absolute;
   inset: 0;
-  overflow: hidden;
+  overflow: clip;
   min-width: 0;
   border-radius: 12px;
   background: #20324b;
@@ -398,29 +398,19 @@
   min-height: 44px;
 }
 .legacy-loss {
-  display: flex;
-  align-items: center;
-  gap: 16px;
-  font-size: 0.9rem;
+  position: absolute;
+  top: 0;
+  left: 0;
+  width: var(--card-width);
+  font-size: 0.75rem;
+}
+.legacy-loss-card {
+  position: relative;
+  margin-top: 6px;
 }
 .legacy-loss .game-card {
-  display: grid;
-  grid-template-columns: 80px 1fr;
-  height: 130px;
-  width: 400px;
-  gap: 8px;
-}
-.legacy-loss .game-card-category {
-  display: none;
-}
-.legacy-loss .event-image-window {
-  height: 90px;
-}
-.legacy-loss .game-card h3 {
-  height: 2.6em;
-}
-.legacy-loss .game-card-copy {
-  padding: 0;
+  outline: 4px solid #b73521;
+  outline-offset: -4px;
 }
 .freeplay-form {
   max-width: 750px;
@@ -478,6 +468,15 @@
   }
   .timeline-stage[data-has-pending="true"] {
     min-height: 490px;
+  }
+  .timeline-stage[data-has-legacy="true"] {
+    min-height: 720px;
+  }
+  .timeline-stage[data-has-legacy="true"] .timeline-viewport {
+    bottom: 360px;
+  }
+  .timeline-stage[data-has-legacy="true"] .legacy-loss {
+    top: 370px;
   }
   .timeline-stage[data-has-pending="true"] .timeline-viewport {
     bottom: 136px;

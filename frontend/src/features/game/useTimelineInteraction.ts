@@ -109,29 +109,56 @@ export function useTimelineInteraction(args: {
       revision: args.revision,
       locked: args.locked,
     }
+    let disposed = false
     const current = () =>
+      !disposed &&
+      viewport.isConnected &&
+      viewportRef.current === viewport &&
       owner.contextId === latest.current.contextId &&
       owner.eventId === latest.current.eventId &&
       owner.revision === latest.current.revision &&
       owner.locked === latest.current.locked
     const measure = () => {
+      if (!current()) return
       const style = getComputedStyle(viewport)
       const next = {
         cardWidth: Number.parseFloat(style.getPropertyValue("--card-width")),
         gap: Number.parseFloat(style.getPropertyValue("--card-gap")),
-        viewportWidth: Math.max(1, viewport.clientWidth),
+        viewportWidth: viewport.clientWidth,
       }
-      geometry.current = { ...geometry.current, ...next }
+      // Detached/hidden views and unavailable CSS must not poison the last
+      // valid layout used by rendering, collision math or navigator callbacks.
+      if (
+        !Number.isFinite(next.cardWidth) ||
+        next.cardWidth <= 0 ||
+        !Number.isFinite(next.gap) ||
+        next.gap < 0 ||
+        !Number.isFinite(next.viewportWidth) ||
+        next.viewportWidth <= 0
+      )
+        return
+      const measured = { ...geometry.current, ...next }
       const index = centeredCard.current
       if (index !== null)
-        geometry.current.offset =
-          index * (next.cardWidth + next.gap) +
+        measured.offset =
+          (index +
+            (measured.previewSlot !== null && index >= measured.previewSlot
+              ? 1
+              : 0)) *
+            (next.cardWidth + next.gap) +
           next.cardWidth / 2 -
           next.viewportWidth / 2
-      geometry.current.offset = clampOffset(
-        geometry.current.offset,
-        geometry.current,
+      const cards = measured.count + (measured.previewSlot === null ? 0 : 1)
+      if (
+        !Number.isFinite(next.cardWidth + next.gap) ||
+        !Number.isFinite(
+          cards * next.cardWidth + Math.max(0, cards - 1) * next.gap,
+        ) ||
+        !Number.isFinite(measured.offset)
       )
+        return
+      measured.offset = clampOffset(measured.offset, measured)
+      geometry.current = measured
       setDimensions(next)
       setOffset(geometry.current.offset)
     }
@@ -163,6 +190,7 @@ export function useTimelineInteraction(args: {
     window.addEventListener("blur", blur)
     document.addEventListener("focusout", focusout)
     return () => {
+      disposed = true
       cancel()
       nav.dispose()
       navigator.current = null
@@ -197,7 +225,9 @@ export function useTimelineInteraction(args: {
     centeredCard.current = index
     const layout = geometry.current
     const next = clampOffset(
-      index * (layout.cardWidth + layout.gap) +
+      (index +
+        (layout.previewSlot !== null && index >= layout.previewSlot ? 1 : 0)) *
+        (layout.cardWidth + layout.gap) +
         layout.cardWidth / 2 -
         layout.viewportWidth / 2,
       layout,

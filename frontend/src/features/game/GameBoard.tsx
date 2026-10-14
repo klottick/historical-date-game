@@ -13,7 +13,6 @@ import type { GameSessionPublic } from "@/client"
 import { Button } from "@/components/ui/button"
 import { overviewMarks } from "./boardGeometry"
 import { ContentIssueDialog } from "./ContentIssueDialog"
-import { GameCard } from "./GameCard"
 import { GameCreditsDialog } from "./GameCreditsDialog"
 import { GameResults } from "./GameResults"
 import { lossTimeline } from "./lossTimeline"
@@ -192,6 +191,7 @@ function BoardSurface({
             pending={run.status === "active" ? run.pending : null}
             previewSlot={state.selectedSlot}
             correctDisplaySlot={display.correctDisplaySlot}
+            legacyWrongCard={display.legacyWrongCard}
             interaction={interaction}
           />
         </TimelineLockContext.Provider>
@@ -202,13 +202,6 @@ function BoardSurface({
         correctSlot={display.correctDisplaySlot}
         onNavigate={interaction.reveal}
       />
-      {display.legacyWrongCard && (
-        <div className="legacy-loss">
-          <p>Old placement position unavailable.</p>
-          <strong>Wrong</strong>
-          <GameCard card={display.legacyWrongCard} revealed />
-        </div>
-      )}
       {run.status === "active" && run.pending ? (
         <section className="game-controls" aria-label="Placement controls">
           <p id="placement-instructions">

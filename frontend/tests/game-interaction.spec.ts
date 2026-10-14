@@ -322,7 +322,7 @@ test("long_timeline_all_gaps_and_controls_remain_reachable", async ({
   }))
   expect(dimensions.width).toBeGreaterThanOrEqual(200)
   expect(dimensions.height).toBeGreaterThanOrEqual(320)
-  expect(dimensions.overflow).toBe("hidden")
+  expect(dimensions.overflow).toBe("clip")
   await mkdir(evidence, { recursive: true, mode: 0o700 })
   await writeFile(
     `${evidence}/U3-long-${info.project.name}.json`,

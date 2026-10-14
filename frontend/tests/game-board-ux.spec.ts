@@ -26,6 +26,226 @@ async function fitsDesktop(page: Page) {
     await expect(control).toBeInViewport({ ratio: 1 })
 }
 
+test("unavailable_resize_measurement_preserves_last_valid_layout", async ({
+  page,
+}) => {
+  const pageErrors: string[] = []
+  page.on("pageerror", (error) => pageErrors.push(error.message))
+  const state = await controlledBoard(page, controlledRun(20))
+  await keyboardPreview(page, 15)
+  const viewport = page.locator(".timeline-viewport")
+  const offset = await viewport.getAttribute("data-offset")
+  for (const [width, gap] of [
+    ["initial", "16px"],
+    ["NaNpx", "16px"],
+    ["0px", "16px"],
+    ["-1px", "16px"],
+    ["Infinity", "16px"],
+    ["1e308px", "16px"],
+    ["230px", "-1px"],
+  ]) {
+    await viewport.evaluate(
+      (element, values) => {
+        const node = element as HTMLElement
+        node.style.setProperty("--card-width", values[0])
+        node.style.setProperty("--card-gap", values[1])
+        node.style.right = node.style.right === "1px" ? "2px" : "1px"
+      },
+      [width, gap],
+    )
+    await page.evaluate(
+      () =>
+        new Promise<void>((resolve) =>
+          requestAnimationFrame(() => requestAnimationFrame(() => resolve())),
+        ),
+    )
+    expect(pageErrors).toEqual([])
+    await expect(viewport).toHaveAttribute("data-offset", offset!)
+    expect((await page.locator(".pending-position").boundingBox())!.width).toBe(
+      230,
+    )
+  }
+  await viewport.evaluate((element) => {
+    ;(element as HTMLElement).style.display = "none"
+  })
+  await page.evaluate(
+    () =>
+      new Promise<void>((resolve) =>
+        requestAnimationFrame(() => requestAnimationFrame(() => resolve())),
+      ),
+  )
+  expect(pageErrors).toEqual([])
+  await expect(viewport).toHaveAttribute("data-offset", offset!)
+  await viewport.evaluate((element) => {
+    const node = element as HTMLElement
+    node.style.setProperty("--card-width", "210px")
+    node.style.setProperty("--card-gap", "12px")
+    node.style.right = "3px"
+    node.style.removeProperty("display")
+  })
+  await expect
+    .poll(
+      async () =>
+        (await page.locator(".pending-position").boundingBox())!.width,
+    )
+    .toBe(210)
+  await keyboardPreview(page, 0)
+  expect(pageErrors).toEqual([])
+  expect(state.moves).toHaveLength(0)
+})
+
+test("tab_reveals_long_sequence_cards_without_native_scroll_or_pointer_drift", async ({
+  page,
+}) => {
+  const state = await controlledBoard(page, controlledRun(100))
+  const details = page
+    .locator(".timeline-item")
+    .getByRole("button", { name: "Learn more", exact: true })
+  const viewport = page.locator(".timeline-viewport")
+  await details.first().focus()
+  for (let index = 0; index <= 15; index++) {
+    if (index > 0) await page.keyboard.press("Tab")
+    await expect(details.nth(index)).toBeFocused()
+    if (index > 0)
+      expect(
+        await details
+          .nth(index)
+          .evaluate((element) => element.matches(":focus-visible")),
+      ).toBe(true)
+    await expect(details.nth(index)).toBeInViewport({ ratio: 1 })
+    const geometry = await viewport.evaluate((element, ordinal) => {
+      const board = element.getBoundingClientRect()
+      const card = element
+        .querySelector(`[data-display-index="${ordinal}"]`)!
+        .getBoundingClientRect()
+      const offset = Number(element.getAttribute("data-offset"))
+      return {
+        scrollLeft: element.scrollLeft,
+        x: card.left - board.left,
+        expectedX: ordinal * 246 - offset,
+        cardRight: card.right - board.left,
+        width: board.width,
+      }
+    }, index)
+    expect(geometry.scrollLeft).toBe(0)
+    expect(
+      await page
+        .locator(".timeline-stage")
+        .evaluate((element) => element.scrollLeft),
+    ).toBe(0)
+    expect(geometry.x).toBeCloseTo(geometry.expectedX, 5)
+    expect(geometry.x).toBeGreaterThanOrEqual(0)
+    expect(geometry.cardRight).toBeLessThanOrEqual(geometry.width)
+  }
+  expect(Number(await viewport.getAttribute("data-offset"))).toBeGreaterThan(0)
+  await details.nth(15).click()
+  await expect(page.getByRole("dialog")).toBeVisible()
+  await page.keyboard.press("Escape")
+  await expect(details.nth(15)).toBeFocused()
+  const tile = (await page.locator(".pending-draggable").boundingBox())!
+  const board = (await viewport.boundingBox())!
+  const offset = Number(await viewport.getAttribute("data-offset"))
+  await page.mouse.move(tile.x + 70, tile.y + 70)
+  await page.mouse.down()
+  await page.mouse.move(tile.x + 82, tile.y + 70)
+  // One target move avoids opening an earlier insertion preview along an
+  // interpolated path; this checks the focused transform's pointer alignment.
+  await page.mouse.move(board.x + 15 * 246 - offset + 150, board.y + 90)
+  await expect(viewport).toHaveAttribute("data-hovered-slot", "16")
+  await page.mouse.up()
+  await expect(page.locator("[data-preview-slot]")).toHaveAttribute(
+    "data-preview-slot",
+    "16",
+  )
+  await details.nth(17).focus()
+  await expect(page.locator(".timeline-item").nth(17)).toBeInViewport({
+    ratio: 1,
+  })
+  // Insertion state is already correct; neighbors still have their specified
+  // 180ms left transition. Check exact display geometry once that settles.
+  await expect
+    .poll(() =>
+      viewport.evaluate((element) => {
+        const card = element.querySelector('[data-display-index="17"]')!
+        return (
+          card.getBoundingClientRect().left -
+          element.getBoundingClientRect().left -
+          (18 * 246 - Number(element.getAttribute("data-offset")))
+        )
+      }),
+    )
+    .toBeCloseTo(0, 4)
+  const previewGeometry = await viewport.evaluate((element) => {
+    const card = element.querySelector('[data-display-index="17"]')!
+    return {
+      native: element.scrollLeft,
+      offset: Number(element.getAttribute("data-offset")),
+      x:
+        card.getBoundingClientRect().left -
+        element.getBoundingClientRect().left,
+    }
+  })
+  expect(previewGeometry.native).toBe(0)
+  expect(previewGeometry.x).toBeCloseTo(18 * 246 - previewGeometry.offset, 4)
+  await details.nth(17).click()
+  await expect(page.getByRole("dialog")).toBeVisible()
+  await page.keyboard.press("Escape")
+  await expect(details.nth(17)).toBeFocused()
+  await expect(page.locator("[data-preview-slot]")).toHaveAttribute(
+    "data-preview-slot",
+    "16",
+  )
+  expect(state.moves).toHaveLength(0)
+  await page.getByRole("button", { name: "Lock it in", exact: true }).click()
+  await expect(page.getByTestId("run-revision")).toHaveText("Revision: 1")
+  expect(state.moves).toHaveLength(1)
+  expect(state.moves[0].slot).toBe(16)
+})
+
+for (const size of [
+  { width: 1920, height: 900 },
+  { width: 1366, height: 768 },
+])
+  test(`legacy_loss_fits_whole_desktop_controls ${size.width}`, async ({
+    page,
+  }) => {
+    await page.setViewportSize(size)
+    const run = controlledRun()
+    run.status = "lost"
+    run.pending = null
+    run.feedback = {
+      correct: false,
+      card: {
+        ...run.timeline[0],
+        event_id: "legacy-wrong",
+        prompt: "Legacy wrong event",
+      },
+      attempted_slot: null,
+      correct_slot: 3,
+    }
+    await controlledBoard(page, run, false)
+    await page.goto(`/play/${run.run_id}`)
+    await expect(
+      page.getByText("Old placement position unavailable.", { exact: true }),
+    ).toBeInViewport({ ratio: 1 })
+    await expect(page.locator(".legacy-loss .game-card")).toBeInViewport({
+      ratio: 1,
+    })
+    await expect(page.locator(".timeline-item").first()).toBeInViewport({
+      ratio: 1,
+    })
+    await expect(
+      page.getByRole("button", { name: "Run details", exact: true }),
+    ).toBeInViewport({ ratio: 1 })
+    await expect(page.locator(".timeline-item[data-wrong=true]")).toHaveCount(0)
+    await fitsDesktop(page)
+    await page.reload()
+    await expect(page.locator(".legacy-loss .game-card")).toBeInViewport({
+      ratio: 1,
+    })
+    await fitsDesktop(page)
+  })
+
 test("drag_actual_tile_into_second_boundary", async ({ page }) => {
   const state = await controlledBoard(page)
   await dragTile(page, 1)
