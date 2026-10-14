@@ -3,7 +3,7 @@ from typing import Any
 
 from sqlmodel import Session, select
 
-from app.core.security import get_password_hash, verify_password
+from app.core.security import get_password_hash, verify_password_and_update
 from app.models import Item, ItemCreate, User, UserCreate, UserUpdate
 
 
@@ -41,8 +41,17 @@ def authenticate(*, session: Session, email: str, password: str) -> User | None:
     db_user = get_user_by_email(session=session, email=email)
     if not db_user or db_user.is_guest:
         return None
-    if not verify_password(password, db_user.hashed_password):
+    verified, updated_hash = verify_password_and_update(
+        password, db_user.hashed_password
+    )
+    if not verified:
         return None
+    # Keep inactive-account rejection in the login route, without changing its hash.
+    if updated_hash is not None and db_user.is_active:
+        db_user.hashed_password = updated_hash
+        session.add(db_user)
+        session.commit()
+        session.refresh(db_user)
     return db_user
 
 

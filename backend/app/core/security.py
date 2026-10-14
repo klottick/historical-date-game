@@ -3,10 +3,14 @@ from typing import Any
 
 import jwt
 from pwdlib import PasswordHash
+from pwdlib.exceptions import UnknownHashError
+from pwdlib.hashers.argon2 import Argon2Hasher
+from pwdlib.hashers.bcrypt import BcryptHasher
 
 from app.core.config import settings
 
-password_hash = PasswordHash.recommended()
+# New hashes use Argon2; retained passlib bcrypt hashes remain verifiable.
+password_hash = PasswordHash((Argon2Hasher(), BcryptHasher()))
 
 
 ALGORITHM = "HS256"
@@ -20,7 +24,20 @@ def create_access_token(subject: str | Any, expires_delta: timedelta) -> str:
 
 
 def verify_password(plain_password: str, hashed_password: str) -> bool:
-    return password_hash.verify(plain_password, hashed_password)
+    try:
+        return password_hash.verify(plain_password, hashed_password)
+    except UnknownHashError, ValueError:
+        # Unsupported hashes and invalid bcrypt salts fail like a wrong password.
+        return False
+
+
+def verify_password_and_update(
+    plain_password: str, hashed_password: str
+) -> tuple[bool, str | None]:
+    try:
+        return password_hash.verify_and_update(plain_password, hashed_password)
+    except UnknownHashError, ValueError:
+        return False, None
 
 
 def get_password_hash(password: str) -> str:

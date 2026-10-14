@@ -9,7 +9,9 @@ dependencies = [
     "uvicorn[standard]>=0.54.0,<1.0.0",
     "python-multipart>=0.0.32,<1.0.0",
     "email-validator>=2.3.0,<3.0.0",
-    "pwdlib[argon2]>=0.3.1,<1.0.0",
+    "pwdlib[argon2,bcrypt]>=0.3.1,<1.0.0",
+    # Preserve passlib's legacy >72-byte verification; new hashes use Argon2.
+    "bcrypt>=4.1.2,<5.0.0",
     "tenacity>=9.2.1,<10.0.0",
     "pydantic>=2.14.0,<3.0.0",
     "emails>=1.1.3,<2.0.0",
