@@ -76,7 +76,8 @@ adopted or killed. The existing DB server/exposure was not changed.
   browser proof. New proof guests/runs are retained, including preliminary runs.
 
 The rollout helper defaults to inspection/dry-run. It requires exact worktrees,
-DB/environment/host/port/comment, selected release/manifest bytes, original media
+DB/environment/host/port/comment (PostgreSQL host must be exactly `127.0.0.1`, not
+`localhost` or `::1`), selected release/manifest bytes, original media
 paths/hashes, current IP/origins and free cold-start ports. `--apply` is necessary
 for migration/start or owned stop; existing processes are never adopted. Private
 outputs are create-only fresh mode-0600 inodes inside an ignored mode-0700 evidence

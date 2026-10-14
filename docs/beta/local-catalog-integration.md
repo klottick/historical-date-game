@@ -334,6 +334,9 @@ The API reads the original hash-verified **public media** via an absolute
 
 For inspection from `guest-play/backend/` (read-only, default dry-run):
 
+The PostgreSQL host must be exactly `127.0.0.1`; `localhost` and `::1` are rejected
+before connection/migration so inspection and child processes use one endpoint.
+
 ```bash
 # Inspect current IP, ports and processes anew; do not assume this IP is permanent.
 ip -4 route get 1.1.1.1

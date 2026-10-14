@@ -50,11 +50,11 @@ def announce(message: str) -> None:
 def require_target() -> None:
     if (
         settings.POSTGRES_DB != DATABASE
-        or settings.POSTGRES_SERVER not in {"127.0.0.1", "localhost", "::1"}
+        or settings.POSTGRES_SERVER != "127.0.0.1"
         or settings.POSTGRES_PORT != 5433
         or settings.ENVIRONMENT != "local"
     ):
-        raise RuntimeError("Exact local real database on loopback:5433 required")
+        raise RuntimeError("Exact local real database on 127.0.0.1:5433 required")
 
 
 def require_paths(live: Path, implementation: Path) -> None:

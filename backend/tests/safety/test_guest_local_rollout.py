@@ -36,6 +36,8 @@ def valid_local_settings(monkeypatch: pytest.MonkeyPatch) -> None:
         ("POSTGRES_DB", "historical_date_game_guest_test"),
         ("POSTGRES_DB", "historical_date_game_test"),
         ("POSTGRES_SERVER", "remote.example"),
+        ("POSTGRES_SERVER", "localhost"),
+        ("POSTGRES_SERVER", "::1"),
         ("POSTGRES_PORT", 5432),
         ("ENVIRONMENT", "production"),
     ],
@@ -48,6 +50,45 @@ def test_bad_target_refused_before_connection(
     monkeypatch.setattr(r.psycopg, "connect", lambda **_: pytest.fail("connected"))
     with pytest.raises(RuntimeError):
         r.inspect_database()
+
+
+def test_intended_ipv4_target_reaches_only_exact_connection_boundary(
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    r = rollout()
+
+    class ConnectionBoundaryReached(Exception):
+        pass
+
+    def connect(**kwargs: Any) -> None:
+        assert kwargs["host"] == "127.0.0.1"
+        assert kwargs["port"] == 5433
+        assert kwargs["dbname"] == "historical_date_game_catalog_test"
+        raise ConnectionBoundaryReached
+
+    monkeypatch.setattr(r.psycopg, "connect", connect)
+    with pytest.raises(ConnectionBoundaryReached):
+        r.inspect_database()
+
+
+@pytest.mark.parametrize("host", ["localhost", "::1"])
+def test_hostname_and_ipv6_refused_before_start_inspection_or_migration(
+    monkeypatch: pytest.MonkeyPatch,
+    host: str,
+) -> None:
+    r = rollout()
+    monkeypatch.setattr(r.settings, "POSTGRES_SERVER", host)
+    monkeypatch.setattr(
+        r, "require_paths", lambda *_: pytest.fail("crossed target guard")
+    )
+    monkeypatch.setattr(r.psycopg, "connect", lambda **_: pytest.fail("connected"))
+    monkeypatch.setattr(
+        r.subprocess,
+        "run",
+        lambda *_args, **_kwargs: pytest.fail("migration attempted"),
+    )
+    with pytest.raises(RuntimeError):
+        r.start({"origins": []})
 
 
 @pytest.mark.parametrize(
