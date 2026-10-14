@@ -58,6 +58,8 @@ class Settings(BaseSettings):
     POSTGRES_PASSWORD: str = ""
     POSTGRES_DB: str = ""
     GAME_DATA_DIR: Path = Path("../data/game")
+    GAME_EVENT_LINKS_FILE: Path | None = None
+    GAME_EVENT_LINKS_SHA256: str | None = None
     PUBLIC_REGISTRATION_ENABLED: bool = True
     GAME_GUEST_COOKIE_NAME: str = "hdg_guest"
 

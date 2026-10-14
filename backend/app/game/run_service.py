@@ -16,6 +16,7 @@ from sqlmodel import Session, col, select
 
 from app.content.schemas import EventRecord
 from app.game.catalog_repository import CatalogError, load_events, load_options
+from app.game.event_links import event_link_for_run
 from app.game.models import GameOperation, GameRun, utc_now
 from app.game.ordering import generate_seed, seeded_order
 from app.game.projections import (
@@ -283,7 +284,9 @@ def submit_placement(
         )
         feedback = MoveFeedback(
             correct=outcome.correct,
-            card=revealed_card(event, media),
+            card=revealed_card(
+                event, media, learn_more=event_link_for_run(session, run, event)
+            ),
             correct_slot=outcome.correct_slot,
             attempted_slot=command.slot,
         )

@@ -154,6 +154,28 @@ export const DailyStartSchema = {
   title: "DailyStart",
 } as const
 
+export const EventLinkPublicSchema = {
+  properties: {
+    kind: {
+      type: "string",
+      enum: ["article", "source"],
+      title: "Kind",
+    },
+    label: {
+      type: "string",
+      title: "Label",
+    },
+    url: {
+      type: "string",
+      title: "Url",
+    },
+  },
+  additionalProperties: false,
+  type: "object",
+  required: ["kind", "label", "url"],
+  title: "EventLinkPublic",
+} as const
+
 export const FreeplayStartSchema = {
   properties: {
     operation_id: {
@@ -655,6 +677,16 @@ export const RevealedCardSchema = {
       },
       type: "array",
       title: "Sources",
+    },
+    learn_more: {
+      anyOf: [
+        {
+          $ref: "#/components/schemas/EventLinkPublic",
+        },
+        {
+          type: "null",
+        },
+      ],
     },
   },
   additionalProperties: false,

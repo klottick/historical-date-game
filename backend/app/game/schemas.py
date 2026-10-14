@@ -93,10 +93,17 @@ class SourcePublic(PublicModel):
     url: str
 
 
+class EventLinkPublic(PublicModel):
+    kind: Literal["article", "source"]
+    label: str
+    url: str
+
+
 class RevealedCard(PendingCard):
     year: YearInput
     explanation: str
     sources: list[SourcePublic]
+    learn_more: EventLinkPublic | None = None
 
 
 class MoveFeedback(PublicModel):

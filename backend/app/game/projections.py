@@ -17,10 +17,12 @@ from app.content.adapters.onthisday import (
 )
 from app.content.schemas import CategoryRecord, EventRecord, FallbackRecord, MediaRecord
 from app.game.catalog_repository import CatalogError
+from app.game.event_links import event_link_for_run
 from app.game.models import DailyDefinition, GameRun
 from app.game.run_repository import latest_placement, load_media
 from app.game.schemas import (
     CreditPublic,
+    EventLinkPublic,
     GameConfig,
     MediaPublic,
     PendingCard,
@@ -132,7 +134,9 @@ def pending_card(event: EventRecord, media: MediaPublic) -> PendingCard:
     )
 
 
-def revealed_card(event: EventRecord, media: MediaPublic) -> RevealedCard:
+def revealed_card(
+    event: EventRecord, media: MediaPublic, *, learn_more: EventLinkPublic | None = None
+) -> RevealedCard:
     return RevealedCard(
         event_id=event.event_id,
         prompt=event.prompt,
@@ -140,6 +144,7 @@ def revealed_card(event: EventRecord, media: MediaPublic) -> RevealedCard:
         media=media,
         year=public_year(event.year_index),
         explanation=event.explanation,
+        learn_more=learn_more,
         sources=[
             SourcePublic(label=source.source_id, url=safe_url(source.url))
             for source in event.sources
@@ -188,6 +193,7 @@ def project_run(
             revealed_card(
                 events[UUID(id_)],
                 project_media(events[UUID(id_)], assets, media_base_url),
+                learn_more=event_link_for_run(session, run, events[UUID(id_)]),
             )
             for id_ in run.timeline
         ]

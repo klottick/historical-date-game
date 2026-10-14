@@ -16,6 +16,7 @@ export type {
   CreditPublic,
   DailyOverview,
   DailyStart,
+  EventLinkPublic,
   FreeplayStart,
   GameConfig,
   GameOptions,

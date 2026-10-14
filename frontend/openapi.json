@@ -1142,6 +1142,21 @@
         "required": ["operation_id"],
         "title": "DailyStart"
       },
+      "EventLinkPublic": {
+        "properties": {
+          "kind": {
+            "type": "string",
+            "enum": ["article", "source"],
+            "title": "Kind"
+          },
+          "label": { "type": "string", "title": "Label" },
+          "url": { "type": "string", "title": "Url" }
+        },
+        "additionalProperties": false,
+        "type": "object",
+        "required": ["kind", "label", "url"],
+        "title": "EventLinkPublic"
+      },
       "FreeplayStart": {
         "properties": {
           "operation_id": {
@@ -1488,6 +1503,12 @@
             "items": { "$ref": "#/components/schemas/SourcePublic" },
             "type": "array",
             "title": "Sources"
+          },
+          "learn_more": {
+            "anyOf": [
+              { "$ref": "#/components/schemas/EventLinkPublic" },
+              { "type": "null" }
+            ]
           }
         },
         "additionalProperties": false,

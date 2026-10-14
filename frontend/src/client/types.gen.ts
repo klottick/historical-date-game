@@ -95,6 +95,24 @@ export type DailyStart = {
 }
 
 /**
+ * EventLinkPublic
+ */
+export type EventLinkPublic = {
+  /**
+   * Kind
+   */
+  kind: "article" | "source"
+  /**
+   * Label
+   */
+  label: string
+  /**
+   * Url
+   */
+  url: string
+}
+
+/**
  * FreeplayStart
  */
 export type FreeplayStart = {
@@ -437,6 +455,7 @@ export type RevealedCard = {
    * Sources
    */
   sources: Array<SourcePublic>
+  learn_more?: EventLinkPublic | null
 }
 
 /**
