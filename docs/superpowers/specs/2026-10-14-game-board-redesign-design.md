@@ -1,6 +1,6 @@
 # Historical Date Game: Compact, Card-First Board
 
-**Status:** Conversational design approved; written spec awaiting owner review.
+**Status:** Written spec approved by the owner with "approve" on 2026-10-14.
 **Baseline:** `6240352`, `feature/guest-play`.
 
 ## Intent and approved decisions
