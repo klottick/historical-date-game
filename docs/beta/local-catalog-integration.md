@@ -1,7 +1,7 @@
 # Isolated local real-catalog proof (F1)
 
 **Historical F1/F2 evidence:** the retained real game now has owner-authorized
-local guest activation; use the [Task 6 lifecycle](#task-6-current-local-guest-game-lifecycle)
+local card-board activation; use the [verified current lifecycle](#verified-local-card-board-activation)
 below. The F1 ownership comment is historical provenance, **not current permission
 to run destructive pytest/cleanup/seed/probe commands on this live database**.
 
@@ -317,13 +317,14 @@ are appended to the private `task-F2-report.md` and `F2-fix1-evidence/` director
 
 ## Task 6: current local guest-game lifecycle
 
-This section records the **guest-play** lifecycle, not card-board activation.
+This section records the **historical guest-play** lifecycle, not current card-board ownership.
 Its original Task 6 cold-start ledger below is historical; the controller's later
 guest-play generation uses private
 `.superpowers/sdd/2026-10-13-historical-date-game-guest-play/final-fix-evidence/local-lifecycle.py`
 and `local-activation/`. Establish actual current ownership there before any
 signal; do not use a historical PID, address, or stopped Task 6 ledger as authority.
-No fresh operational inspection is claimed by the code-only board Phase A.
+The original runner was freshly verified and stopped during board Phase B below;
+its retained ledgers are provenance, not current service ownership.
 
 Owner-authorized local activation on 2026-10-14 used product baseline `50215af`
 from `.worktrees/guest-play`, additive schema `20261013_01`, and the unchanged
@@ -394,19 +395,24 @@ spoken screen readers, production HTTPS/Secure cookies, security/backup/hosting,
 invitations and final branch review/publication/integration remain separate owner
 decisions. No push, merge, tunnel or external integration was performed.
 
-## Card-board switch draft — review gate, not activation evidence
+## Verified local card-board activation
 
-The card-board work is isolated in `.worktrees/board-redesign`. Its guarded new
-generation and exact post-review commands are documented in
-[game-board-redesign.md](game-board-redesign.md#draft-local-lifecycle--phase-a-only).
-Phase A creates/tests the helper and commits draft lifecycle docs only. The live
-guest-play services remain unchanged; no local card-board activation is claimed.
+On **2026-10-14**, reviewed card-board product HEAD **9d2c75d** was activated from
+`.worktrees/board-redesign`. Its current guarded lifecycle, exact commands and
+fresh evidence are documented in
+[game-board-redesign.md](game-board-redesign.md#verified-local-card-board-lifecycle).
+Phase A committed code/pure tests; independent helper and whole-branch reviews,
+one fix wave and its scoped re-review closed blockers before Phase B. Four pinned
+native teardown warnings were independently accepted for LOCAL delivery only,
+with no suppression/upgrade or production certification.
 
-The controlled local phase is authorized by the plan, but independent Task 6 and
-whole-branch code reviews must finish before operational inspection/stop/start.
-Use only the proved **original guest-play runner** to stop the old pair; the new
-wrapper cannot adopt it. New ownership outputs are create-only at the board plan's
-private `local-activation/`, not copied old ledgers. Preserve all generations.
+Fresh original-runner inspection proved both guest-play identities585755/585762,
+including start ticks/cwd/argv/binds/origins/DB/release/media. Only that original
+runner stopped them, from `guest-play/backend/` with exact live env and
+`PYTHONPATH=.`; both ports were proven free before the new inspect/start. Neither
+served worktree's code was edited, and original ledgers were retained. The new
+wrapper did not adopt them. Fresh create-only ownership is at the board plan's
+private `local-activation/` (0700/files0600). Preserve all generations.
 
 The board wrapper reuses exact live DB/IPv4, source/media, current-origin and
 PID/start-time/cwd/argv/port guards. It requires existing schema `20261013_01` to
@@ -419,9 +425,38 @@ actual-R metadata contains no matched articles, only 1,276 source fallbacks.
 
 API/UI remain loopback8010/all-interface5174 with the existing same-origin proxy,
 private-file denies, real guest cookie, SMTP/public-registration disabled and
-no-access-log API. Post-review Phase B still owes actual-IP browser/security/media
-and unchanged-release verification before leaving owned services running. It
-must not reseed/reselect, clean/downgrade/reset, delete ownership evidence or run
-integrated pytest on the retained live DB. Failures retain state, not automatic
-rollback. Production/physical-device/deployment/invitation/integration approvals
-remain separate; review-gated local authorization does not imply any of them.
+no-access-log API. Current UI is **http://192.168.1.214:5174** (also localhost5174).
+API PID**1176900**, start ticks**15553453**; UI PID**1176907**, start ticks**15553507**.
+Final owned checks passed and services were left running. Recheck actual current
+PID/start/cwd/argv/binds/origins before any future stop; never delete ledgers to
+bypass create-only start refusal or assume this IP/PID remains current.
+
+Fresh actual-IP Chromium proved four Daily/Freeplay complete flows at1920×900 and
+1366×768 CSS pixels/100% zoom, actual-card preview/re-pickup with zero pre-lock
+scoring, eleven correct locks then persisted attempted loss, exact replay/reload,
+visible controls/new Freeplay, preview-aware overview and ordinary keyboard focus,
+full credits and honest source labels. Native insecure-origin crypto/IndexedDB,
+cookie boundaries, unauthorized administration/signup/SMTP routes,24 actual
+media hashes and28 existing private-file denials passed. The factory policy was
+reproduced from the proven running child environment without credential output.
+
+Hash-only read-only audits proved zero startup DB changes; all2,148 original rows
+and36 source/runtime file hashes unchanged at final handoff. The only additions
+were2 dedicated guest users and sessions,8 UI-created runs and56 correlated
+operations (8 starts/48 unique placements;4 exact HTTP replays added no rows).
+Selected release/schema/answers and frozen Daily definitions were unchanged.
+No migration, cleanup, reseed/reselection, downgrade/reset, backup subsystem,
+automatic rollback or integrated pytest was run against the retained live DB.
+
+Private command/exit logs,33 screenshots,two traces, ownership and mutation proofs
+are at `integration/task6-phase-b/` under the board plan; the full phase report is
+`task-6-report.md` (0700 directories/0600 files). One private probe's reserved email
+input produced422 before correction to a valid address proving closed-signup403;
+the diagnostic and original log remain. Router/expected unauthenticated401 and
+prior native diagnostics remain unsuppressed; no page errors occurred. Actual
+article coverage remains0, not universal or real-article certification.
+
+The final commit delta after the reviewed product HEAD is documentation-only.
+No push/merge/tunnel/deployment/invitation or worktree/evidence removal was done.
+Production, physical devices, spoken screen readers, legal clearance and branch
+integration/publication remain separate decisions, not implied by local approval.

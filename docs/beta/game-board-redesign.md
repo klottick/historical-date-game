@@ -6,8 +6,9 @@ displayed at its persisted attempted position, separately from the correct marke
 
 ## Isolated verification
 
-This work is confined to `.worktrees/board-redesign`; it does not activate or alter
-the LAN-served guest-play/beta worktrees. The finite `board` verification profile
+Tasks 1–5 verification was confined to `.worktrees/board-redesign` without changing
+the LAN-served guest-play/beta worktrees. The later reviewed local switch is
+recorded below; neither original worktree's served code was edited. The finite `board` verification profile
 uses only the explicitly owned `historical_date_game_board_test` and
 `historical_date_game_board_fixture_test` databases. Retain them after verification.
 Do not run cleanup/pytest or reseed while browser/API consumers use them.
@@ -162,16 +163,22 @@ integration evidence; 1920×900 and 1366×768 remain no-scroll surfaces.
 
 Physical devices, production deployment, and invitations remain unreached gates
 requiring separate owner decisions. The controlled local switch is authorized by
-the execution plan, but remains held at the independent code-review gate below.
+the execution plan and completed after the independent code-review gates below.
 
-## Draft local lifecycle — Phase A only
+## Verified local card-board lifecycle
 
-The guarded helper is `backend/tests/browser/board_local_rollout.py`. Phase A
-delivers code, pure safety tests and this draft; **the card-board game has not been
-activated locally**. The live guest-play API/UI at 8010/5174 remain unchanged.
-Independent Task 6 and whole-branch review, including residual native teardown
-diagnostic triage, must finish before any operational switch. This is review
-sequencing, not an additional owner check-in or production approval.
+The guarded helper is `backend/tests/browser/board_local_rollout.py`. On
+**2026-10-14**, Phase B activated reviewed product HEAD **9d2c75d** for controlled
+local play after Phase A/helper review, whole-branch review, one final fix wave and
+its independent scoped re-review closed both blocking findings. The four pinned
+native teardown diagnostics were independently accepted as nonblocking for LOCAL
+delivery only; they were not suppressed or upgraded. This is not production approval.
+
+Current UI: **http://192.168.1.214:5174**, also http://localhost:5174. API remains
+`127.0.0.1:8010`; UI binds `0.0.0.0:5174`. Fresh owned records identify API PID
+**1176900**, start ticks **15553453**, and UI PID **1176907**, start ticks
+**15553507**, both with exact board-redesign cwd/argv/bind proof. They were left
+running. These recorded PIDs are not future permission to signal without rechecking.
 
 The wrapper loads the existing guarded rollout into a separate module namespace,
 pins `.worktrees/board-redesign` and original `.worktrees/beta` source/media, and
@@ -182,28 +189,31 @@ An occupied port without this generation's proven ownership is refused.
 
 Default inspection, and start/stop without `--apply`, make no helper filesystem,
 environment, database or process mutations. Inspection may read the database in
-a read-only transaction and query IP/process ownership. Phase A runs only pure
-`--noconftest` tests, **not this operational inspection**:
+a read-only transaction and query IP/process ownership. Phase A used only pure
+`--noconftest` tests; they remain safe independently of the retained live DB:
 
 ```sh
 # From board-redesign/backend/; pure, no destructive DB fixture.
 uv run pytest --noconftest tests/safety/test_board_local_rollout.py -q
 ```
 
-After the review gate, first inspect the actual old guest-play ownership via its
-private `final-fix-evidence/local-lifecycle.py` and `local-activation/`, using the
-original runner from `guest-play/backend/`. Stop only that proved pair, with the
-exact live DB/IPv4 environment; verify both ports released. Never use the new
-wrapper to stop or adopt the old pair. Changed provenance requires a halt.
+For this switch, the original guest-play runner at private
+`final-fix-evidence/local-lifecycle.py` freshly inspected and stopped only its
+proved pair **585755/585762**, from `guest-play/backend/`, with exact live DB/IPv4
+environment and `PYTHONPATH=.`. Both ports were then proven released before the
+new wrapper's inspection/start. Original ledgers were retained, not adopted or
+deleted; no old served code changed. Changed provenance always requires a halt.
 
-For subsequent **post-review** inspection from `board-redesign/backend/`, substitute
-the freshly verified nonloopback IPv4 address, not a historical IP:
+For current read-only inspection from `board-redesign/backend/`, first recheck
+the nonloopback IPv4 address; the example uses the address proved at activation:
 
 ```sh
 POSTGRES_DB=historical_date_game_catalog_test \
 POSTGRES_SERVER=127.0.0.1 POSTGRES_PORT=5433 ENVIRONMENT=local \
-  uv run python -m tests.browser.board_local_rollout \
-  --origin http://localhost:5174 --origin "http://<current-LAN-IP>:5174"
+  .venv/bin/python -m tests.browser.board_local_rollout \
+  --origin http://localhost:5174 --origin http://192.168.1.214:5174 \
+  --event-links-file /home/klottick/repos/historical-date-game/.worktrees/board-redesign/.superpowers/sdd/2026-10-14-game-board-redesign/integration/task-5/event-links.json \
+  --event-links-sha256 53da618a7ca6efc621296b0da429fa4c83caa906f3683b9375cb7c99302f9fcd
 ```
 
 Both worktree flags remain available for explicit documentation, but only the
@@ -216,7 +226,9 @@ The legacy default remains `upgrade_schema=True`. A future schema change fails
 closed; it needs isolated proof and review, not an automatic live migration.
 
 After successful cold-start inspection, `--action start --apply` is the explicit
-mutation mode. It retains the exact API/UI binds, no-access-log API, real Vite
+mutation mode used for this activation. **It is not a reusable restart command**:
+this generation now owns existing outputs/processes, so another cold start must
+refuse. It retains the exact API/UI binds, no-access-log API, real Vite
 private-file denies/proxy, `hdg_guest_real`, exact current origins, disabled SMTP
 and disabled public registration. With no sidecar arguments, enrichment is
 explicitly disabled even if ambient settings contain it; ordinary source fallback
@@ -239,11 +251,50 @@ SIGTERM. Outputs are never overwritten or deleted to force a restart. Failed or
 partial starts retain state/evidence and need a reviewed recovery decision; no
 automatic reset/rollback/cleanup exists.
 
-Phase B must still prove fresh actual-IP no-login Daily/Freeplay, tile preview and
-re-pickup, explicit scoring, persisted attempted loss/reload/replay, both no-scroll
-desktop sizes, overview/credits/source labels, private-file/media security and
-unchanged selected release/answers. Only verified owned services are left running.
-The final activation commit must be documentation-only; a helper/product change
-after whole-branch review requires scoped re-review and affected verification.
+### Fresh Phase B results
+
+Private one-shot proofs ran serially on the actual nonloopback origin, not test
+ports, with locked Node26.11.1/Python3.15. Exact commands/exits are retained in
+`integration/task6-phase-b/commands.jsonl` and the private `task-6-report.md`.
+
+| Fresh local gate | Result | Exit |
+| --- | --- | --- |
+| Original inspect / owned stop / port release | Exact original provenance; both ports released | 0 |
+| Board inspect / explicit start / final inspect | Verified private sidecar; existing current schema; **no migration** | 0 |
+| Actual-IP Daily + Freeplay at 1920×900 and 1366×768 | Four complete desktop flows, 100% zoom, no page/native-stage scroll | 0 |
+| Preview/re-pickup, scoring, loss/reload/replay/new Freeplay | Zero preview/navigation POSTs; 48 unique locks, four identical replays; correct streak11 then loss revision12 | 0 |
+| Expanded overview and ordinary Tab/Shift+Tab focus | Painted-card marks agree; clipped inserted preview becomes fully visible, no scoring | 0 |
+| Native insecure context | Native getRandomValues/IndexedDB; no randomUUID; two distinct no-login guests | 0 |
+| Credits/source labels | Every displayed asset association; explicit source-page labels; follow-up13-card full source/39 media notice/26 lineage check | 0 |
+| Media/privacy/security | 24 HTTP media hashes,28 **existing-file** denials; three-origin admin/signup/SMTP authorization checks | 0 |
+| Read-only mutation/catalog audit | All2,148 existing rows unchanged; only2 guest owners/sessions,8 runs,56 expected operations added; zero unexpected changes | 0 |
+| Final owned-pair proof | Exact new PID/start/cwd/argv/binds and current origins retained | 0 |
+
+There are33 private screenshots (32 state/fit surfaces plus the full-credits
+dialog), two private traces, public DTO/replay/command comparisons and hash-only
+read-only DB proofs at mode0600 under mode0700 `integration/task6-phase-b/`.
+Screenshot names are `<width>-<mode>-{start,preview,correct,overview-focus,credits-closed,loss,reload,new-freeplay}.png`.
+Cookie checks require `hdg_guest_real`, HttpOnly, SameSite=Lax, games-only path,
+non-Secure only for this local HTTP environment, and no administrator access.
+No access-log HTTP lines were present after the probes. A private reader reproduced
+the exact owned factory/environment and confirmed SMTP off, registration off and
+loaded sidecar coverage **0 articles / 1,276 source fallbacks**.
+
+One initial private HTTP probe used a reserved `.invalid` signup email and correctly
+received422 validation before the disabled-registration handler. A diagnostic
+confirmed the input issue; a valid example.com address then proved403 at all three
+origins. No product change or assertion weakening was needed. All intermediate
+logs were preserved. Sixteen browser diagnostics (router notices and expected
+initial unauthenticated401s) remain recorded; there were zero page errors. Prior
+native teardown diagnostics remain disclosed and unsuppressed, not claimed fixed.
+
+All27 sealed manifest files plus the manifest itself and eight original public
+runtime assets remained byte-identical; DB selection, schema, frozen Daily
+definitions and existing answers were unchanged. No reseed/reselection/reset,
+Alembic, destructive/integrated pytest or automatic rollback was run. The final
+delta after reviewed HEAD9d2c75d is documentation-only; later helper/product changes
+require scoped re-review and affected verification. Server-side LAN Chromium is
+not a physical remote-device, spoken screen-reader, legal or production-security
+certification. The old displayed-slot-2 issue remains undiagnosed, not a claimed fix.
 No push/merge, public tunnel, production activation, worktree/evidence removal or
 integrated pytest against the retained live database is authorized here.
