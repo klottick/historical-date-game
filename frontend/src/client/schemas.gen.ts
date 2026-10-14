@@ -490,6 +490,18 @@ export const MoveFeedbackSchema = {
       type: "integer",
       title: "Correct Slot",
     },
+    attempted_slot: {
+      anyOf: [
+        {
+          type: "integer",
+          minimum: 0,
+        },
+        {
+          type: "null",
+        },
+      ],
+      title: "Attempted Slot",
+    },
   },
   additionalProperties: false,
   type: "object",

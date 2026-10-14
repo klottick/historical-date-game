@@ -3,6 +3,83 @@
 import pytest
 
 
+@pytest.fixture(autouse=True)
+def default_guest_profile(monkeypatch: pytest.MonkeyPatch) -> None:
+    monkeypatch.delenv("HDG_VERIFICATION_PROFILE", raising=False)
+
+
+@pytest.mark.parametrize(
+    "database",
+    ["historical_date_game_board_test", "historical_date_game_board_fixture_test"],
+)
+def test_board_profile_requires_exact_new_database_ownership(
+    monkeypatch: pytest.MonkeyPatch, database: str
+) -> None:
+    from tests.browser import guest_test_environment as env
+
+    with pytest.raises(RuntimeError):
+        env.require_guest_test_target(database, "127.0.0.1", "local")
+    monkeypatch.setenv("HDG_VERIFICATION_PROFILE", "board")
+    env.require_guest_test_target(database, "127.0.0.1", "local")
+    expected = (
+        f"historical-date-game board verification; worktree={env.WORKTREE}; "
+        f"database={database}"
+    )
+    env.require_ownership(database, expected, env.settings.POSTGRES_USER)
+    for comment, owner in [
+        (None, env.settings.POSTGRES_USER),
+        ("unrelated", env.settings.POSTGRES_USER),
+        (expected, "foreign-owner"),
+    ]:
+        with pytest.raises(RuntimeError):
+            env.require_ownership(database, comment, owner)
+
+    class ExistingDatabase:
+        def __enter__(self) -> ExistingDatabase:
+            return self
+
+        def __exit__(self, *_args: object) -> None:
+            pass
+
+        def execute(self, *_args: object) -> None:
+            pytest.fail("existing mismatched database was relabeled or dropped")
+
+    monkeypatch.setattr(env, "_maintenance_connection", ExistingDatabase)
+    monkeypatch.setattr(
+        env,
+        "_database_identity",
+        lambda *_args: ("unrelated", env.settings.POSTGRES_USER),
+    )
+    with pytest.raises(RuntimeError):
+        env.prepare_database(database)
+    with pytest.raises(RuntimeError):
+        env.require_owned_guest_database(database)
+    for guest in env.GUEST_DATABASES:
+        with pytest.raises(RuntimeError):
+            env.require_guest_test_target(guest, "127.0.0.1", "local")
+
+
+def test_unknown_profile_refuses_before_connection(
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    from tests.browser import guest_test_environment as env
+
+    monkeypatch.setenv("HDG_VERIFICATION_PROFILE", "unknown")
+
+    def forbidden(*_args: object, **_kwargs: object) -> None:
+        pytest.fail("unknown profile crossed database/process boundary")
+
+    monkeypatch.setattr(env.psycopg, "connect", forbidden)
+    monkeypatch.setattr(env.subprocess, "Popen", forbidden)
+    for operation in [
+        lambda: env.prepare_database("historical_date_game_guest_test"),
+        lambda: env.require_owned_guest_database("historical_date_game_guest_test"),
+        lambda: env.owned_process("real", "backend"),
+    ]:
+        with pytest.raises(RuntimeError, match="profile"):
+            operation()
+
+
 @pytest.mark.parametrize(
     "database,host,environment",
     [

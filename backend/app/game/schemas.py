@@ -103,6 +103,7 @@ class MoveFeedback(PublicModel):
     correct: bool
     card: RevealedCard
     correct_slot: int
+    attempted_slot: Annotated[int | None, Field(ge=0)] = None
 
 
 class RunPublic(PublicModel):

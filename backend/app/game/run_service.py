@@ -285,6 +285,7 @@ def submit_placement(
             correct=outcome.correct,
             card=revealed_card(event, media),
             correct_slot=outcome.correct_slot,
+            attempted_slot=command.slot,
         )
         response = RunPublic.model_validate(
             response.model_copy(update={"feedback": feedback})

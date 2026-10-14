@@ -17,6 +17,10 @@ def test_backend_ci_prepares_owned_target_before_migration_and_tests(
         (env.WORKTREE / ".github/workflows/test-backend.yml").read_text()
     )
     job = workflow["jobs"]["test-backend"]
+    # Exercise CI's profile, not the caller's local board verification profile.
+    monkeypatch.setenv(
+        "HDG_VERIFICATION_PROFILE", job["env"].get("HDG_VERIFICATION_PROFILE", "guest")
+    )
     target = job["env"]["POSTGRES_DB"]
     host = job["env"].get("POSTGRES_SERVER", "localhost")
     environment = job["env"].get("ENVIRONMENT", "local")

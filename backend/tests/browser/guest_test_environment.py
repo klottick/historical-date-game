@@ -17,7 +17,7 @@ import time
 from datetime import UTC, datetime
 from pathlib import Path
 from tempfile import NamedTemporaryFile, TemporaryDirectory
-from typing import Any
+from typing import Any, Literal
 from urllib.request import urlopen
 from uuid import UUID, uuid4
 
@@ -36,6 +36,9 @@ GUEST_DATABASES = frozenset(
     }
 )
 MIGRATION_DATABASE = "historical_date_game_guest_migration_test"
+BOARD_DATABASES = frozenset(
+    {"historical_date_game_board_test", "historical_date_game_board_fixture_test"}
+)
 EVIDENCE = (
     WORKTREE
     / ".superpowers/sdd/2026-10-13-historical-date-game-guest-play/task-5-evidence"
@@ -44,18 +47,32 @@ NODE = Path("/tmp/opencode/node-v26.11.1-linux-x64/bin/node")
 MANIFEST_SHA = "804ec52ccfc3e19cd955913b05cbfd59158f562408e45c1916fa8626d3ac50d3"
 
 
+def verification_profile() -> Literal["guest", "board"]:
+    profile = os.environ.get("HDG_VERIFICATION_PROFILE", "guest")
+    if profile not in {"guest", "board"}:
+        raise RuntimeError("Unknown verification profile")
+    return "board" if profile == "board" else "guest"
+
+
+def evidence_directory() -> Path:
+    if verification_profile() == "board":
+        return WORKTREE / ".superpowers/sdd/2026-10-14-game-board-redesign/integration"
+    return EVIDENCE
+
+
 def browser_target(target: str) -> dict[str, Any]:
+    profile = verification_profile()
     if target not in {"real", "fixture"}:
         raise ValueError("Unknown owned browser target")
     real = target == "real"
     return {
-        "database": "historical_date_game_guest_test"
+        "database": f"historical_date_game_{profile}_test"
         if real
-        else "historical_date_game_guest_fixture_test",
+        else f"historical_date_game_{profile}_fixture_test",
         "backend_port": 8020 if real else 8021,
         "ui_port": 5184 if real else 5173,
         "cookie": "hdg_guest_verification" if real else "hdg_guest_fixture",
-        "runtime": EVIDENCE / f"{target}-runtime",
+        "runtime": evidence_directory() / f"{target}-runtime",
     }
 
 
@@ -108,6 +125,9 @@ def seed_browser(target: str, release: Path | None) -> None:
     for component in ("backend", "ui"):
         _require_free_port(config[f"{component}_port"])
     runtime = config["runtime"]
+    evidence = evidence_directory()
+    evidence.mkdir(parents=True, exist_ok=True, mode=0o700)
+    evidence.chmod(0o700)
     runtime.mkdir(parents=True, exist_ok=True, mode=0o700)
     with _maintenance_connection() as connection:
         activity = connection.execute(
@@ -240,8 +260,10 @@ def browser_app() -> Any:
 def owned_process(target: str, component: str, stop: bool = False) -> None:
     config = browser_target(target)
     require_owned_guest_database(config["database"])
-    EVIDENCE.mkdir(parents=True, exist_ok=True, mode=0o700)
-    record_path = EVIDENCE / f"{target}-{component}-process.json"
+    evidence = evidence_directory()
+    evidence.mkdir(parents=True, exist_ok=True, mode=0o700)
+    evidence.chmod(0o700)
+    record_path = evidence / f"{target}-{component}-process.json"
     if stop:
         record = json.loads(record_path.read_text())
         require_process_identity(record)
@@ -256,7 +278,7 @@ def owned_process(target: str, component: str, stop: bool = False) -> None:
         else:
             raise RuntimeError("Owned process did not release its port")
         record_path.rename(
-            EVIDENCE / f"{target}-{component}-stopped-{record['pid']}.json"
+            evidence / f"{target}-{component}-stopped-{record['pid']}.json"
         )
         sys.stdout.write(f"{target} {component}: stopped owned PID {record['pid']}\n")
         return
@@ -320,7 +342,8 @@ def owned_process(target: str, component: str, stop: bool = False) -> None:
             "--strictPort",
         ]
     cwd = WORKTREE / ("backend" if component == "backend" else "frontend")
-    with open(EVIDENCE / f"{target}-{component}.log", "ab") as output:
+    with open(evidence / f"{target}-{component}.log", "ab") as output:
+        os.fchmod(output.fileno(), 0o600)
         process = subprocess.Popen(
             command,
             cwd=cwd,
@@ -335,7 +358,7 @@ def owned_process(target: str, component: str, stop: bool = False) -> None:
         # This Popen child is ours, but its executable identity is unconfirmed.
         # Preserve diagnostic context only; never turn it into a stop ledger or
         # signal a PID that failed the normal ownership proof.
-        diagnostic = EVIDENCE / f"{target}-{component}-unconfirmed-{process.pid}.json"
+        diagnostic = evidence / f"{target}-{component}-unconfirmed-{process.pid}.json"
         with os.fdopen(
             os.open(diagnostic, os.O_WRONLY | os.O_CREAT | os.O_EXCL, 0o600), "w"
         ) as output:
@@ -387,7 +410,7 @@ def audit_browser(target: str) -> None:
             if hashlib.sha256(asset.read_bytes()).hexdigest() != digest:
                 raise RuntimeError("Projected asset integrity failed")
     for component in ("backend", "ui"):
-        record_path = EVIDENCE / f"{target}-{component}-process.json"
+        record_path = evidence_directory() / f"{target}-{component}-process.json"
         if record_path.exists():
             require_process_identity(json.loads(record_path.read_text()))
     sys.stdout.write(
@@ -396,8 +419,11 @@ def audit_browser(target: str) -> None:
 
 
 def require_guest_test_target(database: str, host: str, environment: str) -> None:
+    databases = (
+        BOARD_DATABASES if verification_profile() == "board" else GUEST_DATABASES
+    )
     if (
-        database not in GUEST_DATABASES
+        database not in databases
         or host not in {"127.0.0.1", "localhost", "::1"}
         or environment != "local"
     ):
@@ -407,7 +433,8 @@ def require_guest_test_target(database: str, host: str, environment: str) -> Non
 
 
 def ownership_comment(database: str) -> str:
-    return f"historical-date-game guest-play verification; worktree={WORKTREE}; database={database}"
+    label = "board" if verification_profile() == "board" else "guest-play"
+    return f"historical-date-game {label} verification; worktree={WORKTREE}; database={database}"
 
 
 def require_ownership(database: str, comment: str | None, owner: str) -> None:

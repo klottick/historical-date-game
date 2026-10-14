@@ -16,6 +16,28 @@ from app.core.config import Settings
 from tests.browser import guest_test_environment as environment
 
 
+@pytest.fixture(autouse=True)
+def default_guest_profile(monkeypatch: pytest.MonkeyPatch) -> None:
+    monkeypatch.delenv("HDG_VERIFICATION_PROFILE", raising=False)
+
+
+def test_board_browser_targets_use_isolated_evidence(
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    monkeypatch.setenv("HDG_VERIFICATION_PROFILE", "board")
+    for target, database in [
+        ("real", "historical_date_game_board_test"),
+        ("fixture", "historical_date_game_board_fixture_test"),
+    ]:
+        config = environment.browser_target(target)
+        assert config["database"] == database
+        assert config["runtime"] == (
+            environment.WORKTREE
+            / ".superpowers/sdd/2026-10-14-game-board-redesign/integration"
+            / f"{target}-runtime"
+        )
+
+
 def test_browser_targets_never_select_live_ports_or_databases() -> None:
     real = environment.browser_target("real")
     fixture = environment.browser_target("fixture")
@@ -86,7 +108,9 @@ def capture_launch_environment(
     config["runtime"] = tmp_path / "runtime"
     config["runtime"].mkdir()
     (config["runtime"] / "seed.json").write_text("{}")
-    monkeypatch.setattr(environment, "EVIDENCE", tmp_path / "evidence")
+    monkeypatch.setattr(
+        environment, "evidence_directory", lambda: tmp_path / "evidence"
+    )
     monkeypatch.setattr(environment, "browser_target", lambda _target: config)
     # These guards connect to PostgreSQL/bind sockets; no real resources in units.
     monkeypatch.setattr(environment, "require_owned_guest_database", lambda _db: None)
@@ -105,11 +129,13 @@ def capture_launch_environment(
 
 @pytest.mark.parametrize("target", ["real", "fixture"])
 @pytest.mark.parametrize("external_source", ["ambient", "dotenv"])
+@pytest.mark.parametrize("profile", ["guest", "board"])
 def test_launch_email_policy_overrides_external_smtp_before_app_import(
     monkeypatch: pytest.MonkeyPatch,
     tmp_path: Path,
     target: str,
     external_source: str,
+    profile: str,
 ) -> None:
     # All inputs are synthetic; never read/print actual credentials or .env.
     external = {
@@ -130,6 +156,7 @@ def test_launch_email_policy_overrides_external_smtp_before_app_import(
         "POSTGRES_USER": "synthetic",
         "FIRST_SUPERUSER": "synthetic@example.com",
         "FIRST_SUPERUSER_PASSWORD": "synthetic-long-password",
+        "HDG_VERIFICATION_PROFILE": profile,
     }
     monkeypatch.setattr(
         os,
@@ -137,6 +164,7 @@ def test_launch_email_policy_overrides_external_smtp_before_app_import(
         base | (external if external_source == "ambient" else {}),
     )
     command, child_env = capture_launch_environment(monkeypatch, tmp_path, target)
+    assert child_env["HDG_VERIFICATION_PROFILE"] == profile
     monkeypatch.setattr(os, "environ", child_env)
     child_settings = Settings(_env_file=dotenv)  # type: ignore[call-arg]
     monkeypatch.setattr(environment, "settings", child_settings)

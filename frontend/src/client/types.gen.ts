@@ -318,6 +318,10 @@ export type MoveFeedback = {
    * Correct Slot
    */
   correct_slot: number
+  /**
+   * Attempted Slot
+   */
+  attempted_slot?: number | null
 }
 
 /**

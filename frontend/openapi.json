@@ -1369,7 +1369,14 @@
         "properties": {
           "correct": { "type": "boolean", "title": "Correct" },
           "card": { "$ref": "#/components/schemas/RevealedCard" },
-          "correct_slot": { "type": "integer", "title": "Correct Slot" }
+          "correct_slot": { "type": "integer", "title": "Correct Slot" },
+          "attempted_slot": {
+            "anyOf": [
+              { "type": "integer", "minimum": 0.0 },
+              { "type": "null" }
+            ],
+            "title": "Attempted Slot"
+          }
         },
         "additionalProperties": false,
         "type": "object",
