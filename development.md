@@ -18,6 +18,12 @@ Automatic interactive documentation with Swagger UI (from the OpenAPI backend): 
 
 Adminer, database web administration: <http://localhost:8087>
 
+PostgreSQL is exposed on `localhost:5433` (containers use `db:5432`).
+The stack uses PostgreSQL 18 with a new `app-db-data-pg18` volume, leaving
+the old PostgreSQL 17 volume untouched. Development data is intentionally
+not migrated. PostgreSQL 18 mounts its versioned data directory under
+`/var/lib/postgresql`.
+
 Traefik UI, to see how the routes are being handled by the proxy: <http://localhost:8091>
 
 **Note**: The first time you start your stack, it might take a minute for it to be ready. While the backend waits for the database to be ready and configures everything. You can check the logs to monitor it.
@@ -131,6 +137,140 @@ The `.env` file is the one that contains all your configurations, generated keys
 Depending on your workflow, you could want to exclude it from Git, for example if your project is public. In that case, you would have to make sure to set up a way for your CI tools to obtain it while building or deploying your project.
 
 One way to do it could be to add each environment variable to your CI/CD system, and updating the `docker-compose.yml` file to read that specific env var instead of reading the `.env` file.
+
+## Isolated test environment
+
+Backend integration tests initialize the superuser and delete users/items at
+session teardown. Never run them against development, staging, or production
+data. The session fixture refuses database names that do not end in `_test`.
+Backend and browser CI both use `historical_date_game_test` at job level so
+Compose, migrations, and tests agree on the database.
+
+Use a dedicated, execution-owned Compose project for local verification. For
+the beta execution this project is `hdg-beta-baseline`; reuse its existing DB
+and Mailcatcher rather than starting competing containers on the same ports.
+On a fresh environment (with ports available), start only its test services:
+
+```bash
+POSTGRES_DB=historical_date_game_test docker compose -p hdg-beta-baseline up -d db mailcatcher
+```
+
+An existing PostgreSQL volume is not reinitialized by changing `POSTGRES_DB`.
+Ensure the dedicated database exists in the execution-owned project before
+migrating. Do not modify unrelated databases or delete volumes to create it.
+Host commands use port `5433`; backend/prestart containers use `db:5432`.
+Use the approved Python 3.15/uv toolchain and Node 26.11.1 for frontend checks.
+
+```bash
+cd backend
+uv sync --frozen
+# Safety tests override the destructive DB fixture; no PostgreSQL is needed.
+uv run pytest tests/safety/test_db_guard.py -q
+POSTGRES_DB=historical_date_game_test POSTGRES_PORT=5433 uv run bash scripts/prestart.sh
+POSTGRES_DB=historical_date_game_test POSTGRES_PORT=5433 uv run bash scripts/test.sh
+```
+
+Run browser tests only after the backend test session has finished cleanup.
+Seed the superuser again, then start a host backend against the same isolated
+database with localhost Mailcatcher settings:
+
+```bash
+# From backend/, after backend tests have exited:
+POSTGRES_DB=historical_date_game_test POSTGRES_PORT=5433 uv run python app/initial_data.py
+POSTGRES_DB=historical_date_game_test POSTGRES_PORT=5433 \
+  SMTP_HOST=localhost SMTP_PORT=1025 SMTP_TLS=false SMTP_SSL=false \
+  EMAILS_FROM_EMAIL=noreply@example.com \
+  uv run uvicorn app.main:app --host 127.0.0.1 --port 8000
+```
+
+In another terminal, use the frontend's matching Playwright Chromium binary
+(`npx playwright install chromium` if needed), and run:
+
+```bash
+cd frontend
+npm ci
+npm run lint
+npm run typecheck
+npm run test:unit
+npm run build
+VITE_API_URL=http://localhost:8000 MAILCATCHER_HOST=http://localhost:1080 \
+  npx playwright test --fail-on-flaky-tests
+```
+
+Do not run destructive backend pytest fixtures while the browser suite is
+active. Shut down the host backend when finished and stop only owned services
+with `docker compose -p hdg-beta-baseline stop db mailcatcher`. Never use broad
+`docker compose down -v` cleanup or touch unrelated stacks/volumes.
+
+## Game API, beta enrollment, and immutable media
+
+`GET /api/v1/games/options` is public. Supported game operations accept either
+account bearer authentication or the game-only guest cookie; account/settings
+and administrator routes still require an account bearer. See
+[guest-play operations](docs/beta/guest-play.md) for cookie/bootstrap boundaries. Commands
+accept only the public DTO fields; answers, scores, seeds, pools, and ordering
+remain server-side. Daily always uses the server's timezone-aware UTC date;
+client day/seed/config inputs cannot select a scored attempt. Game service errors
+use `detail: {code, message}` with 404 for missing/foreign runs, 409 for conflicting
+operations or stale revisions, 422 for invalid commands, and 503 for unavailable
+catalog/Daily policy. Missing credentials return 401.
+
+`PUBLIC_REGISTRATION_ENABLED` defaults to `true` for local development and existing
+tests. **Explicitly set `PUBLIC_REGISTRATION_ENABLED=false` for the friends beta.**
+This disables only public `/users/signup` (403); administrator enrollment, login,
+account management, and password recovery remain unchanged. Unauthenticated
+`GET /api/v1/utils/public-config` contains only `registration_open`; public
+game options mirror that same flag and do not expose private catalog fields.
+
+Playwright CI provisions a new ownership-commented synthetic fixture database in
+each disposable hosted Compose job before browser consumers start. The existing
+C3/C4/C5 fixture builder verifies and activates eight synthetic events; only the
+matching release-scoped opaque-hash public media is mounted read-only into the
+backend. Private catalog/build files stay outside frontend and container build
+contexts. `tests.browser.ci_fixture` is CI-only and refuses existing runtime/DB
+state; it is not a local/live catalog tool or part of production startup. Docker
+browser tests use a same-origin Vite API/media proxy so the actual Lax guest
+cookie works after logout. Board/bootstrap/identity controlled harnesses run
+separately, serially with zero retries, without account, DB, or SMTP fixtures.
+
+`GAME_DATA_DIR/media/<release_id>/<sha256>.svg` and `.webp` are the only served
+paths under `/media`. Provision each release's retained public assets into this
+tree as real files, not symlinks, and mount the tree read-only. Keep catalogs,
+manifests, release metadata, answers, and importer workspaces outside it. No
+directory listings, index files, named-year assets, or symlinks (including in-tree
+aliases and mount-root symlinks) are served. A missing local media directory is
+allowed at startup and returns 404. A missing active catalog returns 503 on use.
+Public card credits and original source/license URLs must be preserved by clients.
+
+### Packaged Daily policy and client generation
+
+`docs/research/source-selection.json` is the versioned machine-approved source
+policy. Daily's runtime copy is `backend/app/game/source-selection.json`, included
+by the existing backend-only Docker context and Python package. When the source
+policy intentionally changes, produce the runtime copy from the policy, never
+edit the copy independently:
+
+```bash
+cp docs/research/source-selection.json backend/app/game/source-selection.json
+cd backend
+POSTGRES_DB=historical_date_game_test POSTGRES_PORT=5433 \
+  uv run pytest tests/api/routes/test_game_api.py -q
+```
+
+The equality regression compares exact bytes, executes the copied backend package
+without root `docs`, and verifies missing/unknown policy fails closed. The Daily
+integration regression checks the four approved categories yield the proper
+selected pool rather than all events. There is no mutable public policy override;
+existing date definitions remain frozen. The Docker build installs build tools
+because `mwparserfromhell` currently compiles its tokenizer for Python 3.15.
+
+From the repository root, with Node 26.11.1 and `backend/.venv/bin` on `PATH`, run
+`bash scripts/generate-client.sh` twice and compare checksums of
+`frontend/openapi.json` and every `frontend/src/client/` file. Never manually edit
+generated API files. Only public DTOs belong in OpenAPI/client schemas; private
+event/source records, seed, pool/order, and account identity must not appear in
+game responses. Run backend tests/lint/types and frontend units/lint/types/build
+after regeneration; no game UI is included in B5.
 
 ## Pre-commits and code linting
 

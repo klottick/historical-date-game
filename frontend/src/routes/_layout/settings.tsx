@@ -4,7 +4,7 @@ import ChangePassword from "@/components/UserSettings/ChangePassword"
 import DeleteAccount from "@/components/UserSettings/DeleteAccount"
 import UserInformation from "@/components/UserSettings/UserInformation"
 import { Tabs, TabsContent, TabsList, TabsTrigger } from "@/components/ui/tabs"
-import useAuth from "@/hooks/useAuth"
+import useAuth, { requireAccount } from "@/hooks/useAuth"
 
 const tabsConfig = [
   { value: "my-profile", title: "My profile", component: UserInformation },
@@ -13,6 +13,7 @@ const tabsConfig = [
 ]
 
 export const Route = createFileRoute("/_layout/settings")({
+  beforeLoad: () => requireAccount(),
   component: UserSettings,
   head: () => ({
     meta: [

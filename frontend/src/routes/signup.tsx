@@ -1,4 +1,5 @@
 import { zodResolver } from "@hookform/resolvers/zod"
+import { useQuery } from "@tanstack/react-query"
 import {
   createFileRoute,
   Link as RouterLink,
@@ -18,6 +19,7 @@ import {
 import { Input } from "@/components/ui/input"
 import { LoadingButton } from "@/components/ui/loading-button"
 import { PasswordInput } from "@/components/ui/password-input"
+import { getPublicConfig } from "@/features/game/api"
 import useAuth, { isLoggedIn } from "@/hooks/useAuth"
 
 const formSchema = z
@@ -51,13 +53,18 @@ export const Route = createFileRoute("/signup")({
   head: () => ({
     meta: [
       {
-        title: "Sign Up - FastAPI Cloud",
+        title: "Sign Up - Historical Date Game",
       },
     ],
   }),
 })
 
 function SignUp() {
+  const enrollment = useQuery({
+    queryKey: ["public-enrollment"],
+    queryFn: getPublicConfig,
+    retry: false,
+  })
   const { signUpMutation } = useAuth()
   const form = useForm<FormData>({
     resolver: zodResolver(formSchema),
@@ -72,11 +79,31 @@ function SignUp() {
   })
 
   const onSubmit = (data: FormData) => {
-    if (signUpMutation.isPending) return
+    if (signUpMutation.isPending || !enrollment.data?.registration_open) return
 
     // exclude confirm_password from submission data
     const { confirm_password: _confirm_password, ...submitData } = data
     signUpMutation.mutate(submitData)
+  }
+
+  if (!enrollment.data?.registration_open) {
+    return (
+      <AuthLayout>
+        <div className="space-y-4 text-center">
+          <h1 className="text-2xl font-bold">Friends beta enrollment</h1>
+          <p>
+            {enrollment.isPending
+              ? "Checking enrollment…"
+              : enrollment.error
+                ? "Enrollment information is unavailable. Please try again later."
+                : "Enrollment is restricted during the friends beta. Ask the host for an account."}
+          </p>
+          <RouterLink to="/login" className="underline">
+            Log in
+          </RouterLink>
+        </div>
+      </AuthLayout>
+    )
   }
 
   return (

@@ -2,10 +2,17 @@ from fastapi import APIRouter, Depends
 from pydantic.networks import EmailStr
 
 from app.api.deps import get_current_active_superuser
+from app.core.config import settings
+from app.game.schemas import PublicConfig
 from app.models import Message
 from app.utils import generate_test_email, send_email
 
 router = APIRouter(prefix="/utils", tags=["utils"])
+
+
+@router.get("/public-config", response_model=PublicConfig)
+def public_config() -> PublicConfig:
+    return PublicConfig(registration_open=settings.PUBLIC_REGISTRATION_ENABLED)
 
 
 @router.post(

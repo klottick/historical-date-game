@@ -83,7 +83,7 @@ function ResetPassword() {
 
   const mutation = useMutation({
     mutationFn: (data: { new_password: string; token: string }) =>
-      LoginService.resetPassword({ requestBody: data }),
+      LoginService.resetPassword({ body: data, throwOnError: true }),
     onSuccess: () => {
       showSuccessToast("Password updated successfully")
       form.reset()

@@ -4,6 +4,10 @@
 
 * [Docker](https://www.docker.com/).
 * [uv](https://docs.astral.sh/uv/) for Python package and environment management.
+* Python 3.15 (uv installs the version specified in `.python-version`).
+
+Passwords use pwdlib with Argon2. Existing bcrypt hashes are not migrated:
+this modernization starts with a fresh, disposable development database.
 
 ## Docker Compose
 
@@ -18,6 +22,10 @@ From `./backend/` you can install all the dependencies with:
 ```console
 $ uv sync
 ```
+
+For local backend development against the Compose database, use
+`POSTGRES_PORT=5433 uv run fastapi dev app/main.py`. Containers connect to the
+database on its internal port, 5432.
 
 Then you can activate the virtual environment with:
 
@@ -91,31 +99,42 @@ Nevertheless, if it doesn't detect a change but a syntax error, it will just sto
 
 ## Backend tests
 
-To test the backend run:
+Integration tests delete data. Do **not** run them against a development/live
+stack, including either catalog/fixture beta database. The standard local test
+target is a separately owned `historical_date_game_guest_test` database on a
+loopback PostgreSQL server. From `backend/`, prepare it before testing:
 
 ```console
-$ bash ./scripts/test.sh
+export POSTGRES_DB=historical_date_game_guest_test
+export POSTGRES_SERVER=127.0.0.1 POSTGRES_PORT=5433 ENVIRONMENT=local
+uv run python -m tests.browser.guest_test_environment prepare-db --database "$POSTGRES_DB"
+uv run bash scripts/tests-start.sh
 ```
 
-The tests run with Pytest, modify and add tests to `./backend/tests/`.
+Preparation creates only an absent named disposable target, records the exact
+worktree/database ownership comment, verifies the configured database owner,
+then migrates it. It refuses an existing unowned database; never add a comment
+manually to bypass that refusal. Both fixture entry and cleanup recheck ownership.
+Stop owned verification API/UI processes before running the suite or seeding it.
+The tests run with Pytest; modify and add tests to `./backend/tests/`.
 
-If you use GitHub Actions the tests will run automatically.
+GitHub Actions boots Compose with the separate initialization database `postgres`,
+then prepares the named owned test target before migration/tests. Do not run the
+workflow's volume teardown commands on your local stack.
 
 ### Test running stack
 
-If your stack is already up and you just want to run the tests, you can use:
+An already-running backend container is **not** a safe test entrypoint: its
+database and worktree ownership may differ. Use the host invocation above with
+the explicit disposable environment, not `docker compose exec backend` or the
+root `scripts/test.sh` (which tears down volumes).
 
 ```bash
-docker compose exec backend bash scripts/tests-start.sh
+uv run bash scripts/tests-start.sh -x
 ```
 
-That `/app/scripts/tests-start.sh` script just calls `pytest` after making sure that the rest of the stack is running. If you need to pass extra arguments to `pytest`, you can pass them to that command and they will be forwarded.
-
-For example, to stop on first error:
-
-```bash
-docker compose exec backend bash scripts/tests-start.sh -x
-```
+`scripts/tests-start.sh` checks database readiness then calls the coverage/Pytest
+script. Extra Pytest arguments can be passed as above to stop on first error.
 
 ### Test Coverage
 

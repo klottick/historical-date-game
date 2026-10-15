@@ -36,7 +36,7 @@ nvm use
 * Within the `frontend` directory, install the necessary NPM packages:
 
 ```bash
-npm install
+npm ci
 ```
 
 * And start the live server with the following `npm` script:
@@ -50,6 +50,24 @@ npm run dev
 Notice that this live server is not running inside Docker, it's for local development, and that is the recommended workflow. Once you are happy with your frontend, you can build the frontend Docker image and start it, to test it in a production-like environment. But building the image at every change will not be as productive as running the local development server with live reload.
 
 Check the file `package.json` to see other available options.
+
+### Modern toolchain
+
+Use Node.js 26.11.1 (`.nvmrc`). `npm run build` and `npm run typecheck`
+use the stable TypeScript 7 compiler through the `typescript-compiler` alias.
+The latest Hey API generator still requires the JavaScript compiler API, so
+`typescript` is pinned to 6.0.3 solely for code generation. Remove that
+compatibility pin when Hey API supports TypeScript 7's stable APIs.
+
+`npm run lint` checks without editing files; `npm run lint:fix` applies fixes.
+Run `npm run test:unit` for API error handling and CI configuration checks,
+and `npm test` for browser tests.
+The `js-yaml` override keeps the generator's pinned YAML parser dependency on
+the latest stable, patched release. JSON and YAML code generation are verified.
+
+Direct dependencies use stable releases. Stable Babel still requires its
+long-standing `gensync@1.0.0-beta.2` transitive dependency; this pre-existing
+upstream dependency is retained rather than forcing an incompatible version.
 
 ### Removing the frontend
 

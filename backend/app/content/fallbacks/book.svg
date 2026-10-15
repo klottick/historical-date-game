@@ -1,0 +1,8 @@
+<svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 480 320" role="img" aria-label="Representative book illustration: an open unlettered volume and bookmark">
+  <rect width="480" height="320" rx="24" fill="#f3ebdd"/>
+  <path d="M105 86q67-23 135 16 68-39 135-16v164q-67-23-135 12-68-35-135-12z" fill="#426d73"/>
+  <path d="M118 100q57-13 112 16v126q-55-27-112-10zm244 0q-57-13-112 16v126q55-27 112-10z" fill="#fffaf0"/>
+  <path d="M291 97h27v80l-14-13-13 13z" fill="#cf785b"/>
+  <path d="M240 114v144" stroke="#263f4a" stroke-width="5"/>
+  <circle cx="169" cy="174" r="19" fill="#dba64d"/>
+</svg>

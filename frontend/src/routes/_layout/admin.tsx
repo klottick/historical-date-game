@@ -7,16 +7,34 @@ import AddUser from "@/components/Admin/AddUser"
 import { columns, type UserTableData } from "@/components/Admin/columns"
 import { DataTable } from "@/components/Common/DataTable"
 import PendingUsers from "@/components/Pending/PendingUsers"
-import useAuth from "@/hooks/useAuth"
+import { accountToken, sessionError } from "@/features/game/identityState"
+import useAuth, { requireAccount } from "@/hooks/useAuth"
 
-function getUsersQueryOptions() {
+function getUsersQueryOptions(token: string) {
   return {
-    queryFn: () => UsersService.readUsers({ skip: 0, limit: 100 }),
-    queryKey: ["users"],
+    queryFn: async ({ signal }: { signal: AbortSignal }) => {
+      const assertAccount = () => {
+        if (token !== accountToken())
+          throw sessionError("game_identity_changed", "Account changed")
+      }
+      const result = (
+        await UsersService.readUsers({
+          auth: token,
+          signal,
+          requestValidator: async () => assertAccount(),
+          query: { skip: 0, limit: 100 },
+          throwOnError: true,
+        })
+      ).data
+      assertAccount()
+      return result
+    },
+    queryKey: ["users", token],
   }
 }
 
 export const Route = createFileRoute("/_layout/admin")({
+  beforeLoad: () => requireAccount(true),
   component: Admin,
   head: () => ({
     meta: [
@@ -29,7 +47,7 @@ export const Route = createFileRoute("/_layout/admin")({
 
 function UsersTableContent() {
   const { user: currentUser } = useAuth()
-  const { data: users } = useSuspenseQuery(getUsersQueryOptions())
+  const { data: users } = useSuspenseQuery(getUsersQueryOptions(accountToken()))
 
   const tableData: UserTableData[] = users.data.map((user: UserPublic) => ({
     ...user,

@@ -1,0 +1,10 @@
+[
+  {"id": "births", "label": "Births"},
+  {"id": "deaths", "label": "Deaths"},
+  {"id": "battles", "label": "Battles"},
+  {"id": "inventions", "label": "Inventions"},
+  {"id": "literature", "label": "Literature"},
+  {"id": "arts", "label": "Arts"},
+  {"id": "exploration", "label": "Exploration"},
+  {"id": "politics", "label": "Politics"}
+]

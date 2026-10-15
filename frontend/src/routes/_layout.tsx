@@ -1,4 +1,11 @@
-import { createFileRoute, Outlet, redirect } from "@tanstack/react-router"
+import {
+  createFileRoute,
+  Link,
+  Navigate,
+  Outlet,
+  useLocation,
+} from "@tanstack/react-router"
+import "@/features/game/game.css"
 
 import { Footer } from "@/components/Common/Footer"
 import AppSidebar from "@/components/Sidebar/AppSidebar"
@@ -7,20 +14,55 @@ import {
   SidebarProvider,
   SidebarTrigger,
 } from "@/components/ui/sidebar"
-import { isLoggedIn } from "@/hooks/useAuth"
+import { GameSessionProvider } from "@/features/game/GameSessionProvider"
+import useAuth, { isLoggedIn } from "@/hooks/useAuth"
 
 export const Route = createFileRoute("/_layout")({
   component: Layout,
-  beforeLoad: async () => {
-    if (!isLoggedIn()) {
-      throw redirect({
-        to: "/login",
-      })
-    }
-  },
 })
 
 function Layout() {
+  const location = useLocation()
+  const mode = /^\/(play|settings|admin|items)(\/|$)/.test(location.pathname)
+    ? "inspect"
+    : "bootstrap"
+  return (
+    <GameSessionProvider mode={mode}>
+      <LayoutContent />
+    </GameSessionProvider>
+  )
+}
+
+function LayoutContent() {
+  const location = useLocation()
+  const { user } = useAuth()
+  const protectedRoute = /^\/(settings|admin|items)(\/|$)/.test(
+    location.pathname,
+  )
+  if (protectedRoute && !isLoggedIn()) return <Navigate to="/login" />
+  if (protectedRoute && !user) return <p role="status">Checking account…</p>
+  if (location.pathname === "/admin" && !user?.is_superuser)
+    return <Navigate to="/" />
+  if (
+    /^\/play\/[\da-f-]+$/.test(location.pathname) ||
+    /^\/(freeplay|daily)$/.test(location.pathname)
+  )
+    return (
+      <div className="play-layout">
+        <nav className="play-nav" aria-label="Game navigation">
+          <Link to="/">← Home</Link>
+          <strong>Historical Date Game</strong>
+          {isLoggedIn() ? (
+            <Link to="/settings">Account</Link>
+          ) : (
+            <Link to="/login">Sign in</Link>
+          )}
+        </nav>
+        <main className="play-main">
+          <Outlet />
+        </main>
+      </div>
+    )
   return (
     <SidebarProvider>
       <AppSidebar />
@@ -30,7 +72,7 @@ function Layout() {
         </header>
         <main className="flex-1 p-6 md:p-8">
           <div className="mx-auto max-w-7xl">
-            <Outlet />
+            <Outlet key={protectedRoute ? user?.id : "public"} />
           </div>
         </main>
         <Footer />
@@ -38,5 +80,3 @@ function Layout() {
     </SidebarProvider>
   )
 }
-
-export default Layout

@@ -1,5 +1,8 @@
 import { defineConfig, devices } from '@playwright/test';
 import 'dotenv/config'
+import { boardEvidence } from './tests/utils/boardEvidence.ts'
+
+const isCI = process.env.CI === 'true' || process.env.CI === '1'
 
 /**
  * Read environment variables from file.
@@ -11,16 +14,21 @@ import 'dotenv/config'
  */
 export default defineConfig({
   testDir: './tests',
+  testMatch: '**/*.spec.ts',
+  // These controlled harnesses must run with their own no-account configuration
+  // and fixed origins, not this authenticated real-backend fixture environment.
+  testIgnore: ['**/game-session-bootstrap.spec.ts', '**/game-identity-recovery.spec.ts', '**/board-navigation.spec.ts', '**/board-ux.spec.ts', '**/game-board-ux.spec.ts', '**/board-projection-focus.spec.ts'],
+  outputDir: `${boardEvidence}/fixture-browser-results`,
   /* Run tests in files in parallel */
   fullyParallel: true,
   /* Fail the build on CI if you accidentally left test.only in the source code. */
-  forbidOnly: !!process.env.CI,
+  forbidOnly: isCI,
   /* Retry on CI only */
-  retries: process.env.CI ? 2 : 0,
+  retries: isCI ? 2 : 0,
   /* Opt out of parallel tests on CI. */
-  workers: process.env.CI ? 1 : undefined,
+  workers: isCI ? 1 : undefined,
   /* Reporter to use. See https://playwright.dev/docs/test-reporters */
-  reporter: process.env.CI ? 'blob' : 'html',
+  reporter: isCI ? 'blob' : 'html',
   /* Shared settings for all the projects below. See https://playwright.dev/docs/api/class-testoptions. */
   use: {
     /* Base URL to use in actions like `await page.goto('/')`. */
@@ -38,6 +46,16 @@ export default defineConfig({
       name: 'chromium',
       use: {
         ...devices['Desktop Chrome'],
+        storageState: 'playwright/.auth/user.json',
+      },
+      dependencies: ['setup'],
+    },
+
+    {
+      name: 'game-mobile',
+      testMatch: '**/game-*.spec.ts',
+      use: {
+        ...devices['Pixel 5'],
         storageState: 'playwright/.auth/user.json',
       },
       dependencies: ['setup'],
@@ -84,8 +102,10 @@ export default defineConfig({
 
   /* Run your local dev server before starting the tests */
   webServer: {
-    command: 'npm run dev',
+    command: process.env.PLAYWRIGHT_API_PROXY
+      ? 'npm run dev -- --config vite.playwright.config.ts'
+      : 'npm run dev',
     url: 'http://localhost:5173',
-    reuseExistingServer: !process.env.CI,
+    reuseExistingServer: !isCI,
   },
 });

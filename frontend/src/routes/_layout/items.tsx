@@ -1,22 +1,45 @@
 import { useSuspenseQuery } from "@tanstack/react-query"
 import { createFileRoute } from "@tanstack/react-router"
 import { Search } from "lucide-react"
-import { Suspense } from "react"
+import { Suspense, useSyncExternalStore } from "react"
 
 import { ItemsService } from "@/client"
 import { DataTable } from "@/components/Common/DataTable"
 import AddItem from "@/components/Items/AddItem"
 import { columns } from "@/components/Items/columns"
 import PendingItems from "@/components/Pending/PendingItems"
+import {
+  accountToken,
+  sessionError,
+  subscribeAccountChange,
+} from "@/features/game/identityState"
+import { requireAccount } from "@/hooks/useAuth"
 
-function getItemsQueryOptions() {
+function getItemsQueryOptions(token: string) {
   return {
-    queryFn: () => ItemsService.readItems({ skip: 0, limit: 100 }),
-    queryKey: ["items"],
+    queryFn: async ({ signal }: { signal: AbortSignal }) => {
+      const assertAccount = () => {
+        if (token !== accountToken())
+          throw sessionError("game_identity_changed", "Account changed")
+      }
+      const result = (
+        await ItemsService.readItems({
+          auth: token,
+          signal,
+          requestValidator: async () => assertAccount(),
+          query: { skip: 0, limit: 100 },
+          throwOnError: true,
+        })
+      ).data
+      assertAccount()
+      return result
+    },
+    queryKey: ["items", token],
   }
 }
 
 export const Route = createFileRoute("/_layout/items")({
+  beforeLoad: () => requireAccount(),
   component: Items,
   head: () => ({
     meta: [
@@ -28,7 +51,8 @@ export const Route = createFileRoute("/_layout/items")({
 })
 
 function ItemsTableContent() {
-  const { data: items } = useSuspenseQuery(getItemsQueryOptions())
+  const token = useSyncExternalStore(subscribeAccountChange, accountToken)
+  const { data: items } = useSuspenseQuery(getItemsQueryOptions(token))
 
   if (items.data.length === 0) {
     return (

@@ -2,27 +2,41 @@ import { defineConfig } from "@hey-api/openapi-ts"
 
 export default defineConfig({
   input: "./openapi.json",
-  output: "./src/client",
+  output: {
+    path: "./src/client",
+    module: {
+      extension: ".ts",
+    },
+    postProcess: [
+      {
+        command: "biome",
+        args: [
+          "format",
+          "--write",
+          "--config-path",
+          "biome.codegen.json",
+          "{{path}}",
+        ],
+      },
+    ],
+  },
 
   plugins: [
-    "legacy/axios",
+    "@hey-api/typescript",
+    "@hey-api/client-axios",
     {
       name: "@hey-api/sdk",
-      // NOTE: this doesn't allow tree-shaking
-      asClass: true,
-      operationId: true,
-      classNameBuilder: "{{name}}Service",
-      methodNameBuilder: (operation) => {
-        // @ts-expect-error
-        let name: string = operation.name
-        // @ts-expect-error
-        const service: string = operation.service
-
-        if (service && name.toLowerCase().startsWith(service.toLowerCase())) {
-          name = name.slice(service.length)
-        }
-
-        return name.charAt(0).toLowerCase() + name.slice(1)
+      operations: {
+        strategy: "byTags",
+        containerName: "{{name}}Service",
+        nesting: "operationId",
+        methodName: (name) => {
+          const method = name.replace(
+            /^(games|items|users|login|private|utils)[-_]?/i,
+            "",
+          )
+          return method.charAt(0).toLowerCase() + method.slice(1)
+        },
       },
     },
     {

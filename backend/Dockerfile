@@ -1,4 +1,10 @@
-FROM python:3.10
+# Python 3.15 is stable, but its official Docker images are still prerelease.
+# Install the stable runtime through uv on a stable Debian base instead.
+FROM debian:trixie-slim
+
+# mwparserfromhell's Python 3.15 tokenizer currently builds from source.
+RUN apt-get update && apt-get install -y --no-install-recommends ca-certificates curl build-essential \
+    && rm -rf /var/lib/apt/lists/*
 
 ENV PYTHONUNBUFFERED=1
 
@@ -6,7 +12,9 @@ WORKDIR /app/
 
 # Install uv
 # Ref: https://docs.astral.sh/uv/guides/integration/docker/#installing-uv
-COPY --from=ghcr.io/astral-sh/uv:0.5.11 /uv /uvx /bin/
+COPY --from=ghcr.io/astral-sh/uv:0.13.0 /uv /uvx /bin/
+
+ENV UV_PYTHON=3.15
 
 # Place executables in the environment at the front of the path
 # Ref: https://docs.astral.sh/uv/guides/integration/docker/#using-the-environment
@@ -31,7 +39,7 @@ ENV PYTHONPATH=/app
 
 COPY ./scripts /app/scripts
 
-COPY ./pyproject.toml ./uv.lock ./alembic.ini /app/
+COPY ./pyproject.toml ./uv.lock ./.python-version ./alembic.ini /app/
 
 COPY ./app /app/app
 COPY ./tests /app/tests
@@ -39,6 +47,6 @@ COPY ./tests /app/tests
 # Sync the project
 # Ref: https://docs.astral.sh/uv/guides/integration/docker/#intermediate-layers
 RUN --mount=type=cache,target=/root/.cache/uv \
-    uv sync
+    uv sync --frozen
 
 CMD ["fastapi", "run", "--workers", "4", "app/main.py"]
