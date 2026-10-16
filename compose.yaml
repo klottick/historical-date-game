@@ -1,0 +1,80 @@
+# Release installation: pull-only. Development uses the legacy files explicitly.
+x-runtime: &runtime
+  image: ${HDG_IMAGE:?Set HDG_IMAGE to the released version and digest}
+  platform: linux/amd64
+  environment: &environment
+    PROJECT_NAME: ${PROJECT_NAME:?Set PROJECT_NAME}
+    ENVIRONMENT: ${ENVIRONMENT:?Set ENVIRONMENT}
+    FRONTEND_HOST: ${FRONTEND_HOST:?Set the exact public origin}
+    SECRET_KEY: ${SECRET_KEY:?Set a permanent random SECRET_KEY}
+    POSTGRES_SERVER: db
+    POSTGRES_PORT: "5432"
+    POSTGRES_USER: ${POSTGRES_USER:?Set POSTGRES_USER}
+    POSTGRES_PASSWORD: ${POSTGRES_PASSWORD:?Set POSTGRES_PASSWORD}
+    POSTGRES_DB: ${POSTGRES_DB:?Set POSTGRES_DB}
+    FIRST_SUPERUSER: ${FIRST_SUPERUSER:?Set the initial administrator email}
+    FIRST_SUPERUSER_PASSWORD: ${FIRST_SUPERUSER_PASSWORD:?Set the initial administrator password}
+    GAME_DATA_DIR: /data
+    PUBLIC_REGISTRATION_ENABLED: ${PUBLIC_REGISTRATION_ENABLED:-true}
+    SMTP_HOST: ${SMTP_HOST:-}
+    SMTP_PORT: ${SMTP_PORT:-587}
+    SMTP_USER: ${SMTP_USER:-}
+    SMTP_PASSWORD: ${SMTP_PASSWORD:-}
+    SMTP_TLS: ${SMTP_TLS:-true}
+    SMTP_SSL: ${SMTP_SSL:-false}
+    EMAILS_FROM_EMAIL: ${EMAILS_FROM_EMAIL:-}
+    SENTRY_DSN: ${SENTRY_DSN:-}
+  read_only: true
+  tmpfs:
+    - /tmp:mode=1777
+  cap_drop: [ALL]
+  security_opt: [no-new-privileges:true]
+  stop_grace_period: 30s
+
+services:
+  db:
+    image: postgres:18.6@sha256:885953109528ad3dfc90362b1a6f50a78620b5315be19f187753d267e484dc5b
+    platform: linux/amd64
+    environment:
+      POSTGRES_USER: ${POSTGRES_USER:?Set POSTGRES_USER}
+      POSTGRES_PASSWORD: ${POSTGRES_PASSWORD:?Set POSTGRES_PASSWORD}
+      POSTGRES_DB: ${POSTGRES_DB:?Set POSTGRES_DB}
+    volumes:
+      - postgres-data:/var/lib/postgresql
+    healthcheck:
+      test: [CMD-SHELL, 'pg_isready -U "$${POSTGRES_USER}" -d "$${POSTGRES_DB}"']
+      interval: 5s
+      timeout: 3s
+      retries: 12
+      start_period: 15s
+    restart: unless-stopped
+    stop_grace_period: 30s
+
+  initialize:
+    <<: *runtime
+    command: [initialize]
+    healthcheck:
+      disable: true
+    depends_on:
+      db:
+        condition: service_healthy
+    volumes:
+      - game-data:/data
+    restart: "no"
+
+  app:
+    <<: *runtime
+    depends_on:
+      db:
+        condition: service_healthy
+      initialize:
+        condition: service_completed_successfully
+    volumes:
+      - game-data:/data:ro
+    ports:
+      - "${HDG_BIND_ADDRESS:-127.0.0.1}:${HDG_PORT:-8000}:8000"
+    restart: unless-stopped
+
+volumes:
+  postgres-data:
+  game-data:
