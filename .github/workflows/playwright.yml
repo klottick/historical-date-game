@@ -117,19 +117,21 @@ jobs:
       run: docker compose run --rm playwright npx playwright test --retries=0 --fail-on-flaky-tests --trace=retain-on-failure --shard=${{ matrix.shardIndex }}/${{ matrix.shardTotal }}
     - name: Save service failure logs
       if: always()
-      run: docker compose logs --no-color > frontend/service-logs.txt
+      run: |
+        mkdir -p frontend/service-diagnostics
+        docker compose logs --no-color > frontend/service-diagnostics/service-logs.txt
     - run: docker compose down -v
       if: always()
     - name: Sanitize first-failure browser evidence
       id: sanitize
       if: always()
-      run: python3 -m scripts.distribution.diagnostics --evidence frontend/blob-report --evidence frontend/test-results
+      run: python3 -m scripts.distribution.diagnostics --evidence frontend/blob-report --evidence frontend/test-results --evidence frontend/service-diagnostics
     - name: Upload service diagnostics
-      if: always()
+      if: ${{ always() && steps.sanitize.outcome == 'success' }}
       uses: actions/upload-artifact@v7.0.2
       with:
         name: playwright-service-logs-${{ matrix.shardIndex }}
-        path: frontend/service-logs.txt
+        path: frontend/service-diagnostics
     - name: Upload sanitized first-failure diagnostics
       if: ${{ always() && steps.sanitize.outcome == 'success' }}
       uses: actions/upload-artifact@v7.0.2

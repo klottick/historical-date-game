@@ -84,6 +84,17 @@ A separate scratch-directory cleanup failure came from root-owned Python cache
 files, not retained data. Test containers/network were removed after label checks;
 the source copy remains private, without an ownership workaround.
 
+A separate instrumented diagnostic copied the unchanged board/app and original
+assertions to an owned source directory, adding only focus/layout logging. It
+passed 67 tests with one skipped; this is **not an acceptance retry**. Measurements
+showed an initial card's CSS `left` still transitioning (for example, rendered
+243.913px versus target 243.188px) during keyboard focus. The existing 180ms `left`
+transition can therefore outlast initial measured layout publication while the
+test compares against the final target immediately. This supports a timing cause
+for the geometry assertion; it does not reproduce/explain the original baseline
+focus-visible failure or prove either issue fixed. No board/test changes were
+made in the actual branch.
+
 The independent whole-change review found five Important issues and no Critical
 or Minor issues: nested artifact/body credential exposure, complete-member-boundary
 truncated media acceptance, recovery project continuity, registry `latest` rollback
@@ -114,7 +125,8 @@ The revised preview image is
 normal-loopback and offline-browser smoke runs, including the new inventory-based
 media restore and subsequent documented maintenance with the persisted project.
 Both runs passed all checks, with no cleanup failures. The complete distribution
-suite passed **65/65, no skips**, with actual context/image probes. An additional
+suite passed **66/66, no skips**, with actual context/image probes, including gates
+on every browser/service diagnostic upload when sanitization fails. An additional
 real retained Playwright trace nested inside an archive passed resource-redaction
 checks (74 members); the original remained untouched. The redaction regression
 also covers extra serialized fields beside sensitive `name`/`value` pairs.

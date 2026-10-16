@@ -16,6 +16,31 @@ def workflow(name):
 
 
 class CiTests(unittest.TestCase):
+    def test_all_browser_diagnostic_uploads_require_successful_sanitization(self):
+        for name, job, guard in (
+            (
+                "playwright.yml",
+                "test-playwright",
+                "steps.sanitize.outcome == 'success'",
+            ),
+            (
+                "playwright.yml",
+                "test-controlled-browser",
+                "steps.sanitize.outcome == 'success'",
+            ),
+            (
+                "test-distribution.yml",
+                "image",
+                "steps.diagnostics.outcome == 'success'",
+            ),
+        ):
+            for step in workflow(name)["jobs"][job]["steps"]:
+                if "upload-artifact@" in step.get(
+                    "uses", ""
+                ) and "Upload tested image" != step.get("name"):
+                    with self.subTest(workflow=name, step=step.get("name")):
+                        self.assertIn(guard, step.get("if", ""))
+
     def test_blob_nested_traces_resources_and_serialized_values_do_not_leak(self):
         import io
         import json
@@ -358,7 +383,7 @@ class CiTests(unittest.TestCase):
             self.assertEqual(steps[logs]["if"], "always()")
             self.assertTrue(
                 any(
-                    s.get("if") == "always()"
+                    "always()" in s.get("if", "")
                     and "upload-artifact@" in s.get("uses", "")
                     for s in steps
                 )
