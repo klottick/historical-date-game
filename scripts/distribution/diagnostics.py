@@ -48,7 +48,7 @@ def scrub(value):
         if value.get("type") == "password" and "value" in value:
             value = value | {"value": "[REDACTED]"}
         if SENSITIVE.search(str(value.get("name", ""))) and "value" in value:
-            return value | {"value": "[REDACTED]"}
+            value = value | {"value": "[REDACTED]"}
         result = {}
         for key, item in value.items():
             if SENSITIVE.search(key) or key in {

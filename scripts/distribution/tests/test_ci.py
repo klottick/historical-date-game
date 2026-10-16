@@ -66,6 +66,19 @@ class CiTests(unittest.TestCase):
                     "resources/storage.json",
                     b'{"entries":[{"key":"access_token","data":"STORAGE_PRIVATE"}]}',
                 )
+                archive.writestr(
+                    "extra.trace",
+                    json.dumps(
+                        {
+                            "type": "event",
+                            "payload": {
+                                "name": "access_token",
+                                "value": "KEY_PRIVATE",
+                                "data": "EXTRA_PRIVATE",
+                            },
+                        }
+                    ),
+                )
             with zipfile.ZipFile(root / "report.zip", "w") as archive:
                 archive.writestr(
                     "report.jsonl",
@@ -99,6 +112,8 @@ class CiTests(unittest.TestCase):
                                 b"RESULT_PRIVATE",
                                 b"STORAGE_PRIVATE",
                                 b"LOG_PRIVATE",
+                                b"KEY_PRIVATE",
+                                b"EXTRA_PRIVATE",
                             ):
                                 self.assertNotIn(secret, body, name)
 

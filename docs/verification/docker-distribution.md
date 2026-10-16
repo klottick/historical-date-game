@@ -105,8 +105,28 @@ an observed failing behavioral regression before its fix. The repair pass:
 - Emits Vite's build manifest and checks the entry plus all static/dynamic assets
   at app creation and on readiness, refusing missing index/JS/CSS/lazy chunks.
 
-Post-review revised-image verification is recorded separately after execution;
-the prior preview ID above does not contain these fixes. Earlier source-free preview runs
+### Revised-image verification after the fix pass
+
+Runtime/build source commit: `99ca1c66b35bff6737f731b75eb05837e83ae8a3`.
+The revised preview image is
+`sha256:55796e369f5369f28163d6041a63e9982f6f558af6d5bd5506fb59a3cb717a47`
+(100,460,597 bytes). It was built once natively, then reused for the complete
+normal-loopback and offline-browser smoke runs, including the new inventory-based
+media restore and subsequent documented maintenance with the persisted project.
+Both runs passed all checks, with no cleanup failures. The complete distribution
+suite passed **65/65, no skips**, with actual context/image probes. An additional
+real retained Playwright trace nested inside an archive passed resource-redaction
+checks (74 members); the original remained untouched. The redaction regression
+also covers extra serialized fields beside sensitive `name`/`value` pairs.
+
+The revised saved-image audit covered 12 layers/9,688 files with no injected
+private sentinel. Backend mypy/Ruff/format, frontend lint/typecheck/86 unit tests/
+build, workflow contracts and actionlint passed again. A fresh full isolated
+backend run against this runtime source is pending. No second independent review
+was substituted for regressions: the five findings were fixed and tested by the
+implementer in one repair pass. No review approval or all-green claim is inferred.
+
+The prior preview ID above does not contain these fixes. Earlier source-free preview runs
 used only installer files in the installation directory; they are not evidence of
 downloaded GitHub assets.
 
