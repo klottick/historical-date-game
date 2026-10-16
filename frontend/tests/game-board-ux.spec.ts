@@ -458,46 +458,53 @@ test("tab_reveals_long_sequence_cards_without_native_scroll_or_pointer_drift", a
     if (index > 0) await page.keyboard.press("Tab")
     await expect(details.nth(index)).toBeFocused()
     if (index > 0)
-      expect(
-        await details
-          .nth(index)
-          .evaluate((element) => element.matches(":focus-visible")),
-      ).toBe(true)
+      await expect
+        .poll(() =>
+          details
+            .nth(index)
+            .evaluate((element) => element.matches(":focus-visible:focus")),
+        )
+        .toBe(true)
     await expect(details.nth(index)).toBeInViewport({ ratio: 1 })
-    const geometry = await viewport.evaluate((element, ordinal) => {
-      const board = element.getBoundingClientRect()
-      const probe = document.createElement("span")
-      probe.style.cssText =
-        "position:absolute;visibility:hidden;pointer-events:none;height:0;padding:0;border:0"
-      probe.style.width = "var(--card-width)"
-      element.append(probe)
-      const cardWidth = probe.getBoundingClientRect().width
-      probe.style.width = "var(--card-gap)"
-      const gap = probe.getBoundingClientRect().width
-      probe.remove()
-      const origin = 0
-      const stride = cardWidth + gap
-      const card = element
-        .querySelector(`[data-display-index="${ordinal}"]`)!
-        .getBoundingClientRect()
-      const offset = Number(element.getAttribute("data-offset"))
-      return {
-        scrollLeft: element.scrollLeft,
-        x: card.left - board.left,
-        expectedX: origin + ordinal * stride - offset,
-        cardRight: card.right - board.left,
-        width: board.width,
-      }
-    }, index)
-    expect(geometry.scrollLeft).toBe(0)
-    expect(
-      await page
-        .locator(".timeline-stage")
-        .evaluate((element) => element.scrollLeft),
-    ).toBe(0)
-    expect(Math.abs(geometry.x - geometry.expectedX)).toBeLessThan(0.5)
-    expect(geometry.x).toBeGreaterThanOrEqual(0)
-    expect(geometry.cardRight).toBeLessThanOrEqual(geometry.width)
+    // Initial ResizeObserver measurements can start the same 180ms left
+    // transition as insertion previews. Assert settled geometry, not an
+    // arbitrary animation frame; keep the original subpixel/containment bounds.
+    await expect(async () => {
+      const geometry = await viewport.evaluate((element, ordinal) => {
+        const board = element.getBoundingClientRect()
+        const probe = document.createElement("span")
+        probe.style.cssText =
+          "position:absolute;visibility:hidden;pointer-events:none;height:0;padding:0;border:0"
+        probe.style.width = "var(--card-width)"
+        element.append(probe)
+        const cardWidth = probe.getBoundingClientRect().width
+        probe.style.width = "var(--card-gap)"
+        const gap = probe.getBoundingClientRect().width
+        probe.remove()
+        const origin = 0
+        const stride = cardWidth + gap
+        const card = element
+          .querySelector(`[data-display-index="${ordinal}"]`)!
+          .getBoundingClientRect()
+        const offset = Number(element.getAttribute("data-offset"))
+        return {
+          scrollLeft: element.scrollLeft,
+          x: card.left - board.left,
+          expectedX: origin + ordinal * stride - offset,
+          cardRight: card.right - board.left,
+          width: board.width,
+        }
+      }, index)
+      expect(geometry.scrollLeft).toBe(0)
+      expect(
+        await page
+          .locator(".timeline-stage")
+          .evaluate((element) => element.scrollLeft),
+      ).toBe(0)
+      expect(Math.abs(geometry.x - geometry.expectedX)).toBeLessThan(0.5)
+      expect(geometry.x).toBeGreaterThanOrEqual(0)
+      expect(geometry.cardRight).toBeLessThanOrEqual(geometry.width)
+    }).toPass({ timeout: 1000, intervals: [16, 32, 50] })
   }
   expect(Number(await viewport.getAttribute("data-offset"))).toBeGreaterThan(0)
   await details.nth(15).click()

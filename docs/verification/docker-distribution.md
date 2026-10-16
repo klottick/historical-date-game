@@ -72,8 +72,10 @@ backup/restore command blocks. Private evidence and first failures remain in the
 ignored execution workspace; the protected `.env` hash and LAN process identities
 were checked unchanged.
 
-**The overall all-green gate remains blocked by the pre-existing controlled-board
-failure.** No retries or unrelated board/tolerance changes were made. A source
+**At the original image checkpoint, the overall all-green gate was blocked by
+the pre-existing controlled-board failure.** The later user-authorized test-only
+repair and its verification are recorded below; these earlier failures remain
+part of the evidence. No retries or unrelated board/tolerance changes were made. A source
 fixture browser attempt also encountered the existing Vite denial of a scratch
 checkout under `.superpowers` (setup failed, 112 tests not run). A fresh run outside
 that tree had 101 passed/12 failed because the launcher expected internal-IP URLs
@@ -149,10 +151,42 @@ No second independent review
 was substituted for regressions: the five findings were fixed and tested by the
 implementer in one repair pass. No review approval or all-green claim is inferred.
 
-Local packaging checks and the review repair pass are recorded; Task 7 remains
-blocked at the overall board gate and approval-gated external steps. The branch
-and private evidence remain in place. No push/merge/tag/release/visibility change
-or live service deployment has been performed.
+Local packaging checks and the review repair pass are recorded. The user then
+authorized pushing the committed work and investigating the board failure,
+including a minimally impactful test relaxation. The feature branch was pushed
+at `99bb7e2`; no merge, tag, release, visibility change or live service deployment
+was performed. Task 7's hosted/released-asset acceptance remains outstanding.
+
+### Board timing follow-up
+
+The unchanged board suite passed on the next investigation run (67 passed,
+1 skipped), confirming the earlier failures were intermittent. A test-only repair
+in `frontend/tests/game-board-ux.spec.ts` now waits up to one second for the
+complete geometry/no-native-scroll/containment assertion block to pass, matching
+the existing settled-geometry pattern elsewhere in the suite. Keyboard focus
+observation also polls, requiring the exact target to match both `:focus` and
+`:focus-visible`. The original **less-than-0.5px tolerance**, zero native scroll,
+full containment, dialog return and pointer insertion-slot assertions are intact.
+No product/CSS/gameplay/build inputs changed. This does not claim an independent
+production focus-visible defect was diagnosed or fixed.
+
+The repaired full board suite passed **67 tests with 1 existing skip**, zero test
+retries. Controlled negative checks in separate scratch checkouts established:
+
+- A 400ms transient card animation fails the old one-shot assertion but passes
+  the repaired bounded observation.
+- Permanent 4px drift still fails the unchanged half-pixel requirement.
+- Preventing Tab navigation still fails the keyboard-focus requirement.
+
+Original failures and these expected-negative traces remain private. No retry or
+looser pixel bound was used to obtain a passing result. A predeclared ten-run
+targeted stability check passed **10/10** with zero test retries. The other
+controlled suites passed **23 bootstrap** and **34 identity** tests. Frontend
+lint/typecheck/86 unit tests/build, all **66 distribution checks** (real image and
+context probes enabled), and 5 workflow contracts passed again. The existing
+developer-widget opt-in test is the one board skip. This clears the previously
+failing local board acceptance check; it is not evidence of hosted release/GHCR
+or anonymously downloaded released-asset acceptance.
 
 The prior preview ID above does not contain these fixes. Earlier source-free preview runs
 used only installer files in the installation directory; they are not evidence of
