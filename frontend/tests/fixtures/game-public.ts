@@ -29,6 +29,9 @@ export function hundredCardRun(): RunPublic {
     },
     categories: [{ id: "exploration", label: "Exploration" }],
     status: "active",
+    initial_lives: 3,
+    lives_remaining: 3,
+    score: 99,
     streak: 99,
     revision: 99,
     timeline: Array.from({ length: 100 }, (_, i) => ({

@@ -53,11 +53,14 @@ def runner(
         monkeypatch.setattr(guarded, field, path)
     (board.LIVE / "data/game/releases" / guarded.RELEASE_ID).mkdir(parents=True)
     (board.LIVE / "data/game/local-catalog-runtime").mkdir()
-    # Keep the real offline migration-head guard and reviewed migration scripts.
+    # Keep the old guest rollout's reviewed migration generation. The lives
+    # migration head is tested separately; it must not make the old runner adopt it.
     shutil.copytree(
         checkout / "backend/app/alembic",
         board.WORKTREE / "backend/app/alembic",
-        ignore=shutil.ignore_patterns("__pycache__"),
+        ignore=shutil.ignore_patterns(
+            "__pycache__", "20261015_01_add_three_life_counters.py"
+        ),
     )
     for name, value in {
         "POSTGRES_DB": "historical_date_game_catalog_test",
@@ -571,6 +574,7 @@ def test_start_schema_option_preserves_default_and_skips_unneeded_alembic(
     upgrade_schema: bool,
 ) -> None:
     r = legacy_rollout()
+    monkeypatch.setattr(r.ScriptDirectory, "get_heads", lambda _: ["20261013_01"])
 
     proof = {"origins": [], "runtime": str(tmp_path)}
     monkeypatch.setattr(r, "EVIDENCE", tmp_path)
@@ -635,6 +639,9 @@ def test_migration_free_post_check_still_refuses_changed_database(
     tmp_path: Path,
 ) -> None:
     guest = legacy_rollout()
+    monkeypatch.setattr(
+        guest.ScriptDirectory, "get_heads", lambda _: ["20261013_01"]
+    )
     monkeypatch.setattr(guest, "EVIDENCE", tmp_path)
     monkeypatch.setattr(
         guest, "inspect", lambda *_: {"origins": [], "runtime": str(tmp_path)}

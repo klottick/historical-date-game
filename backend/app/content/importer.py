@@ -24,6 +24,7 @@ from app.content.adapters.onthisday import (
     snapshot_bytes,
 )
 from app.content.adapters.selected import SelectedSourceAdapter, digest
+from app.content.build_context import evaluation_date
 from app.content.corpus import normalize_corpus, raw_identity, source_key
 from app.content.schemas import (
     CategoryRecord,
@@ -125,8 +126,8 @@ def _import_locked(
         {
             "raw": raw_state,
             "taxonomy": taxonomy_data,
-            "current_year_index": datetime.now(UTC).year,
-            "chronology_utc_date": datetime.now(UTC).date().isoformat()
+            "current_year_index": evaluation_date().year,
+            "chronology_utc_date": evaluation_date().isoformat()
             if any(data["source_id"] == SOURCE_ID for data in raw_state.values())
             else None,
             "policy": VALIDATION_POLICY_VERSION,
@@ -153,7 +154,7 @@ def _import_locked(
     corpus = normalize_corpus(
         [RawCandidate(**data) for data in raw_state.values()],
         taxonomy,
-        datetime.now(UTC).year,
+        evaluation_date().year,
         aliases=previous["aliases"],
         normalize=normalizer,
     )

@@ -2,6 +2,8 @@ from dataclasses import dataclass
 from typing import Literal
 from uuid import UUID
 
+INITIAL_LIVES: Literal[3] = 3
+
 
 class RuleError(ValueError):
     """A rejected setting or command; callers may safely expose its code."""
@@ -79,9 +81,15 @@ class RunState:
     timeline: tuple[UUID, ...]
     pending_event_id: UUID | None
     streak: int
+    mistakes: int
+    correct_count: int
     status: Literal["active", "lost", "won"]
     revision: int
     generation_version: Literal[1] = 1
+
+    @property
+    def lives_remaining(self) -> int:
+        return INITIAL_LIVES - self.mistakes
 
     def __post_init__(self) -> None:
         if not isinstance(self.rules, RunRules):
@@ -91,14 +99,19 @@ class RunState:
         if not self.timeline or not set(self.timeline) <= set(self.order):
             raise RuleError("invalid_state")
         streak = require_integer(self.streak, "invalid_state")
+        mistakes = require_integer(self.mistakes, "invalid_state")
+        correct_count = require_integer(self.correct_count, "invalid_state")
         revision = require_integer(self.revision, "invalid_state")
-        if streak != len(self.timeline) - 1 or self.status not in (
-            "active",
-            "lost",
-            "won",
+        if (
+            not 0 <= mistakes <= INITIAL_LIVES
+            or not 0 <= streak <= correct_count
+            or revision != correct_count + mistakes
+            or len(self.timeline) != 1 + revision - int(self.status == "lost")
+            or self.status not in ("active", "lost", "won")
+            or (self.status == "lost" and (mistakes != INITIAL_LIVES or streak != 0))
+            or (self.status != "lost" and mistakes == INITIAL_LIVES)
+            or (mistakes == 0 and streak != correct_count)
         ):
-            raise RuleError("invalid_state")
-        if revision != streak + (self.status == "lost"):
             raise RuleError("invalid_state")
         if require_integer(self.generation_version, "invalid_generation") != 1:
             raise RuleError("invalid_generation")

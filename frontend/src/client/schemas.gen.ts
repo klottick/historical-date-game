@@ -142,6 +142,11 @@ export const DailyOverviewSchema = {
 
 export const DailyStartSchema = {
   properties: {
+    protocol_version: {
+      type: "integer",
+      const: 2,
+      title: "Protocol Version",
+    },
     operation_id: {
       type: "string",
       format: "uuid",
@@ -150,7 +155,7 @@ export const DailyStartSchema = {
   },
   additionalProperties: false,
   type: "object",
-  required: ["operation_id"],
+  required: ["protocol_version", "operation_id"],
   title: "DailyStart",
 } as const
 
@@ -178,6 +183,11 @@ export const EventLinkPublicSchema = {
 
 export const FreeplayStartSchema = {
   properties: {
+    protocol_version: {
+      type: "integer",
+      const: 2,
+      title: "Protocol Version",
+    },
     operation_id: {
       type: "string",
       format: "uuid",
@@ -195,7 +205,12 @@ export const FreeplayStartSchema = {
   },
   additionalProperties: false,
   type: "object",
-  required: ["operation_id", "catalog_release_id", "config"],
+  required: [
+    "protocol_version",
+    "operation_id",
+    "catalog_release_id",
+    "config",
+  ],
   title: "FreeplayStart",
 } as const
 
@@ -229,6 +244,11 @@ export const GameConfigSchema = {
 
 export const GameOptionsSchema = {
   properties: {
+    protocol_version: {
+      type: "integer",
+      const: 2,
+      title: "Protocol Version",
+    },
     catalog_release_id: {
       type: "string",
       title: "Catalog Release Id",
@@ -254,6 +274,7 @@ export const GameOptionsSchema = {
   additionalProperties: false,
   type: "object",
   required: [
+    "protocol_version",
     "catalog_release_id",
     "categories",
     "start",
@@ -265,6 +286,11 @@ export const GameOptionsSchema = {
 
 export const GameSessionPublicSchema = {
   properties: {
+    protocol_version: {
+      type: "integer",
+      const: 2,
+      title: "Protocol Version",
+    },
     kind: {
       type: "string",
       enum: ["guest", "account"],
@@ -277,7 +303,7 @@ export const GameSessionPublicSchema = {
   },
   additionalProperties: false,
   type: "object",
-  required: ["kind", "context_id"],
+  required: ["protocol_version", "kind", "context_id"],
   title: "GameSessionPublic",
 } as const
 
@@ -418,6 +444,10 @@ export const LeaderboardEntrySchema = {
       type: "integer",
       title: "Streak",
     },
+    score: {
+      type: "integer",
+      title: "Score",
+    },
     status: {
       type: "string",
       enum: ["lost", "won"],
@@ -430,7 +460,7 @@ export const LeaderboardEntrySchema = {
   },
   additionalProperties: false,
   type: "object",
-  required: ["display_name", "streak", "status", "rank"],
+  required: ["display_name", "streak", "score", "status", "rank"],
   title: "LeaderboardEntry",
 } as const
 
@@ -513,21 +543,14 @@ export const MoveFeedbackSchema = {
       title: "Correct Slot",
     },
     attempted_slot: {
-      anyOf: [
-        {
-          type: "integer",
-          minimum: 0,
-        },
-        {
-          type: "null",
-        },
-      ],
+      type: "integer",
+      minimum: 0,
       title: "Attempted Slot",
     },
   },
   additionalProperties: false,
   type: "object",
-  required: ["correct", "card", "correct_slot"],
+  required: ["correct", "card", "correct_slot", "attempted_slot"],
   title: "MoveFeedback",
 } as const
 
@@ -579,6 +602,11 @@ export const PendingCardSchema = {
 
 export const PlaceCommandSchema = {
   properties: {
+    protocol_version: {
+      type: "integer",
+      const: 2,
+      title: "Protocol Version",
+    },
     operation_id: {
       type: "string",
       format: "uuid",
@@ -601,7 +629,13 @@ export const PlaceCommandSchema = {
   },
   additionalProperties: false,
   type: "object",
-  required: ["operation_id", "expected_revision", "event_id", "slot"],
+  required: [
+    "protocol_version",
+    "operation_id",
+    "expected_revision",
+    "event_id",
+    "slot",
+  ],
   title: "PlaceCommand",
 } as const
 
@@ -705,6 +739,19 @@ export const RevealedCardSchema = {
 
 export const RunPublicSchema = {
   properties: {
+    initial_lives: {
+      type: "integer",
+      const: 3,
+      title: "Initial Lives",
+    },
+    lives_remaining: {
+      type: "integer",
+      title: "Lives Remaining",
+    },
+    score: {
+      type: "integer",
+      title: "Score",
+    },
     run_id: {
       type: "string",
       format: "uuid",
@@ -785,6 +832,9 @@ export const RunPublicSchema = {
   additionalProperties: false,
   type: "object",
   required: [
+    "initial_lives",
+    "lives_remaining",
+    "score",
     "run_id",
     "mode",
     "daily_date",

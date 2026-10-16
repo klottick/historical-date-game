@@ -1,0 +1,7 @@
+<svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 480 320" role="img" aria-label="Representative battle illustration: two facing protective shields">
+  <rect width="480" height="320" rx="24" fill="#f3ebdd"/>
+  <path d="m125 80 95 24v90q0 50-47 77-48-27-48-77z" fill="#426d73"/>
+  <path d="m355 80-95 24v90q0 50 47 77 48-27 48-77z" fill="#cf785b"/>
+  <path d="m148 113 48 12v64q0 34-23 54-25-20-25-54zM332 113l-48 12v64q0 34 23 54 25-20 25-54z" fill="none" stroke="#f3ebdd" stroke-width="6"/>
+  <path d="m225 51 15 24 15-24m-15 34v-46" fill="none" stroke="#dba64d" stroke-width="7" stroke-linecap="round"/>
+</svg>

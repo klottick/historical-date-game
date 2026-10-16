@@ -100,26 +100,34 @@ Nevertheless, if it doesn't detect a change but a syntax error, it will just sto
 ## Backend tests
 
 Integration tests delete data. Do **not** run them against a development/live
-stack, including either catalog/fixture beta database. The standard local test
-target is a separately owned `historical_date_game_guest_test` database on a
-loopback PostgreSQL server. From `backend/`, prepare it before testing:
+stack, including either catalog/fixture beta database. The complete backend suite
+requires the `lives` profile and exact separately owned
+`historical_date_game_lives_backend_test` target on loopback port `5433`.
+Preparation also owns/seeds `historical_date_game_lives_migration_test` for the
+serial migration proofs. Use a separate disposable PostgreSQL cluster; neither
+target may have another consumer. From `backend/`, prepare before testing:
 
 ```console
-export POSTGRES_DB=historical_date_game_guest_test
+export HDG_VERIFICATION_PROFILE=lives
+export POSTGRES_DB=historical_date_game_lives_backend_test
 export POSTGRES_SERVER=127.0.0.1 POSTGRES_PORT=5433 ENVIRONMENT=local
-uv run python -m tests.browser.guest_test_environment prepare-db --database "$POSTGRES_DB"
+uv run python -m tests.browser.ci_backend prepare
+uv run bash scripts/prestart.sh
 uv run bash scripts/tests-start.sh
 ```
 
-Preparation creates only an absent named disposable target, records the exact
-worktree/database ownership comment, verifies the configured database owner,
-then migrates it. It refuses an existing unowned database; never add a comment
-manually to bypass that refusal. Both fixture entry and cleanup recheck ownership.
-Stop owned verification API/UI processes before running the suite or seeding it.
+Preparation preflights both targets' exact ownership and idleness before mutation,
+creates only absent named targets, and migrates/selects an eight-event synthetic
+catalogue on the migration target. It never resets gameplay or relabels a foreign
+database. Existing owned synthetic selection is preserved; mismatches are refused.
+Normal prestart then migrates/initializes the backend target. Never add an ownership
+comment manually to bypass refusal. Shared setup, direct fixture entry and cleanup
+require the exact backend profile/endpoint as well as ownership: an owned browser
+or migration target is not permission to run the full suite against it.
 The tests run with Pytest; modify and add tests to `./backend/tests/`.
 
 GitHub Actions boots Compose with the separate initialization database `postgres`,
-then prepares the named owned test target before migration/tests. Do not run the
+then prepares both named owned targets before backend prestart/tests. Do not run the
 workflow's volume teardown commands on your local stack.
 
 ### Test running stack

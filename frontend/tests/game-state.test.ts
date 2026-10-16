@@ -29,6 +29,9 @@ const run: RunPublic = {
   },
   categories: [],
   status: "active",
+  initial_lives: 3,
+  lives_remaining: 3,
+  score: 0,
   streak: 2,
   revision: 3,
   timeline: [
@@ -76,6 +79,7 @@ test("begin requires a valid selected slot and blocks duplicate inflight submit"
   assert.equal(beginPlacement(initial, "op"), initial)
   const sending = beginPlacement(selectSlot(initial, 1), "first")
   assert.deepEqual(sending.command, {
+    protocol_version: 2,
     operation_id: "first",
     expected_revision: 3,
     event_id: "pending",
@@ -139,4 +143,9 @@ test("equal revision polling never resolves sending uncertainty or conflict", ()
 test("invalid slot selections are ignored", () => {
   for (const slot of [-1, 2, 0.5, Number.NaN])
     assert.equal(selectSlot(initial, slot), initial)
+})
+test("mistake review blocks preview and submit without changing placement state", () => {
+  const preview = selectSlot(initial, 1)
+  assert.equal(selectSlot(preview, 0, true), preview)
+  assert.equal(beginPlacement(preview, "review-blocked", true), preview)
 })

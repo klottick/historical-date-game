@@ -1,4 +1,4 @@
-"""Consume C5-verified releases as immutable, private database snapshots."""
+"""Install format-specifically verified, immutable private database snapshots."""
 
 import hashlib
 import json
@@ -11,7 +11,13 @@ from uuid import UUID
 from sqlmodel import Session, select, text
 
 from app.content.publish import verify_release
-from app.content.schemas import CategoryRecord, EventRecord, MediaCatalog
+from app.content.runtime import VerifiedRuntime
+from app.content.schemas import (
+    CatalogManifest,
+    CategoryRecord,
+    EventRecord,
+    MediaCatalog,
+)
 from app.game.models import (
     CatalogCategory,
     CatalogRelease,
@@ -33,6 +39,15 @@ class CatalogOptions:
     categories: tuple[CategoryRecord, ...]
     start_year_index: int
     end_year_index: int
+
+
+@dataclass(frozen=True)
+class _VerifiedAudit:
+    manifest: CatalogManifest
+    manifest_bytes: bytes
+    categories: tuple[CategoryRecord, ...]
+    events: tuple[EventRecord, ...]
+    media: MediaCatalog
 
 
 def activate_catalog(
@@ -70,13 +85,42 @@ def activate_catalog(
             raise
         raise CatalogError("catalog_verification_failed:" + str(exc)) from exc
 
+    return install_snapshot(
+        session, _VerifiedAudit(manifest, manifest_bytes, categories, events, media)
+    )
+
+
+def install_snapshot(
+    session: Session,
+    snapshot: VerifiedRuntime | _VerifiedAudit,
+    *,
+    initialize_only: bool = False,
+) -> str:
+    """Flush a checked snapshot atomically; caller owns commit/rollback.
+
+    This is an internal checked-record boundary, not a file-format validator.
+    Both public file installers must run their respective full verifier first.
+    Return the actual selection: initialization never replaces another release.
+    """
+    manifest = snapshot.manifest
+    manifest_bytes = snapshot.manifest_bytes
+    media = snapshot.media
     with session.begin_nested():
         session.execute(text("SELECT pg_advisory_xact_lock(20261011, 2)"))
-        existing = session.get(CatalogRelease, manifest.release_id)
+        # Serialize the empty singleton case too. Never check initialization's
+        # selection before the shared advisory lock, including cached sessions.
+        pointer = session.get(
+            CatalogSelection, 1, populate_existing=True, with_for_update=True
+        )
+        existing = session.get(
+            CatalogRelease, manifest.release_id, populate_existing=True
+        )
         if existing is not None:
             if existing.manifest_bytes != manifest_bytes:
                 raise CatalogError("immutable_release")
-        else:
+        if initialize_only and pointer is not None:
+            return pointer.release_id
+        if existing is None:
             session.add(
                 CatalogRelease(
                     id=manifest.release_id,
@@ -96,7 +140,7 @@ def activate_catalog(
                         category_id=r.id,
                         snapshot=r.model_dump(mode="json"),
                     )
-                    for r in categories
+                    for r in snapshot.categories
                 ]
             )
             session.add_all(
@@ -106,7 +150,7 @@ def activate_catalog(
                         event_id=r.event_id,
                         snapshot=r.model_dump(mode="json"),
                     )
-                    for r in events
+                    for r in snapshot.events
                 ]
             )
             session.add_all(
@@ -130,9 +174,6 @@ def activate_catalog(
                 ]
             )
             session.flush()
-        pointer = session.get(
-            CatalogSelection, 1, populate_existing=True, with_for_update=True
-        )
         if pointer is None:
             session.add(CatalogSelection(release_id=manifest.release_id))
         else:

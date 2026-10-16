@@ -35,6 +35,65 @@ test("confirmed card starts share expanded geometry without moving preview prede
   assert.throws(() => geometry.confirmedCardStart(3, layout), RangeError)
 })
 
+test("short strips begin beside the hand with one shared origin for insertion and reveal", () => {
+  assert.equal(typeof geometry.contentOrigin, "function")
+  const short = { ...layout, count: 1, viewportWidth: 400 }
+  const origin = geometry.contentOrigin(short)
+  assert.equal(origin, 0)
+  assert.equal(insertionIndex(short.cardWidth / 2, short), 1)
+  assert.equal(offsetToReveal(1, short), 0)
+  assert.equal(geometry.contentOrigin({ ...short, previewSlot: 1 }), 0)
+  assert.equal(geometry.contentOrigin({ ...short, count: 10 }), 0)
+  const stationaryPointer = short.cardWidth / 2
+  for (const previewSlot of [0, 1]) {
+    const expanded = { ...short, previewSlot }
+    const expandedOrigin = geometry.contentOrigin(expanded)
+    assert.equal(expandedOrigin, 0)
+    assert.equal(insertionIndex(stationaryPointer, expanded), 1)
+    for (const slot of [0, 1]) assert.equal(offsetToReveal(slot, expanded), 0)
+  }
+  assert.equal(geometry.contentOrigin({ ...short, viewportWidth: 80 }), 0)
+  assert.deepEqual(geometry.visibleConfirmedRange(short), { first: 0, last: 0 })
+})
+
+test("stationary insertion slot survives centered preview expansion and relocation", () => {
+  for (const short of [
+    { ...layout, count: 1, cardWidth: 100, gap: 20, viewportWidth: 400 },
+    {
+      ...layout,
+      cardWidth: 230.390625,
+      gap: 12.796875,
+      viewportWidth: 978,
+    },
+  ]) {
+    const unexpanded = { ...short, previewSlot: null }
+    const stride = short.cardWidth + short.gap
+
+    const pointerXs = Array.from(
+      { length: short.count + 1 },
+      (_, slot) =>
+        geometry.contentOrigin(unexpanded) + slot * stride - short.gap / 2,
+    )
+    for (let card = 0; card < short.count; card++)
+      pointerXs.push(
+        geometry.contentOrigin(unexpanded) +
+          card * stride +
+          short.cardWidth / 2,
+      )
+
+    for (const localX of pointerXs) {
+      const expected = insertionIndex(localX, unexpanded)
+      for (let previewSlot = 0; previewSlot <= short.count; previewSlot++) {
+        assert.equal(
+          insertionIndex(localX, { ...short, previewSlot }),
+          expected,
+          `pointer x=${localX} drifted with preview at ${previewSlot}`,
+        )
+      }
+    }
+  }
+})
+
 test("visible confirmed projection accounts for preview before inside and after window", () => {
   assert.equal(typeof geometry.visibleConfirmedRange, "function")
   const base = { ...layout, count: 6, viewportWidth: 160, offset: 240 }

@@ -1,0 +1,8 @@
+<svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 480 320" role="img" aria-label="Representative death illustration: memorial stone and a growing branch">
+  <rect width="480" height="320" rx="24" fill="#f3ebdd"/>
+  <path d="M153 264V118a57 57 0 0 1 114 0v146" fill="#426d73"/>
+  <rect x="133" y="264" width="154" height="16" rx="8" fill="#263f4a"/>
+  <circle cx="210" cy="126" r="19" fill="#dba64d"/>
+  <path d="M313 264q-34-84 23-169" fill="none" stroke="#263f4a" stroke-width="7" stroke-linecap="round"/>
+  <path d="M318 220q-52-2-43-38 39 0 43 38m5-48q-17-37 22-47 17 35-22 47m8-65q-35-4-24-29 28 3 24 29" fill="#cf785b"/>
+</svg>

@@ -139,6 +139,7 @@ def _command(
     release_id: str, categories: list[str], start: int, end: int, gap: int = 1
 ) -> FreeplayStart:
     return FreeplayStart(
+        protocol_version=2,
         operation_id=uuid4(),
         catalog_release_id=release_id,
         config=GameConfig(
@@ -159,6 +160,7 @@ def _placement(
     if wrong:
         slot = (slot + 1) % (len(response.timeline) + 1)
     return PlaceCommand(
+        protocol_version=2,
         operation_id=uuid4(),
         expected_revision=response.revision,
         event_id=response.pending.event_id,
@@ -367,6 +369,7 @@ def _exercise_services(
         for id_ in won_row.pool
     )
     terminal_command = PlaceCommand(
+        protocol_version=2,
         operation_id=uuid4(),
         expected_revision=winning.revision,
         event_id=winning.timeline[0].event_id,
@@ -417,7 +420,9 @@ def _exercise_services(
     ).one()
     frozen_definition = definition.model_dump()
     dailies = [
-        start_daily(session, owner, DailyStart(operation_id=uuid4()), now)
+        start_daily(
+            session, owner, DailyStart(protocol_version=2, operation_id=uuid4()), now
+        )
         for owner in owners
     ]
     assert (
@@ -450,7 +455,12 @@ def _exercise_services(
             _privacy(response)
     for owner, response in zip(owners, dailies, strict=True):
         assert (
-            start_daily(session, owner, DailyStart(operation_id=uuid4()), now)
+            start_daily(
+                session,
+                owner,
+                DailyStart(protocol_version=2, operation_id=uuid4()),
+                now,
+            )
             == response
         )
         attempts = session.exec(
@@ -497,7 +507,12 @@ def _exercise_services(
             daily_row = session.get(GameRun, response.run_id, populate_existing=True)
             assert daily_row is not None and daily_row.model_dump() == snapshot
             assert (
-                start_daily(session, owner, DailyStart(operation_id=uuid4()), now)
+                start_daily(
+                    session,
+                    owner,
+                    DailyStart(protocol_version=2, operation_id=uuid4()),
+                    now,
+                )
                 == response
             )
         assert read_daily(session, owners[0], now).attempt_run_id == dailies[0].run_id
@@ -530,7 +545,10 @@ def _exercise_services(
     assert load_options(session).release_id == release_id
     next_now = now + timedelta(days=1)
     next_daily = start_daily(
-        session, owners[0], DailyStart(operation_id=uuid4()), next_now
+        session,
+        owners[0],
+        DailyStart(protocol_version=2, operation_id=uuid4()),
+        next_now,
     )
     next_definition = session.exec(
         select(DailyDefinition).where(DailyDefinition.day == next_now.date())

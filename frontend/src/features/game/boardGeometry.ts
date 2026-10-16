@@ -40,6 +40,12 @@ function stripWidth(layout: BoardLayout): number {
   return width
 }
 
+/** Keep every sequence anchored beside the hand; long sequences scroll from 0. */
+export function contentOrigin(layout: BoardLayout): number {
+  stripWidth(layout)
+  return 0
+}
+
 export function clampOffset(offset: number, layout: BoardLayout): number {
   const width = stripWidth(layout)
   finite(offset)
@@ -55,9 +61,10 @@ export function confirmedCardStart(index: number, layout: BoardLayout): number {
   ordinal(index)
   if (index >= layout.count) throw new RangeError("Card outside timeline")
   return (
+    contentOrigin(layout) +
     (index +
       (layout.previewSlot !== null && index >= layout.previewSlot ? 1 : 0)) *
-    (layout.cardWidth + layout.gap)
+      (layout.cardWidth + layout.gap)
   )
 }
 
@@ -94,9 +101,18 @@ export function insertionIndex(localX: number, layout: BoardLayout): number {
   stripWidth(layout)
   finite(localX)
   const stride = layout.cardWidth + layout.gap
-  let x = localX + clampOffset(layout.offset, layout)
+  const origin = contentOrigin(layout)
+  const baseLayout = { ...layout, previewSlot: null }
+  const baseOrigin = contentOrigin(baseLayout)
+  // Sparse strips use their unexpanded frame so adding/moving a preview alone
+  // cannot change the logical slot under a stationary pointer.
+  const sparse = stripWidth(baseLayout) <= layout.viewportWidth
+  let x =
+    localX +
+    clampOffset(layout.offset, sparse ? baseLayout : layout) -
+    (sparse ? baseOrigin : origin)
   finite(x)
-  if (layout.previewSlot !== null) {
+  if (layout.previewSlot !== null && !sparse) {
     const start = layout.previewSlot * stride
     if (x >= start) x = x < start + stride ? start : x - stride
   }
@@ -115,9 +131,10 @@ export function offsetToReveal(slot: number, layout: BoardLayout): number {
   if (slot > layout.count) throw new RangeError("Slot outside timeline")
   const stride = layout.cardWidth + layout.gap
   const preview = layout.previewSlot === slot
-  let start = slot === 0 ? 0 : slot * stride - layout.gap / 2
-  if (slot === layout.count) start = width
-  if (preview) start = slot * stride
+  const origin = contentOrigin(layout)
+  let start = origin + (slot === 0 ? 0 : slot * stride - layout.gap / 2)
+  if (slot === layout.count) start = origin + width
+  if (preview) start = origin + slot * stride
   else if (
     layout.previewSlot !== null &&
     slot > layout.previewSlot &&

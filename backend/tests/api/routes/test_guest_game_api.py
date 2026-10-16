@@ -65,10 +65,15 @@ def mutation_headers(context: str | None = None) -> dict[str, str]:
     return headers
 
 
+def daily_body(operation_id: UUID | None = None) -> dict[str, object]:
+    return {"protocol_version": 2, "operation_id": str(operation_id or uuid4())}
+
+
 def bootstrap(client: TestClient) -> str:
     response = client.post(f"{BASE}/session", headers=mutation_headers())
     assert response.status_code == 200
-    assert set(response.json()) == {"kind", "context_id"}
+    assert set(response.json()) == {"protocol_version", "kind", "context_id"}
+    assert response.json()["protocol_version"] == 2
     assert response.json()["kind"] == "guest"
     context = str(response.json()["context_id"])
     client.headers.update(mutation_headers(context))
@@ -118,10 +123,7 @@ def test_private_reads_are_not_cacheable_across_identity_changes(
         second_context = bootstrap(second)
         account.headers.update({**bearer(owners[0]), "Origin": settings.FRONTEND_HOST})
         clients = [first, second, account]
-        runs = [
-            public_run(c.post(f"{BASE}/daily", json={"operation_id": str(uuid4())}))
-            for c in clients
-        ]
+        runs = [public_run(c.post(f"{BASE}/daily", json=daily_body())) for c in clients]
 
         def read(client: TestClient, run: RunPublic) -> None:
             response = client.get(BASE + path.format(run_id=run.run_id))
@@ -186,9 +188,7 @@ def test_private_read_denials_are_not_cacheable(
     monkeypatch.setattr(daily_service, "utc_now", lambda: now)
     with TestClient(app) as client, TestClient(app) as other:
         bootstrap(client)
-        run = public_run(
-            client.post(f"{BASE}/daily", json={"operation_id": str(uuid4())})
-        )
+        run = public_run(client.post(f"{BASE}/daily", json=daily_body()))
         if kind == "missing_cookie":
             client.cookies.clear()
         elif kind == "bad_bearer":
@@ -231,8 +231,10 @@ def test_public_options_do_not_allocate_identity(
     with TestClient(app) as client:
         response = client.get(f"{BASE}/options")
         assert response.status_code == 200
+        assert response.json()["protocol_version"] == 2
         assert response.json()["catalog_release_id"] == release_id
         assert set(response.json()) == {
+            "protocol_version",
             "catalog_release_id",
             "categories",
             "start",
@@ -278,7 +280,8 @@ def test_bootstrap_cookie_allowlist_and_refresh(
         before = counts(db)
         response = client.post(f"{BASE}/session", headers=mutation_headers())
         assert response.status_code == 200
-        assert set(response.json()) == {"kind", "context_id"}
+        assert set(response.json()) == {"protocol_version", "kind", "context_id"}
+        assert response.json()["protocol_version"] == 2
         assert response.json()["kind"] == "guest"
         assert response.headers["cache-control"] == "no-store"
         cookie = SimpleCookie()
@@ -348,11 +351,12 @@ def test_guest_mutations_reject_csrf_before_writes(
         client.headers.clear()
         rejected = {**headers, "X-Game-Context": context}
         for path, body in (
-            ("/daily", {"operation_id": str(uuid4())}),
+            ("/daily", daily_body()),
             ("/freeplay", start_command("unavailable").model_dump(mode="json")),
             (
                 f"/runs/{uuid4()}/placements",
                 {
+                    "protocol_version": 2,
                     "operation_id": str(uuid4()),
                     "expected_revision": 0,
                     "event_id": str(uuid4()),
@@ -422,11 +426,12 @@ def test_missing_invalid_or_expired_cookie_never_allocates_scored_identity(
         ):
             assert_error(client.get(BASE + path), 401, "game_session_required")
         for path, body in (
-            ("/daily", {"operation_id": str(uuid4())}),
+            ("/daily", daily_body()),
             ("/freeplay", start_command("unavailable").model_dump(mode="json")),
             (
                 f"/runs/{uuid4()}/placements",
                 {
+                    "protocol_version": 2,
                     "operation_id": str(uuid4()),
                     "expected_revision": 0,
                     "event_id": str(uuid4()),
@@ -455,12 +460,7 @@ def test_explicit_invalid_authorization_never_falls_back_to_cookie(
         before = counts(db)
         assert client.get(f"{BASE}/session").status_code == status
         assert client.post(f"{BASE}/session").status_code == status
-        assert (
-            client.post(
-                f"{BASE}/daily", json={"operation_id": str(uuid4())}
-            ).status_code
-            == status
-        )
+        assert client.post(f"{BASE}/daily", json=daily_body()).status_code == status
         assert counts(db) == before
 
 
@@ -479,7 +479,8 @@ def test_account_precedence_context_and_existing_validation(
         before = counts(db)
         session = client.post(f"{BASE}/session")  # Bearer needs no Origin/header.
         assert session.status_code == 200
-        assert set(session.json()) == {"kind", "context_id"}
+        assert set(session.json()) == {"protocol_version", "kind", "context_id"}
+        assert session.json()["protocol_version"] == 2
         assert session.json()["kind"] == "account"
         account_context = session.json()["context_id"]
         assert account_context != guest_context and str(owners[0]) not in session.text
@@ -490,15 +491,13 @@ def test_account_precedence_context_and_existing_validation(
         assert client.get(f"{BASE}/session").json() == session.json()
         client.headers["X-Game-Context"] = guest_context
         assert_error(
-            client.post(f"{BASE}/daily", json={"operation_id": str(uuid4())}),
+            client.post(f"{BASE}/daily", json=daily_body()),
             409,
             "game_identity_changed",
         )
         assert counts(db) == before
         client.headers["X-Game-Context"] = account_context
-        run = public_run(
-            client.post(f"{BASE}/daily", json={"operation_id": str(uuid4())})
-        )
+        run = public_run(client.post(f"{BASE}/daily", json=daily_body()))
         stored_run = db.get(GameRun, run.run_id)
         assert stored_run is not None and stored_run.owner_id == owners[0]
         del client.headers["X-Game-Context"]
@@ -560,7 +559,7 @@ def test_unavailable_account_is_a_structured_game_session_failure(
             assert_private_cache_policy(response)
         for path, body in (
             ("/session", {}),
-            ("/daily", {"operation_id": str(uuid4())}),
+            ("/daily", daily_body()),
             ("/freeplay", start),
             (f"/runs/{initial.run_id}/placements", move),
         ):
@@ -638,10 +637,7 @@ def test_guest_and_account_share_daily_but_not_runs(
         assert contexts[0] != contexts[1]
         account.headers.update(bearer(owners[0]))
         clients = [first, second, account]
-        runs = [
-            public_run(c.post(f"{BASE}/daily", json={"operation_id": str(uuid4())}))
-            for c in clients
-        ]
+        runs = [public_run(c.post(f"{BASE}/daily", json=daily_body())) for c in clients]
         assert len({r.run_id for r in runs}) == 3
         assert all(
             r.timeline == runs[0].timeline and r.pending == runs[0].pending
@@ -672,9 +668,7 @@ def test_guest_and_account_share_daily_but_not_runs(
             assert client.post(
                 f"{BASE}/runs/{runs[i].run_id}/placements", json=move
             ).json() == moved.model_dump(mode="json")
-            resumed = public_run(
-                client.post(f"{BASE}/daily", json={"operation_id": str(uuid4())})
-            )
+            resumed = public_run(client.post(f"{BASE}/daily", json=daily_body()))
             assert resumed == moved
             prefix = [moved]
             while moved.status == "active":
@@ -699,7 +693,7 @@ def test_guest_and_account_share_daily_but_not_runs(
             "Guest",
         ]
         assert all(
-            set(entry) == {"rank", "streak", "status", "display_name"}
+            set(entry) == {"rank", "score", "streak", "status", "display_name"}
             for entry in entries
         )
         for private in (
@@ -734,16 +728,14 @@ def test_changed_cookie_rejects_inflight_context(
     monkeypatch.setattr(daily_service, "utc_now", lambda: now)
     with TestClient(app) as first, TestClient(app) as replacement:
         old_context = bootstrap(first)
-        initial = public_run(
-            first.post(f"{BASE}/daily", json={"operation_id": str(uuid4())})
-        )
+        initial = public_run(first.post(f"{BASE}/daily", json=daily_body()))
         new_context = bootstrap(replacement)
         assert new_context != old_context
         first.cookies.clear()
         first.cookies.update(replacement.cookies)
         before = counts(db)
         for path, body in (
-            ("/daily", {"operation_id": str(uuid4())}),
+            ("/daily", daily_body()),
             ("/freeplay", start_command(release_id).model_dump(mode="json")),
             (
                 f"/runs/{initial.run_id}/placements",
@@ -762,13 +754,13 @@ def test_changed_cookie_rejects_inflight_context(
         assert first.get(f"{BASE}/runs/{initial.run_id}").status_code == 404
         del first.headers["X-Game-Context"]
         assert_error(
-            first.post(f"{BASE}/daily", json={"operation_id": str(uuid4())}),
+            first.post(f"{BASE}/daily", json=daily_body()),
             409,
             "game_identity_changed",
         )
         first.cookies.clear()
         assert_error(
-            first.post(f"{BASE}/daily", json={"operation_id": str(uuid4())}),
+            first.post(f"{BASE}/daily", json=daily_body()),
             401,
             "game_session_required",
         )
@@ -837,8 +829,8 @@ def test_concurrent_guest_daily_starts_and_placement_retries(
             assert len(set(pids)) == 2
             return responses
 
-        one = {"operation_id": str(uuid4())}
-        two = one if same_operation else {"operation_id": str(uuid4())}
+        one = daily_body()
+        two = one if same_operation else daily_body()
         runs = race("/daily", [one, two])
         assert runs[0] == runs[1]
         move = correct_command(db, runs[0]).model_dump(mode="json")
@@ -877,7 +869,7 @@ def test_guest_daily_utc_rollover_and_finish_after_midnight(
     monkeypatch.setattr(daily_service, "utc_now", lambda: now)
     with TestClient(app) as client:
         bootstrap(client)
-        command = {"operation_id": str(uuid4())}
+        command = daily_body()
         old = public_run(client.post(f"{BASE}/daily", json=command))
         tomorrow = now + timedelta(minutes=2)
         monkeypatch.setattr(daily_service, "utc_now", lambda: tomorrow)
@@ -890,9 +882,7 @@ def test_guest_daily_utc_rollover_and_finish_after_midnight(
             overview["day"] == str(tomorrow.date())
             and overview["attempt_run_id"] is None
         )
-        fresh = public_run(
-            client.post(f"{BASE}/daily", json={"operation_id": str(uuid4())})
-        )
+        fresh = public_run(client.post(f"{BASE}/daily", json=daily_body()))
         assert fresh.run_id != old.run_id and fresh.daily_date == tomorrow.date()
         while old.status == "active":
             old = public_run(
@@ -906,7 +896,15 @@ def test_guest_daily_utc_rollover_and_finish_after_midnight(
         assert saved is not None and saved.finished_at == tomorrow
         assert client.get(f"{BASE}/daily/{now.date()}/leaderboard").json()[
             "entries"
-        ] == [{"display_name": "Guest", "streak": 5, "status": "won", "rank": 1}]
+        ] == [
+            {
+                "display_name": "Guest",
+                "streak": 5,
+                "score": 5,
+                "status": "won",
+                "rank": 1,
+            }
+        ]
         assert (
             client.get(f"{BASE}/daily/{tomorrow.date()}/leaderboard").json()["entries"]
             == []

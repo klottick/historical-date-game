@@ -51,16 +51,19 @@ WireUUID = Annotated[UUID, Field(strict=False)]
 
 
 class FreeplayStart(PublicModel):
+    protocol_version: Literal[2]
     operation_id: WireUUID
     catalog_release_id: Annotated[str, Field(min_length=1, max_length=128)]
     config: GameConfig
 
 
 class DailyStart(PublicModel):
+    protocol_version: Literal[2]
     operation_id: WireUUID
 
 
 class PlaceCommand(PublicModel):
+    protocol_version: Literal[2]
     operation_id: WireUUID
     expected_revision: Annotated[int, Field(ge=0)]
     event_id: WireUUID
@@ -110,10 +113,13 @@ class MoveFeedback(PublicModel):
     correct: bool
     card: RevealedCard
     correct_slot: int
-    attempted_slot: Annotated[int | None, Field(ge=0)] = None
+    attempted_slot: Annotated[int, Field(ge=0)]
 
 
 class RunPublic(PublicModel):
+    initial_lives: Literal[3]
+    lives_remaining: int
+    score: int
     run_id: UUID
     mode: Literal["daily", "freeplay"]
     daily_date: date | None
@@ -129,6 +135,7 @@ class RunPublic(PublicModel):
 
 
 class GameOptions(PublicModel):
+    protocol_version: Literal[2]
     catalog_release_id: str
     categories: list[CategoryRecord]
     start: YearInput
@@ -137,6 +144,7 @@ class GameOptions(PublicModel):
 
 
 class GameSessionPublic(PublicModel):
+    protocol_version: Literal[2]
     kind: Literal["guest", "account"]
     context_id: str
 
@@ -155,6 +163,7 @@ class DailyOverview(PublicModel):
 class LeaderboardEntry(PublicModel):
     display_name: str
     streak: int
+    score: int
     status: Literal["lost", "won"]
     rank: int
 

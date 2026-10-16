@@ -1,0 +1,9 @@
+<svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 480 320" role="img" aria-label="Representative politics illustration: civic assembly beneath an open pediment">
+  <rect width="480" height="320" rx="24" fill="#f3ebdd"/>
+  <path d="m103 109 137-62 137 62z" fill="#426d73"/>
+  <path d="M118 120h244M113 264h254M142 130v121m196-121v121" stroke="#263f4a" stroke-width="13" stroke-linecap="round"/>
+  <circle cx="203" cy="169" r="18" fill="#dba64d"/>
+  <circle cx="277" cy="169" r="18" fill="#cf785b"/>
+  <path d="M177 238v-23a26 26 0 0 1 52 0v23m22 0v-23a26 26 0 0 1 52 0v23" fill="#426d73"/>
+  <path d="M230 139h20" stroke="#dba64d" stroke-width="7" stroke-linecap="round"/>
+</svg>

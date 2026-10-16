@@ -24,6 +24,7 @@ from app.content.adapters.onthisday import (
     SOURCE_ID,
 )
 from app.content.adapters.selected import digest
+from app.content.build_context import evaluation_date
 from app.content.corpus import normalize_corpus
 from app.content.importer import _sources, _sync_directory
 from app.content.media import pipeline
@@ -212,10 +213,7 @@ def _check(
         _path(root, "source-selection.json").read_bytes()
     )
     approved = SourceSelection.model_validate_json(
-        Path(__file__)
-        .parents[3]
-        .joinpath("docs/research/source-selection.json")
-        .read_bytes()
+        Path(__file__).with_name("source-selection.json").read_bytes()
     )
     if selection != approved:
         raise ValueError("unsupported_source_selection")
@@ -310,7 +308,7 @@ def _check(
     if codes:
         raise ValueError("asset_validation:" + ",".join(sorted(codes)))
     raw_index = pipeline._raw_index(raws)
-    corpus = normalize_corpus(raws, taxonomy, datetime.now(UTC).year, aliases=aliases)
+    corpus = normalize_corpus(raws, taxonomy, evaluation_date().year, aliases=aliases)
     for event in events:
         original = by_id[event.event_id]
         if (
@@ -332,7 +330,7 @@ def _check(
             raise ValueError("stale_media_decision")
         event_raws = raw_index.get(event.identity_key, [])
         current_digests = _sources(event_raws)
-        issues = validate_event(event, taxonomy, datetime.now(UTC).year)
+        issues = validate_event(event, taxonomy, evaluation_date().year)
         issues += validate_receipt(
             event, receipt_by_id[event.event_id], current_digests, catalog
         )

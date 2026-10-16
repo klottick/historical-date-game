@@ -68,13 +68,27 @@ for (const viewport of [
       expect(posts).toHaveLength(1)
       await assertBoardFits(page)
       await screenshot(page, info, `${mode}-correct`)
-      const wrong = correctIndex(run, catalog.years) === 0 ? 1 : 0
-      await keyboardPreview(page, wrong)
-      run = await lock(page)
+      let wrong = 0
+      for (const lives of [2, 1, 0]) {
+        wrong = correctIndex(run, catalog.years) === 0 ? 1 : 0
+        await keyboardPreview(page, wrong)
+        run = await lock(page)
+        expect(run.lives_remaining).toBe(lives)
+        expect(run.feedback!.correct).toBe(false)
+        expect(run.score).toBe(1)
+        if (lives > 0) {
+          expect(run.status).toBe("active")
+          expect(run.streak).toBe(0)
+          await page
+            .getByRole("button", { name: "Continue", exact: true })
+            .click()
+        }
+      }
       expect(run.status).toBe("lost")
       expect(run.feedback!.attempted_slot).toBe(wrong)
-      expect(run.streak).toBe(1)
-      expect(posts).toHaveLength(2)
+      expect(run.lives_remaining).toBe(0)
+      expect(run.streak).toBe(0)
+      expect(posts).toHaveLength(4)
       page.off("request", observe)
       await assertBoardFits(page)
       await screenshot(page, info, `${mode}-loss`)
@@ -132,6 +146,15 @@ test("wrong_card_survives_lost_response_reload_and_restart", async ({
   let run = await start(page)
   await keyboardPreview(page, correctIndex(run, catalog.years))
   run = await lock(page)
+  for (const lives of [2, 1]) {
+    const wrong = correctIndex(run, catalog.years) === 0 ? 1 : 0
+    await keyboardPreview(page, wrong)
+    run = await lock(page)
+    expect(run.lives_remaining).toBe(lives)
+    expect(run.feedback!.correct).toBe(false)
+    expect(run.status).toBe("active")
+    await page.getByRole("button", { name: "Continue", exact: true }).click()
+  }
   const wrong = correctIndex(run, catalog.years) === 0 ? 1 : 0
   const commands: PlaceCommand[] = []
   let committed: RunPublic | undefined
@@ -150,11 +173,14 @@ test("wrong_card_survives_lost_response_reload_and_restart", async ({
     } else await route.fulfill({ response })
   })
   await dragPendingToIndex(page, wrong)
-  await page.getByRole("button", { name: "Lock it in", exact: true }).click()
+  await page.getByRole("button", { name: "Confirm", exact: true }).click()
   await expect(
     page.getByRole("button", { name: "Retry same move", exact: true }),
   ).toBeVisible()
   expect(committed!.status).toBe("lost")
+  expect(committed!.lives_remaining).toBe(0)
+  expect(committed!.score).toBe(1)
+  expect(committed!.streak).toBe(0)
   expect(committed!.feedback!.attempted_slot).toBe(wrong)
   await page
     .getByRole("button", { name: "Retry same move", exact: true })
@@ -196,7 +222,7 @@ test("wrong_card_survives_lost_response_reload_and_restart", async ({
     await assertBoardFits(page)
   }
   expect((await game(page, `runs/${run.run_id}`, identity)).body.revision).toBe(
-    2,
+    run.revision + 1,
   )
   writeFileSync(
     `${boardEvidence}/loss-restart-${info.project.name}.json`,
@@ -237,6 +263,14 @@ test("long_run_edge_navigation_has_no_scrollbar", async ({ page }, info) => {
   await dragPendingToIndex(page, 0)
   for (let i = 0; i <= run.timeline.length; i++) await keyboardPreview(page, i)
   expect((await game(page, `runs/${run.run_id}`, identity)).body).toEqual(run)
+  // The pending card's left edge transitions for 180ms while its independent
+  // translateX offset updates synchronously. Wait for that finite transition
+  // before asserting the final, stable full-control bounds (never a fixed delay).
+  await page.locator(".pending-position").evaluate(async (position) => {
+    await Promise.all(
+      position.getAnimations().map((animation) => animation.finished),
+    )
+  })
   await assertBoardFits(page)
 })
 
@@ -348,7 +382,7 @@ test("identity_change_during_drag_preserves_old_uncertain_command", async ({
     await route.abort("failed")
   })
   await keyboardPreview(page, 1)
-  await page.getByRole("button", { name: "Lock it in", exact: true }).click()
+  await page.getByRole("button", { name: "Confirm", exact: true }).click()
   await expect(
     page.getByRole("button", { name: "Retry same move", exact: true }),
   ).toBeVisible()

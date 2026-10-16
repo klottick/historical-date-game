@@ -11,10 +11,20 @@ import {
 } from "./api"
 import { useGameSession, useGameSessionError } from "./GameSessionProvider"
 import {
+  isProtocolUpgradeError,
+  protocolUpgradeMessage,
+} from "./gameProtocol.ts"
+import {
   gameQueryKey,
   placementStorageKey,
   sessionFailure,
 } from "./identityState"
+import {
+  isMistakeReviewAcknowledgement,
+  mistakeReviewAcknowledgement,
+  mistakeReviewKey,
+  needsMistakeReview,
+} from "./mistakeReview"
 import { operationId } from "./operationId"
 import {
   acceptRun,
@@ -29,6 +39,9 @@ export function useOwnedRun(runId: string, context: GameSessionPublic) {
   const [state, setState] = useState<PlacementState | null>(null)
   const current = useRef<PlacementState | null>(null)
   const [message, setMessage] = useState<string | null>(null)
+  const [acknowledgedReview, setAcknowledgedReview] = useState<string | null>(
+    null,
+  )
   const mounted = useRef(true)
   const queryClient = useQueryClient()
   const { failSession } = useGameSession()
@@ -44,9 +57,13 @@ export function useOwnedRun(runId: string, context: GameSessionPublic) {
       if (!isCurrentGameContext(context)) return
       current.current = next
       setState(next)
-      if (next.command)
-        sessionStorage.setItem(storageKey, JSON.stringify(next.command))
-      else sessionStorage.removeItem(storageKey)
+      try {
+        if (next.command)
+          sessionStorage.setItem(storageKey, JSON.stringify(next.command))
+        else sessionStorage.removeItem(storageKey)
+      } catch {
+        // Storage is a recovery aid, never a prerequisite for local play.
+      }
     },
     [storageKey, context],
   )
@@ -74,6 +91,9 @@ export function useOwnedRun(runId: string, context: GameSessionPublic) {
   }
   useGameSessionError(query.error, context)
   useEffect(() => {
+    if (isProtocolUpgradeError(query.error)) setMessage(protocolUpgradeMessage)
+  }, [query.error])
+  useEffect(() => {
     const run = query.data
     if (!run || run.run_id !== runId || !isCurrentGameContext(context)) return
     if (current.current) {
@@ -98,7 +118,11 @@ export function useOwnedRun(runId: string, context: GameSessionPublic) {
     try {
       saved = JSON.parse(sessionStorage.getItem(storageKey) || "null")
     } catch {
-      sessionStorage.removeItem(storageKey)
+      try {
+        sessionStorage.removeItem(storageKey)
+      } catch {
+        // Malformed or unavailable storage must not prevent an owned read.
+      }
     }
     if (saved && saved.expected_revision > run.revision) return
     const recoverable =
@@ -116,6 +140,16 @@ export function useOwnedRun(runId: string, context: GameSessionPublic) {
       command: recoverable ? saved : null,
       phase: recoverable ? "uncertain" : "idle",
     })
+    const reviewKey = mistakeReviewKey(context.context_id, runId, run.revision)
+    try {
+      if (
+        isMistakeReviewAcknowledgement(sessionStorage.getItem(reviewKey)) &&
+        needsMistakeReview(run, false)
+      )
+        setAcknowledgedReview(reviewKey)
+    } catch {
+      // A denied or malformed storage value cannot suppress the explanation.
+    }
   }, [
     query.data,
     query.isFetchedAfterMount,
@@ -161,9 +195,15 @@ export function useOwnedRun(runId: string, context: GameSessionPublic) {
   async function submit() {
     const before = current.current
     if (!before) return
+    const reviewKey = mistakeReviewKey(
+      context.context_id,
+      runId,
+      before.run.revision,
+    )
     const sending = beginPlacement(
       before,
       before.command?.operation_id ?? operationId(),
+      needsMistakeReview(before.run, acknowledgedReview === reviewKey),
     )
     if (sending === before || !sending.command) return
     update(sending)
@@ -201,6 +241,9 @@ export function useOwnedRun(runId: string, context: GameSessionPublic) {
         setMessage(
           `${failure === "validation" ? "Invalid placement" : "Placement rejected"}: ${extractErrorMessage(error instanceof Error ? error : new Error("Request rejected"))}. Your run is not lost; your preview is preserved.`,
         )
+      } else if (failure === "incompatible") {
+        update({ ...latest, phase: "idle" })
+        setMessage(protocolUpgradeMessage)
       } else {
         update(markUncertain(latest))
         setMessage(
@@ -212,8 +255,51 @@ export function useOwnedRun(runId: string, context: GameSessionPublic) {
     }
   }
   function select(slot: number | null) {
-    if (current.current) update(selectSlot(current.current, slot))
+    if (current.current) {
+      const reviewKey = mistakeReviewKey(
+        context.context_id,
+        runId,
+        current.current.run.revision,
+      )
+      update(
+        selectSlot(
+          current.current,
+          slot,
+          needsMistakeReview(
+            current.current.run,
+            acknowledgedReview === reviewKey,
+          ),
+        ),
+      )
+    }
   }
+  function continueAfterMistake() {
+    const latest = current.current
+    if (!latest || !isCurrentGameContext(context)) return
+    const reviewKey = mistakeReviewKey(
+      context.context_id,
+      runId,
+      latest.run.revision,
+    )
+    if (
+      latest.run.run_id !== runId ||
+      !needsMistakeReview(latest.run, acknowledgedReview === reviewKey)
+    )
+      return
+    setAcknowledgedReview(reviewKey)
+    try {
+      sessionStorage.setItem(reviewKey, mistakeReviewAcknowledgement())
+    } catch {
+      // In-memory acknowledgement lasts for this mounted run; reload may repeat it.
+    }
+  }
+  const currentReviewKey = state
+    ? mistakeReviewKey(context.context_id, runId, state.run.revision)
+    : ""
+  const reviewingMistake = Boolean(
+    state &&
+      needsMistakeReview(state.run, acknowledgedReview === currentReviewKey),
+  )
   return {
     state,
     message,
@@ -222,6 +308,8 @@ export function useOwnedRun(runId: string, context: GameSessionPublic) {
     select,
     submit,
     reconcile,
+    reviewingMistake,
+    continueAfterMistake,
     retryRead: () => {
       void query.refetch()
     },

@@ -140,6 +140,8 @@ class GameRun(SQLModel, table=True):
     pending_event_id: UUID | None = None
     status: str
     streak: int
+    mistakes: int = Field(default=0)
+    correct_count: int = Field(default=0)
     revision: int
     created_at: datetime = Field(default_factory=utc_now, sa_column=timestamp_column())
     updated_at: datetime = Field(default_factory=utc_now, sa_column=timestamp_column())
@@ -169,6 +171,16 @@ class GameRun(SQLModel, table=True):
             "status IN ('active', 'lost', 'won')", name="ck_gamerun_status"
         ),
         CheckConstraint("streak >= 0 AND revision >= 0", name="ck_gamerun_counters"),
+        CheckConstraint("mistakes BETWEEN 0 AND 3", name="ck_gamerun_mistakes"),
+        CheckConstraint("correct_count >= 0", name="ck_gamerun_correct_count"),
+        CheckConstraint(
+            "streak <= correct_count AND revision = correct_count + mistakes AND "
+            "jsonb_array_length(timeline) = 1 + revision - CASE WHEN status = 'lost' THEN 1 ELSE 0 END AND "
+            "((status = 'lost' AND mistakes = 3 AND streak = 0) OR "
+            "(status <> 'lost' AND mistakes < 3)) AND "
+            "(mistakes <> 0 OR streak = correct_count)",
+            name="ck_gamerun_state_invariant",
+        ),
         CheckConstraint(
             "(status = 'active' AND pending_event_id IS NOT NULL) OR (status <> 'active' AND pending_event_id IS NULL)",
             name="ck_gamerun_pending",

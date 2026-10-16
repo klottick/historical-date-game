@@ -19,7 +19,7 @@ export function GameResults({
 }) {
   return (
     <section className="game-results" aria-label="Run result">
-      <h2>
+      <h2 tabIndex={-1}>
         {run.status === "won"
           ? "Victory — catalog exhausted"
           : "Mistake — run complete"}

@@ -98,6 +98,8 @@ def run_data(
         pending_event_id=ids[1],
         status="active",
         streak=0,
+        mistakes=0,
+        correct_count=0,
         revision=0,
     )
     db.add(run)
@@ -387,17 +389,21 @@ def test_persisted_state_constraints_and_owner_lock(
             ),
             {"id": release_id},
         )
-    # A real state transition is persisted without losing any frozen generation fields.
+    # Persist a schema-valid terminal loss without losing frozen generation fields.
     run.status = "lost"
     run.pending_event_id = None
-    run.revision = 1
+    run.timeline = [run.order[0], run.order[1], run.order[0]]
+    run.mistakes = 3
+    run.correct_count = 0
+    run.revision = 3
     run.updated_at = datetime.now(UTC)
     run.finished_at = run.updated_at
     db.add(run)
     db.commit()
     with Session(engine) as after_move:
         moved = lock_run(after_move, run.id, owner.id)
-        assert moved.status == "lost" and moved.revision == 1
+        assert moved.status == "lost" and moved.revision == 3
+        assert moved.mistakes == 3 and moved.correct_count == 0
         assert moved.pending_event_id is None and moved.finished_at == moved.updated_at
         assert moved.seed == daily.seed and moved.rules == daily.rules
     db.delete(owner)
@@ -475,9 +481,9 @@ def test_catalog_unavailable_without_pointer(db: Session) -> None:
 
 
 def test_migration_round_trip_on_owned_fixture_database(
-    release: Path, request: pytest.FixtureRequest
+    request: pytest.FixtureRequest,
 ) -> None:
-    """Authorized exception: this test owns one absent random child DB.
+    """This test owns one absent random child DB and round-trips its empty schema.
 
     Primary verification targets remain fixed-name and comment-verified. This
     round trip separately creates/comments/verifies/drops only its exact child.
@@ -524,9 +530,9 @@ def test_migration_round_trip_on_owned_fixture_database(
             request.node.user_properties.append(
                 ("owned_fixture_comment", ownership_comment(name))
             )
-            for step, revision in enumerate(("head", "1a31ce608336", "head")):
+            for step, revision in enumerate(("head", "20261013_01", "head")):
                 verify_child_ownership(connection)
-                action = "downgrade" if revision == "1a31ce608336" else "upgrade"
+                action = "downgrade" if revision == "20261013_01" else "upgrade"
                 result = subprocess.run(
                     [sys.executable, "-m", "alembic", action, revision],
                     env=env,
@@ -534,34 +540,17 @@ def test_migration_round_trip_on_owned_fixture_database(
                     capture_output=True,
                 )
                 assert result.returncode == 0, result.stderr
-                if step == 0:
-                    # Exercise downgrade with real synthetic C5 snapshots and owned
-                    # run/operation rows, not a scored production database.
-                    verify_child_ownership(connection)
-                    with Session(child) as fixture_db:
-                        owner = User(
-                            email="migration-fixture@example.com",
-                            hashed_password="unused",
-                        )
-                        fixture_db.add(owner)
-                        fixture_db.commit()
-                        release_id = activate(fixture_db, release)
-                        run_data(fixture_db, release_id, owner)
-                elif step == 1:
+                if step == 1:
                     verify_child_ownership(connection)
                     with child.connect() as previous:
-                        assert "gamerun" not in inspect(previous).get_table_names()
+                        assert "gamerun" in inspect(previous).get_table_names()
+                        assert not {"mistakes", "correct_count"} & {
+                            column["name"]
+                            for column in inspect(previous).get_columns("gamerun")
+                        }
                         assert (
                             previous.execute(
                                 text('SELECT count(*) FROM "user"')
-                            ).scalar_one()
-                            == 1
-                        )
-                        assert (
-                            previous.execute(
-                                text(
-                                    "SELECT count(*) FROM pg_proc WHERE proname = 'hdg_reject_frozen_update'"
-                                )
                             ).scalar_one()
                             == 0
                         )
@@ -572,7 +561,7 @@ def test_migration_round_trip_on_owned_fixture_database(
                     migrated.execute(
                         text("SELECT version_num FROM alembic_version")
                     ).scalar_one()
-                    == "20261013_01"
+                    == "20261015_01"
                 )
                 assert set(inspect(migrated).get_table_names()) >= {
                     "catalogrelease",

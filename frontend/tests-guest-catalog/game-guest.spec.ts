@@ -55,7 +55,12 @@ async function game(
 async function session(page: Page): Promise<GameSessionPublic> {
   const response = await game(page, "session")
   expect(response.status).toBe(200)
-  expect(Object.keys(response.body).sort()).toEqual(["context_id", "kind"])
+  expect(Object.keys(response.body).sort()).toEqual([
+    "context_id",
+    "kind",
+    "protocol_version",
+  ])
+  expect(response.body.protocol_version).toBe(2)
   return response.body
 }
 async function ready(page: Page) {
@@ -148,7 +153,7 @@ async function move(
   const response = page.waitForResponse(
     (r) => r.request().method() === "POST" && r.url().endsWith("/placements"),
   )
-  await page.getByRole("button", { name: "Lock it in", exact: true }).click()
+  await page.getByRole("button", { name: "Confirm", exact: true }).click()
   const result = await response
   expect(result.status()).toBe(200)
   const next: RunPublic = await result.json()
@@ -315,7 +320,7 @@ test("Freeplay correct, reload, exact committed retry, loss and new run", async 
     } else await route.fulfill({ response })
   })
   await keyboardPreview(page, slot(run, release.years))
-  await page.getByRole("button", { name: "Lock it in", exact: true }).click()
+  await page.getByRole("button", { name: "Confirm", exact: true }).click()
   await expect(page.getByRole("alert")).toContainText("your run is not lost")
   // Retrying a saved command must not require a NEW cryptographic operation ID.
   await page.evaluate(() => {
@@ -345,8 +350,24 @@ test("Freeplay correct, reload, exact committed retry, loss and new run", async 
   await page.unroute("**/placements")
   run = committed!
   run = await move(page, run, slot(run, release.years) === 0 ? 1 : 0)
+  expect(run.status).toBe("active")
+  expect(run.lives_remaining).toBe(2)
+  expect(run.feedback!.correct).toBe(false)
+  expect(run.score).toBe(2)
+  expect(run.streak).toBe(0)
+  await expect(
+    page.getByRole("button", { name: "Continue", exact: true }),
+  ).toBeVisible()
+  for (const lives of [1, 0]) {
+    if (run.status === "active")
+      await page.getByRole("button", { name: "Continue", exact: true }).click()
+    run = await move(page, run, slot(run, release.years) === 0 ? 1 : 0)
+    expect(run.lives_remaining).toBe(lives)
+    expect(run.feedback!.correct).toBe(false)
+  }
   expect(run.status).toBe("lost")
-  expect(run.streak).toBe(2)
+  expect(run.score).toBe(2)
+  expect(run.streak).toBe(0)
   await expect(
     page.getByRole("heading", { name: "Mistake — run complete" }),
   ).toBeVisible()
@@ -425,6 +446,7 @@ test("two guests and account share Daily prefix, isolate reads/moves, one attemp
             identities[owner],
             {
               operation_id: randomUUID(),
+              protocol_version: 2,
               expected_revision: 0,
               event_id: foreign.pending!.event_id,
               slot: 0,
@@ -444,6 +466,7 @@ test("two guests and account share Daily prefix, isolate reads/moves, one attemp
     for (let i = 0; i < 3; i++) {
       const repeated = await game(pages[i], "daily", identities[i], {
         operation_id: randomUUID(),
+        protocol_version: 2,
       })
       expect(repeated.status).toBe(200)
       expect(repeated.body).toEqual(runs[i])
@@ -547,7 +570,7 @@ with Session(engine) as session:
       appendFileSync(`${evidence}/expiry.log`, output, { mode: 0o600 })
     }
     await keyboardPreview(page, 0)
-    await page.getByRole("button", { name: "Lock it in", exact: true }).click()
+    await page.getByRole("button", { name: "Confirm", exact: true }).click()
     await expect(page.getByRole("alert")).toContainText("Your run is not lost")
     await page
       .getByRole("button", { name: "Retry session", exact: true })
@@ -647,7 +670,7 @@ test("optional sign-in/out and expired account never replay guest commands, prot
     await route.abort("failed")
   })
   await keyboardPreview(page, 0)
-  await page.getByRole("button", { name: "Lock it in", exact: true }).click()
+  await page.getByRole("button", { name: "Confirm", exact: true }).click()
   await expect(
     page.getByRole("button", { name: "Retry same move", exact: true }),
   ).toBeVisible()

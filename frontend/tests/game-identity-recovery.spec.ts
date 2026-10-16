@@ -17,6 +17,7 @@ const media = {
   credits: [{ label: "Fixture credit", url: null }],
 }
 const options: GameOptions = {
+  protocol_version: 2,
   catalog_release_id: "controlled-ui",
   categories: [{ id: "history", label: "History" }],
   start: { value: 1, era: "CE" },
@@ -36,6 +37,9 @@ const run: RunPublic = {
   },
   categories: options.categories,
   status: "active",
+  initial_lives: 3,
+  lives_remaining: 3,
+  score: 0,
   streak: 0,
   revision: 0,
   timeline: [
@@ -64,6 +68,7 @@ async function harness(page: Page, token = "") {
       token,
     )
   const state = {
+    run: structuredClone(run),
     guest: true,
     expired: false,
     bootstraps: 0,
@@ -76,7 +81,9 @@ async function harness(page: Page, token = "") {
     delayLogin: undefined as Promise<void> | undefined,
     failStart: false,
     unavailableAccount: undefined as "inactive" | "deleted" | undefined,
-    dailyStarts: [] as { operation_id: string }[],
+    dailyStarts: [] as { operation_id: string; protocol_version: number }[],
+    optionsProtocol: 2,
+    missingRun: false,
   }
   await page.context().route("**/api/v1/**", async (route) => {
     const request = route.request()
@@ -118,7 +125,8 @@ async function harness(page: Page, token = "") {
         is_superuser: false,
       })
     }
-    if (path === "/games/options") return json(options)
+    if (path === "/games/options")
+      return json({ ...options, protocol_version: state.optionsProtocol })
     if (path === "/items/") {
       await state.delayRead
       return json({
@@ -156,7 +164,11 @@ async function harness(page: Page, token = "") {
           },
           401,
         )
-      return json({ kind: auth ? "account" : "guest", context_id: context })
+      return json({
+        kind: auth ? "account" : "guest",
+        context_id: context,
+        protocol_version: 2,
+      })
     }
     if (path === "/games/active-runs") return json([])
     if (path === "/games/daily" && request.method() === "POST") {
@@ -186,7 +198,7 @@ async function harness(page: Page, token = "") {
           },
           401,
         )
-      return json(run)
+      return json(state.run)
     }
     if (path.endsWith("/placements")) {
       state.moves.push({
@@ -204,6 +216,7 @@ async function harness(page: Page, token = "") {
     }
     if (path === `/games/runs/${runId}`) {
       await state.delayRead
+      if (state.missingRun) return json({ detail: "Not found" }, 404)
       if (auth && state.unavailableAccount) return accountFailure()
       if (state.expired)
         return json(
@@ -216,7 +229,7 @@ async function harness(page: Page, token = "") {
           401,
         )
       if (auth?.endsWith("two")) return json({ detail: "Not found" }, 404)
-      return json(run)
+      return json(state.run)
     }
     return json({ detail: `Unexpected controlled endpoint ${path}` }, 404)
   })
@@ -228,11 +241,105 @@ async function openBoard(page: Page) {
 }
 async function move(page: Page) {
   await keyboardPreview(page, 0)
-  await page.getByRole("button", { name: "Lock it in", exact: true }).click()
+  await page.getByRole("button", { name: "Confirm", exact: true }).click()
 }
 async function saved(page: Page, key: string) {
   return page.evaluate((value) => sessionStorage.getItem(value), key)
 }
+
+test("malformed or denied review storage never suppresses review or submits", async ({
+  page,
+}) => {
+  const state = await harness(page, "one")
+  const wrong = { ...run.timeline[0], event_id: "wrong", prompt: "Wrong event" }
+  state.run = {
+    ...run,
+    status: "active",
+    revision: 1,
+    lives_remaining: 2,
+    timeline: [run.timeline[0], wrong],
+    pending: {
+      event_id: "next",
+      prompt: "Next private card",
+      category_ids: ["history"],
+      media,
+    },
+    feedback: {
+      correct: false,
+      card: wrong,
+      attempted_slot: 0,
+      correct_slot: 1,
+    },
+  }
+  const key = `game-mistake-review:v1:account-one:${runId}:1`
+  await page.addInitScript((reviewKey) => {
+    const getItem = Storage.prototype.getItem
+    const setItem = Storage.prototype.setItem
+    Storage.prototype.getItem = function (key) {
+      if (key === reviewKey) return "not-an-acknowledgement"
+      return getItem.call(this, key)
+    }
+    Storage.prototype.setItem = function (key, value) {
+      if (key === reviewKey) throw new DOMException("denied", "SecurityError")
+      return setItem.call(this, key, value)
+    }
+  }, key)
+  await page.goto(`/play/${runId}`)
+  await expect(
+    page.getByRole("button", { name: "Continue", exact: true }),
+  ).toBeVisible()
+  await page.getByRole("button", { name: "Continue", exact: true }).click()
+  await expect(page.locator(".pending-draggable")).toBeVisible()
+  expect(state.moves).toHaveLength(0)
+  await page.reload()
+  await expect(
+    page.getByRole("button", { name: "Continue", exact: true }),
+  ).toBeVisible()
+  expect(state.moves).toHaveLength(0)
+})
+
+test("account switch during mistake review cannot acknowledge or submit old-context state", async ({
+  page,
+}) => {
+  const state = await harness(page, "one")
+  const wrong = { ...run.timeline[0], event_id: "wrong", prompt: "Wrong event" }
+  state.run = {
+    ...run,
+    status: "active",
+    revision: 1,
+    lives_remaining: 2,
+    timeline: [run.timeline[0], wrong],
+    pending: {
+      event_id: "next",
+      prompt: "Next private card",
+      category_ids: ["history"],
+      media,
+    },
+    feedback: {
+      correct: false,
+      card: wrong,
+      attempted_slot: 0,
+      correct_slot: 1,
+    },
+  }
+  await page.goto(`/play/${runId}`)
+  await expect(
+    page.getByRole("button", { name: "Continue", exact: true }),
+  ).toBeVisible()
+  await page.evaluate(() => localStorage.setItem("access_token", "two"))
+  await expect(
+    page.getByRole("button", { name: "Continue", exact: true }),
+  ).toHaveCount(0)
+  expect(state.moves).toHaveLength(0)
+  expect(
+    await page.evaluate(
+      () =>
+        Object.keys(sessionStorage).filter((key) =>
+          key.startsWith("game-mistake-review:"),
+        ).length,
+    ),
+  ).toBe(0)
+})
 
 for (const accountState of ["inactive", "deleted"] as const) {
   test(`${accountState} account owned read offers session recovery without replacement`, async ({
@@ -287,7 +394,7 @@ for (const accountState of ["inactive", "deleted"] as const) {
     })
     await move(page)
     await expect.poll(() => state.moves.length).toBe(1)
-    const key = `game:account-one:placement:${runId}`
+    const key = `game:v2:account-one:placement:${runId}`
     const original = await saved(page, key)
     expect(JSON.parse(original!)).toEqual(state.moves[0].command)
     state.unavailableAccount = accountState
@@ -312,7 +419,7 @@ for (const accountState of ["inactive", "deleted"] as const) {
     ).toBeVisible()
     expect(await saved(page, key)).toBe(original)
     expect(state.moves).toHaveLength(1)
-    expect(await saved(page, `game:guest-one:placement:${runId}`)).toBeNull()
+    expect(await saved(page, `game:v2:guest-one:placement:${runId}`)).toBeNull()
     expect(pageErrors).toEqual([])
   })
 
@@ -335,9 +442,10 @@ for (const accountState of ["inactive", "deleted"] as const) {
       const starts = mode === "daily" ? state.dailyStarts : state.starts
       await expect.poll(() => starts.length).toBe(1)
       const bootstrapsBeforeFailure = state.bootstraps
-      const key = `game:account-one:start:${mode}`
+      const key = `game:v2:account-one:start:${mode}`
       const original = await saved(page, key)
       expect(JSON.parse(original!)).toEqual(starts[0])
+      expect(starts[0].protocol_version).toBe(2)
       state.unavailableAccount = accountState
       release()
       await expect(
@@ -362,12 +470,12 @@ for (const accountState of ["inactive", "deleted"] as const) {
       ).toBeVisible()
       expect(await saved(page, key)).toBe(original)
       expect(starts).toHaveLength(1)
-      expect(await saved(page, `game:guest-one:start:${mode}`)).toBeNull()
+      expect(await saved(page, `game:v2:guest-one:start:${mode}`)).toBeNull()
     })
   }
 }
 
-test("ordinary owned run 404 is not a session recovery error", async ({
+test("missing owned run shows refresh guidance rather than session recovery", async ({
   page,
 }) => {
   await harness(page, "two")
@@ -375,6 +483,9 @@ test("ordinary owned run 404 is not a session recovery error", async ({
   await expect(
     page.getByRole("heading", { name: "Run unavailable" }),
   ).toBeVisible()
+  await expect(page.getByRole("alert")).toContainText(
+    "Game updated. Refresh and start a new game.",
+  )
   await expect(
     page.getByRole("button", { name: "Retry session", exact: true }),
   ).toHaveCount(0)
@@ -438,7 +549,7 @@ test("identity_switch_does_not_replay_uncertain_move", async ({ page }) => {
   await move(page)
   await expect.poll(() => state.moves.length).toBe(1)
   const command = state.moves[0].command
-  const key = `game:account-one:placement:${runId}`
+  const key = `game:v2:account-one:placement:${runId}`
   const tab = await page.context().newPage()
   await tab.goto("/")
   await tab.evaluate(() => localStorage.setItem("access_token", "two"))
@@ -471,7 +582,7 @@ test("expired_guest_does_not_bootstrap_during_move", async ({ page }) => {
     page.getByRole("button", { name: "Continue as guest" }),
   ).toBeVisible()
   expect(state.bootstraps).toBe(before)
-  const key = `game:guest-one:placement:${runId}`
+  const key = `game:v2:guest-one:placement:${runId}`
   expect(JSON.parse((await saved(page, key))!)).toEqual(state.moves[0].command)
   expect(state.moves).toHaveLength(1)
   expect(page.url()).not.toContain("login")
@@ -491,12 +602,14 @@ test("expired_account_can_explicitly_continue_as_guest", async ({ page }) => {
   ).toBeNull()
   expect(state.moves).toHaveLength(1)
   expect(
-    await saved(page, `game:account-one:placement:${runId}`),
+    await saved(page, `game:v2:account-one:placement:${runId}`),
   ).not.toBeNull()
 })
-test("existing_account_recovery_key_survives_transition", async ({ page }) => {
+test("old_account_start_record_is_ignored_and_fresh_start_uses_protocol_2", async ({
+  page,
+}) => {
   const state = await harness(page, "one")
-  const command: FreeplayStart = {
+  const command = {
     operation_id: "22222222-2222-4222-8222-222222222222",
     catalog_release_id: options.catalog_release_id,
     config: run.config,
@@ -510,19 +623,25 @@ test("existing_account_recovery_key_survives_transition", async ({ page }) => {
     command,
   )
   await page.goto("/freeplay")
-  await expect(page.getByRole("button", { name: "Retry start" })).toBeVisible()
-  expect(
-    JSON.parse((await saved(page, "game:account-one:start:freeplay"))!),
-  ).toEqual(command)
-  expect(await saved(page, "game-start:owner-one:freeplay")).toBeNull()
-  await page.getByRole("button", { name: "Retry start" }).click()
+  await expect(
+    page.getByRole("button", { name: "Start Freeplay" }),
+  ).toBeVisible()
+  expect(await saved(page, "game:v2:account-one:start:freeplay")).toBeNull()
+  expect(await saved(page, "game-start:owner-one:freeplay")).toEqual(
+    JSON.stringify(command),
+  )
+  expect(state.starts).toHaveLength(0)
+  await page.getByRole("button", { name: "Start Freeplay" }).click()
   await expect(page.locator(".pending-draggable")).toBeVisible()
-  expect(state.starts).toEqual([command])
-  expect(await saved(page, "game-start:owner-one:freeplay")).toBeNull()
+  expect(state.starts).toHaveLength(1)
+  expect(state.starts[0].protocol_version).toBe(2)
+  expect(state.starts[0].operation_id).not.toBe(command.operation_id)
 })
-test("legacy placement waits for fresh owned read", async ({ page }) => {
+test("old placement record without protocol is ignored after fresh owned read", async ({
+  page,
+}) => {
   const state = await harness(page, "one")
-  const command: PlaceCommand = {
+  const command = {
     operation_id: "33333333-3333-4333-8333-333333333333",
     expected_revision: 0,
     event_id: "pending",
@@ -543,14 +662,13 @@ test("legacy placement waits for fresh owned read", async ({ page }) => {
   ).toBeVisible()
   expect(await saved(page, legacy)).not.toBeNull()
   release()
-  await expect(
-    page.getByRole("button", { name: "Retry same move" }),
-  ).toBeVisible()
-  expect(
-    JSON.parse((await saved(page, `game:account-one:placement:${runId}`))!),
-  ).toEqual(command)
-  expect(await saved(page, legacy)).toBeNull()
+  await expect(page.getByTestId("pending-card")).toBeVisible()
+  expect(await saved(page, `game:v2:account-one:placement:${runId}`)).toBeNull()
+  expect(await saved(page, legacy)).toEqual(JSON.stringify(command))
   expect(state.moves).toHaveLength(0)
+  expect(await page.evaluate(() => localStorage.getItem("access_token"))).toBe(
+    "one",
+  )
 })
 
 test("delayed successful start cannot consume an old context command or navigate a new player", async ({
@@ -564,7 +682,7 @@ test("delayed successful start cannot consume an old context command or navigate
   await page.goto("/freeplay")
   await page.getByRole("button", { name: "Start Freeplay" }).click()
   await expect.poll(() => state.starts.length).toBe(1)
-  const key = "game:account-one:start:freeplay"
+  const key = "game:v2:account-one:start:freeplay"
   await page.evaluate(() => localStorage.setItem("access_token", "two"))
   await expect(
     page.getByRole("button", { name: "Start Freeplay" }),
@@ -572,7 +690,7 @@ test("delayed successful start cannot consume an old context command or navigate
   release()
   await expect(page).toHaveURL(/\/freeplay$/)
   expect(JSON.parse((await saved(page, key))!)).toEqual(state.starts[0])
-  expect(await saved(page, "game:account-two:start:freeplay")).toBeNull()
+  expect(await saved(page, "game:v2:account-two:start:freeplay")).toBeNull()
 })
 test("delayed owned GET cannot display another player's pending answers", async ({
   page,
@@ -594,7 +712,7 @@ test("delayed owned GET cannot display another player's pending answers", async 
   await expect(page.getByTestId("pending-card")).toHaveCount(0)
   expect(state.moves).toHaveLength(0)
 })
-test("legacy collision preserves both unchanged commands and blocks play", async ({
+test("legacy start record is ignored without blocking new protocol play", async ({
   page,
 }) => {
   await harness(page, "one")
@@ -609,12 +727,12 @@ test("legacy collision preserves both unchanged commands and blocks play", async
     )
   })
   await page.goto("/daily")
-  await expect(
-    page.getByRole("heading", { name: "Game session unavailable" }),
-  ).toBeVisible()
+  await expect(page.getByRole("button", { name: "Start Daily" })).toBeVisible()
+  expect(await saved(page, "game:v2:account-one:start:daily")).toBeNull()
   expect(await saved(page, "game-start:owner-one:daily")).toBe(
     '{"operation_id":"old"}',
   )
+  expect(await saved(page, "game:v2:account-one:start:daily")).toBeNull()
   expect(await saved(page, "game:account-one:start:daily")).toBe(
     '{"operation_id":"new"}',
   )
@@ -760,15 +878,16 @@ test("late public game failure on an account page cannot force login", async ({
   expect(await page.evaluate(() => localStorage.getItem("access_token"))).toBe(
     "one",
   )
-  expect(await saved(page, "game:account-one:start:freeplay")).not.toBeNull()
+  expect(await saved(page, "game:v2:account-one:start:freeplay")).not.toBeNull()
 })
 
-test("legacy placement collision is explained without deleting either command", async ({
+test("legacy placement record is ignored and never submitted", async ({
   page,
 }) => {
-  await harness(page, "one")
+  const state = await harness(page, "one")
   const command: PlaceCommand = {
     operation_id: "33333333-3333-4333-8333-333333333333",
+    protocol_version: 2,
     expected_revision: 0,
     event_id: "pending",
     slot: 0,
@@ -779,28 +898,63 @@ test("legacy placement collision is explained without deleting either command", 
         `game-placement:owner-one:${id}`,
         JSON.stringify(value),
       )
-      sessionStorage.setItem(
-        `game:account-one:placement:${id}`,
-        JSON.stringify({
-          ...value,
-          operation_id: "44444444-4444-4444-8444-444444444444",
-        }),
-      )
     },
     { id: runId, value: command },
   )
   await page.goto(`/play/${runId}`)
-  await expect(page.getByRole("alert")).toContainText("commands conflict")
+  await expect(page.getByTestId("pending-card")).toBeVisible()
+  expect(state.moves).toHaveLength(0)
   expect(
     JSON.parse((await saved(page, `game-placement:owner-one:${runId}`))!),
   ).toEqual(command)
-  expect(
-    JSON.parse((await saved(page, `game:account-one:placement:${runId}`))!)
-      .operation_id,
-  ).toBe("44444444-4444-4444-8444-444444444444")
+  expect(await saved(page, `game:v2:account-one:placement:${runId}`)).toBeNull()
   await expect(
-    page.getByRole("button", { name: "Lock it in", exact: true }),
+    page.getByRole("button", { name: "Confirm", exact: true }),
   ).toHaveCount(0)
+})
+
+test("unsupported options show refresh guidance and cannot start play", async ({
+  page,
+}) => {
+  const state = await harness(page)
+  state.optionsProtocol = 1
+  await page.goto("/freeplay")
+  await expect(page.getByRole("alert")).toContainText(
+    "Game updated. Refresh and start a new game.",
+  )
+  await expect(
+    page.getByRole("button", { name: "Start Freeplay" }),
+  ).toHaveCount(0)
+  expect(state.starts).toHaveLength(0)
+})
+
+test("missing old run shows refresh guidance without allocating or replacing recovery", async ({
+  page,
+}) => {
+  const state = await harness(page, "one")
+  state.missingRun = true
+  const oldCommand = {
+    operation_id: "55555555-5555-4555-8555-555555555555",
+    expected_revision: 0,
+    event_id: "pending",
+    slot: 0,
+  }
+  const legacyKey = `game:account-one:placement:${runId}`
+  await page.addInitScript(
+    ({ key, value }) => sessionStorage.setItem(key, JSON.stringify(value)),
+    { key: legacyKey, value: oldCommand },
+  )
+  await page.goto(`/play/${runId}`)
+  await expect(page.getByRole("alert")).toContainText(
+    "Game updated. Refresh and start a new game.",
+  )
+  expect(state.moves).toHaveLength(0)
+  expect(state.starts).toHaveLength(0)
+  expect(state.bootstraps).toBe(0)
+  expect(await page.evaluate(() => localStorage.getItem("access_token"))).toBe(
+    "one",
+  )
+  expect(await saved(page, legacyKey)).toEqual(JSON.stringify(oldCommand))
 })
 
 test("expired accounts on protected routes still go to login", async ({

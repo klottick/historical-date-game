@@ -99,7 +99,7 @@ def test_chronology_changes_invalidate_base_acceptance_fingerprint() -> None:
     assert pipeline.media_rules_digest() != expected
 
 
-def test_throttle_hooks_only_are_projected_out_of_current_fingerprint(
+def test_actual_pipeline_bytes_are_bound_without_legacy_projection(
     monkeypatch: pytest.MonkeyPatch,
 ) -> None:
     from app.content import commons_transport
@@ -112,10 +112,12 @@ def test_throttle_hooks_only_are_projected_out_of_current_fingerprint(
         return projected if path == Path(pipeline.__file__) else original(path)
 
     monkeypatch.setattr(Path, "read_bytes", without_hooks)
-    assert pipeline.media_rules_digest() == before
+    # Portable replay binds the actual code, including transport hooks. Old
+    # fingerprint compatibility projections must no longer preserve receipts.
+    assert pipeline.media_rules_digest() != before
 
 
-def test_throttle_fingerprint_projection_still_binds_pipeline_acceptance(
+def test_pipeline_acceptance_bytes_are_bound(
     monkeypatch: pytest.MonkeyPatch,
 ) -> None:
     before = pipeline.media_rules_digest()

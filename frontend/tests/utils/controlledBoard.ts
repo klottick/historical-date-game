@@ -60,6 +60,9 @@ export function controlledRun(count = 3): RunPublic {
     },
     categories: [{ id: "history", label: "History" }],
     status: "active",
+    initial_lives: 3,
+    lives_remaining: 3,
+    score: 0,
     streak: 0,
     revision: 0,
     timeline: Array.from({ length: count }, (_, i) => revealed(i)),
@@ -109,11 +112,20 @@ export async function controlledBoard(
     if (path === "/games/session")
       return json(
         request.headers().authorization
-          ? { kind: "account", context_id: "controlled-account" }
-          : { kind: "guest", context_id: "controlled-board" },
+          ? {
+              kind: "account",
+              context_id: "controlled-account",
+              protocol_version: 2,
+            }
+          : {
+              kind: "guest",
+              context_id: "controlled-board",
+              protocol_version: 2,
+            },
       )
     if (path === "/games/options")
       return json({
+        protocol_version: 2,
         catalog_release_id: "controlled-ui",
         categories: initial.categories,
         start: initial.config.start,
@@ -179,31 +191,37 @@ export async function controlledBoard(
         year: { value: 900, era: "CE" } as const,
       }
       const correct = state.run.revision === 0
+      const correctSlot = correct ? command.slot : state.run.timeline.length
+      const livesRemaining = state.run.lives_remaining - (correct ? 0 : 1)
       state.run = {
         ...state.run,
         revision: state.run.revision + 1,
-        status: correct ? "active" : "lost",
-        streak: correct ? 1 : state.run.streak,
-        timeline: correct
-          ? [
-              ...state.run.timeline.slice(0, command.slot),
-              card,
-              ...state.run.timeline.slice(command.slot),
-            ]
-          : state.run.timeline,
-        pending: correct
-          ? {
-              event_id: "next",
-              prompt: "Next public prompt",
-              category_ids: ["history"],
-              media,
-            }
-          : null,
+        status: livesRemaining === 0 ? "lost" : "active",
+        lives_remaining: livesRemaining,
+        score: state.run.score + (correct ? 1 : 0),
+        streak: correct ? state.run.streak + 1 : 0,
+        timeline:
+          !correct && livesRemaining === 0
+            ? state.run.timeline
+            : [
+                ...state.run.timeline.slice(0, correctSlot),
+                card,
+                ...state.run.timeline.slice(correctSlot),
+              ],
+        pending:
+          livesRemaining > 0
+            ? {
+                event_id: `next-${state.run.revision + 1}`,
+                prompt: "Next public prompt",
+                category_ids: ["history"],
+                media,
+              }
+            : null,
         feedback: {
           correct,
           card,
           attempted_slot: command.slot,
-          correct_slot: correct ? command.slot : state.run.timeline.length,
+          correct_slot: correctSlot,
         },
       }
       state.scoredOutcomes++

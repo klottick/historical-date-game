@@ -19,6 +19,7 @@ import {
 } from "./api"
 import { defaultConfig, parseSafeInteger, validateConfig } from "./config"
 import { useGameSession } from "./GameSessionProvider"
+import { GAME_PROTOCOL_VERSION } from "./gameProtocol"
 import { gameQueryKey, sessionFailure, startStorageKey } from "./identityState"
 import { operationId } from "./operationId"
 
@@ -130,6 +131,7 @@ export function FreeplayForm({
           key,
           operation ?? {
             operation_id: operationId(),
+            protocol_version: GAME_PROTOCOL_VERSION,
             catalog_release_id: options.catalog_release_id,
             config: structuredClone(config),
           },

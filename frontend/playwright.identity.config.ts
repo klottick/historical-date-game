@@ -1,4 +1,5 @@
 import { defineConfig, devices } from "@playwright/test"
+import { boardEvidence } from "./tests/utils/boardEvidence"
 
 // No account fixture, dotenv, backend, or private environment is needed here.
 export default defineConfig({
@@ -7,6 +8,7 @@ export default defineConfig({
   fullyParallel: false,
   workers: 1,
   reporter: "list",
+  outputDir: `${boardEvidence}/identity-browser-results`,
   use: { baseURL: "http://127.0.0.1:5185", ...devices["Desktop Chrome"] },
   webServer: {
     command:

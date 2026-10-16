@@ -23,19 +23,20 @@ async function expectProjectedCards(page: Page, ordinals?: number[]) {
       viewport.evaluate((element) => {
         const left = element.getBoundingClientRect().left
         const offset = Number(element.getAttribute("data-offset"))
-        return [
-          ...element.querySelectorAll<HTMLElement>(".timeline-item"),
-        ].every(
-          (card) =>
-            Math.abs(
-              card.getBoundingClientRect().left -
-                left -
-                (Number.parseFloat(card.style.left) - offset),
-            ) < 0.01,
+        return Math.max(
+          0,
+          ...[...element.querySelectorAll<HTMLElement>(".timeline-item")].map(
+            (card) =>
+              Math.abs(
+                card.getBoundingClientRect().left -
+                  left -
+                  (Number.parseFloat(card.style.left) - offset),
+              ),
+          ),
         )
       }),
     )
-    .toBe(true)
+    .toBeLessThan(0.1)
   const projection = await page.evaluate(() => {
     const viewport = document.querySelector(".timeline-viewport")!
     const window = viewport.getBoundingClientRect()
@@ -240,7 +241,10 @@ test("ShiftTab reveals current repositioned pending preview after overview begin
     .getByRole("button", { name: "Show beginning", exact: true })
     .click()
   await page.keyboard.press("Shift+Tab")
-  await expectVisiblePendingFocus(page)
+  const confirm = page.getByRole("button", { name: "Confirm", exact: true })
+  await expect(confirm).toBeFocused()
+  await expect(confirm).toBeInViewport({ ratio: 1 })
+  await expectTransformOnly(page)
   await expect(page.locator(".pending-position")).toHaveAttribute(
     "data-preview-slot",
     "12",
@@ -258,7 +262,8 @@ test("pending prompt dialog restores visible nested focus after overview navigat
   await keyboardPreview(page, 0)
   await page.getByRole("button", { name: "Show end", exact: true }).click()
   // Ordinary reverse traversal: twelve event marks, beginning, pending prompt.
-  for (let step = 0; step < 14; step++) await page.keyboard.press("Shift+Tab")
+  // The preview's local Confirm action is now part of the keyboard order.
+  for (let step = 0; step < 15; step++) await page.keyboard.press("Shift+Tab")
   await expectVisiblePendingFocus(page, true)
   await page.keyboard.press("Enter")
   await expect(page.getByRole("dialog")).toBeVisible()

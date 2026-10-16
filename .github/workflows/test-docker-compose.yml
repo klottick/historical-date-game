@@ -3,7 +3,7 @@ name: Test Docker Compose
 on:
   push:
     branches:
-      - master
+      - main
   pull_request:
     types:
       - opened
@@ -13,14 +13,17 @@ jobs:
 
   test-docker-compose:
     runs-on: ubuntu-latest
+    timeout-minutes: 30
+    env:
+      COMPOSE_PROJECT_NAME: hdg-compose-${{ github.run_id }}-${{ github.run_attempt }}
     steps:
       - name: Checkout
         uses: actions/checkout@v7.0.1
       - run: docker compose build
-      - run: docker compose down -v --remove-orphans
       - run: docker compose up -d --wait backend frontend adminer
       - name: Test backend is up
-        run: curl http://localhost:8000/api/v1/utils/health-check
+        run: curl --fail --location http://localhost:8000/api/v1/utils/health-check/
       - name: Test frontend is up
-        run: curl http://localhost:5173
+        run: curl --fail http://localhost:5173
       - run: docker compose down -v --remove-orphans
+        if: always()

@@ -3,7 +3,7 @@ name: Lint Backend
 on:
   push:
     branches:
-      - master
+      - main
   pull_request:
     types:
       - opened
@@ -25,4 +25,7 @@ jobs:
           version: "0.13.0"
           enable-cache: true
       - run: uv run bash scripts/lint.sh
+        working-directory: backend
+      - name: Check publication workflow contracts
+        run: uv run python ../scripts/test_workflow_contracts.py
         working-directory: backend

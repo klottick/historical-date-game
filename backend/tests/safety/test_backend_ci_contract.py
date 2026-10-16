@@ -64,6 +64,7 @@ def test_backend_ci_prepares_owned_target_before_migration_and_tests(
     monkeypatch: pytest.MonkeyPatch,
 ) -> None:
     from app.core.config import settings
+    from tests.browser import ci_backend
     from tests.browser import guest_test_environment as env
 
     workflow = import_module("yaml").safe_load(
@@ -81,6 +82,10 @@ def test_backend_ci_prepares_owned_target_before_migration_and_tests(
     monkeypatch.setattr(settings, "POSTGRES_DB", target)
     monkeypatch.setattr(settings, "POSTGRES_SERVER", host)
     monkeypatch.setattr(settings, "ENVIRONMENT", environment)
+    monkeypatch.setattr(settings, "POSTGRES_PORT", int(job["env"]["POSTGRES_PORT"]))
+    ci_backend.require_ci_target(job["env"])
+    for key in ("HDG_VERIFICATION_PROFILE", "POSTGRES_DB", "POSTGRES_SERVER", "POSTGRES_PORT", "ENVIRONMENT"):
+        monkeypatch.setenv(key, job["env"][key])
 
     steps = job["steps"]
     boot = next(
@@ -89,7 +94,7 @@ def test_backend_ci_prepares_owned_target_before_migration_and_tests(
     # Compose must not pre-create the verification target without its comment.
     assert steps[boot]["env"]["POSTGRES_DB"] != target
     setup = next(
-        i for i, step in enumerate(steps) if "prepare-db" in step.get("run", "")
+        i for i, step in enumerate(steps) if "tests.browser.ci_backend prepare" in step.get("run", "")
     )
     migrate = next(
         i for i, step in enumerate(steps) if "prestart.sh" in step.get("run", "")
@@ -100,19 +105,22 @@ def test_backend_ci_prepares_owned_target_before_migration_and_tests(
     assert boot < setup < migrate < tests
     assert steps[setup]["working-directory"] == "backend"
     command = shlex.split(steps[setup]["run"].replace("$POSTGRES_DB", target))
-    assert command[:5] == [
+    assert command == [
         "uv",
         "run",
         "python",
         "-m",
-        "tests.browser.guest_test_environment",
+        "tests.browser.ci_backend",
+        "prepare",
     ]
 
     # Intercept SQL transport only; real creation, comment and ownership logic run.
     class Maintenance:
-        identity: tuple[str, str] | None = None
-        created = False
-        commented = False
+        def __init__(self) -> None:
+            self.identities: dict[str, tuple[str, str]] = {}
+            self.created: set[str] = set()
+            self.commented: set[str] = set()
+            self.row: tuple[Any, ...] | None = None
 
         def __enter__(self) -> Maintenance:
             return self
@@ -123,39 +131,54 @@ def test_backend_ci_prepares_owned_target_before_migration_and_tests(
         def execute(self, query: Any, params: Any = None) -> Maintenance:
             statement = query if isinstance(query, str) else query.as_string()
             if statement.startswith("SELECT shobj_description"):
-                assert params == (target,)
+                assert params[0] in ci_backend.DATABASES
+                self.row = self.identities.get(params[0])
+            elif statement.startswith("SELECT count(*) FROM pg_stat_activity"):
+                assert params[0] in ci_backend.DATABASES
+                self.row = (0,)
             elif statement.startswith("CREATE DATABASE"):
-                assert not self.created and self.identity is None
-                assert (
-                    statement
-                    == f'CREATE DATABASE "{target}" OWNER "{settings.POSTGRES_USER}"'
-                )
-                self.created = True
+                database = statement.split('"')[1]
+                assert database in ci_backend.DATABASES
+                assert database not in self.created and database not in self.identities
+                assert statement == f'CREATE DATABASE "{database}" OWNER "{settings.POSTGRES_USER}"'
+                self.created.add(database)
             elif statement.startswith("COMMENT ON DATABASE"):
-                assert self.created
-                expected = f"historical-date-game guest-play verification; worktree={env.WORKTREE}; database={target}"
-                assert statement == f"COMMENT ON DATABASE \"{target}\" IS '{expected}'"
-                self.identity = (expected, settings.POSTGRES_USER)
-                self.commented = True
+                database = statement.split('"')[1]
+                assert database in self.created
+                expected = f"historical-date-game board-polish-three-lives verification; worktree={env.WORKTREE}; database={database}"
+                assert statement == f"COMMENT ON DATABASE \"{database}\" IS '{expected}'"
+                self.identities[database] = (expected, settings.POSTGRES_USER)
+                self.commented.add(database)
             else:
                 pytest.fail("Unexpected SQL at pure CI boundary")
             return self
 
-        def fetchone(self) -> tuple[str, str] | None:
-            return self.identity
+        def fetchone(self) -> tuple[Any, ...] | None:
+            return self.row
 
     maintenance = Maintenance()
     monkeypatch.setattr(env, "_maintenance_connection", lambda: maintenance)
 
+    migrated: list[str] = []
+    seeded: list[str] = []
+
     def migration(database: str, direction: str, revision: str) -> None:
-        assert maintenance.created and maintenance.commented
+        assert maintenance.created == maintenance.commented == set(ci_backend.DATABASES)
         env.require_owned_guest_database(database)
-        assert (database, direction, revision) == (target, "upgrade", "head")
+        assert (database, direction, revision) == (ci_backend.MIGRATION_DATABASE, "upgrade", "head")
+        migrated.append(database)
+
+    def seed() -> None:
+        assert migrated == [ci_backend.MIGRATION_DATABASE]
+        env.require_owned_guest_database(ci_backend.MIGRATION_DATABASE)
+        seeded.append(ci_backend.MIGRATION_DATABASE)
 
     monkeypatch.setattr(env, "run_migration", migration)
-    assert env.main(command[5:]) == 0
+    monkeypatch.setattr(ci_backend, "_seed_migration_catalogue", seed)
+    ci_backend.prepare()
+    assert seeded == [ci_backend.MIGRATION_DATABASE]
     env.require_owned_guest_database()
     # An existing target without the exact comment is never adopted/relabelled.
-    maintenance.identity = ("unowned Compose database", settings.POSTGRES_USER)
+    maintenance.identities[target] = ("unowned Compose database", settings.POSTGRES_USER)
     with pytest.raises(RuntimeError, match="ownership"):
-        env.prepare_database(target)
+        ci_backend.prepare()

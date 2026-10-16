@@ -13,18 +13,24 @@ import {
 } from "../src/features/game/identityState.ts"
 
 test("commands and private queries are partitioned by confirmed context", () => {
-  assert.equal(startStorageKey("g:one", "daily"), "game:g%3Aone:start:daily")
+  assert.equal(startStorageKey("g:one", "daily"), "game:v2:g%3Aone:start:daily")
   assert.equal(
     placementStorageKey("g:one", "run"),
-    "game:g%3Aone:placement:run",
+    "game:v2:g%3Aone:placement:run",
   )
   assert.deepEqual(gameQueryKey("g:one", "run", "run"), [
     "game",
+    2,
     "g:one",
     "run",
     "run",
   ])
-  assert.deepEqual(gameQueryKey("a:two", "active"), ["game", "a:two", "active"])
+  assert.deepEqual(gameQueryKey("a:two", "active"), [
+    "game",
+    2,
+    "a:two",
+    "active",
+  ])
   assert.notEqual(
     startStorageKey("g:one", "daily"),
     startStorageKey("a:two", "daily"),
@@ -45,10 +51,13 @@ test("commands and private queries are partitioned by confirmed context", () => 
 
 test("owned requests carry cookies, the mutation guard and the confirmed context", () => {
   for (const kind of ["guest", "account"] as const) {
-    assert.deepEqual(gameRequestOptions({ kind, context_id: "context" }), {
-      withCredentials: true,
-      headers: { "X-Game-Request": "1", "X-Game-Context": "context" },
-    })
+    assert.deepEqual(
+      gameRequestOptions({ kind, context_id: "context", protocol_version: 2 }),
+      {
+        withCredentials: true,
+        headers: { "X-Game-Request": "1", "X-Game-Context": "context" },
+      },
+    )
   }
 })
 
@@ -128,7 +137,11 @@ test("captured account auth survives generated client async auth pipeline", asyn
   assert.equal(typeof gameApi.bindGameContext, "function")
   let token = "first"
   let current = true
-  const context = { kind: "account" as const, context_id: "account-first" }
+  const context = {
+    kind: "account" as const,
+    context_id: "account-first",
+    protocol_version: 2 as const,
+  }
   gameApi.bindGameContext(context, "first", () => current, "owner-first")
   const sent: unknown[] = []
   const transport = axios.create({
@@ -146,12 +159,20 @@ test("captured account auth survives generated client async auth pipeline", asyn
   client.setConfig({ auth: async () => token, axios: transport })
   await gameApi.getActiveRuns(context)
   assert.equal(sent.length, 1)
-  const guest = { kind: "guest" as const, context_id: "guest" }
+  const guest = {
+    kind: "guest" as const,
+    context_id: "guest",
+    protocol_version: 2 as const,
+  }
   gameApi.bindGameContext(guest, "", () => true)
   await gameApi.getActiveRuns(guest)
   assert.equal((sent[1] as Record<string, string>).Authorization, undefined)
   assert.equal(sent.length, 2)
-  const stale = { kind: "account" as const, context_id: "stale" }
+  const stale = {
+    kind: "account" as const,
+    context_id: "stale",
+    protocol_version: 2 as const,
+  }
   let valid = true
   gameApi.bindGameContext(stale, "first", () => valid)
   const pending = gameApi.getActiveRuns(stale)
@@ -170,11 +191,10 @@ test("captured account auth survives generated client async auth pipeline", asyn
   assert.equal(sent.length, 2)
 })
 
-test("legacy command migration refuses collisions and preserves original bytes", () => {
-  assert.equal(typeof gameApi.adoptLegacyOperation, "function")
+test("old unversioned commands are never adopted into v2 recovery", () => {
   const values = new Map<string, string>([
-    ["legacy", '{"operation_id":"old"}'],
-    ["new", '{"operation_id":"other"}'],
+    ["game-start:owner-one:daily", '{"operation_id":"old-start"}'],
+    ["game-placement:owner-one:run", '{"operation_id":"old-move"}'],
   ])
   Object.assign(globalThis, {
     sessionStorage: {
@@ -183,31 +203,42 @@ test("legacy command migration refuses collisions and preserves original bytes",
       removeItem: (key: string) => values.delete(key),
     },
   })
-  assert.throws(
-    () => gameApi.adoptLegacyOperation("legacy", "new"),
-    /conflict/i,
-  )
-  assert.equal(values.get("legacy"), '{"operation_id":"old"}')
-  assert.equal(values.get("new"), '{"operation_id":"other"}')
-  values.delete("new")
-  gameApi.adoptLegacyOperation("legacy", "new")
-  assert.equal(values.get("new"), '{"operation_id":"old"}')
-  assert.equal(values.has("legacy"), false)
-  values.set("game-start:owner-first:daily", '{"operation_id":"original"}')
-  const guest = { kind: "guest" as const, context_id: "guest" }
+  const guest = {
+    kind: "guest" as const,
+    context_id: "guest",
+    protocol_version: 2 as const,
+  }
   gameApi.bindGameContext(guest, "", () => true, "owner-first")
-  gameApi.adoptAccountStart(guest, "guest-destination", "daily")
-  assert.equal(values.has("guest-destination"), false)
-  const unconfirmed = { kind: "account" as const, context_id: "unconfirmed" }
+  gameApi.adoptAccountStart(guest, "game:v2:guest:start:daily", "daily")
+  gameApi.adoptAccountPlacement(guest, "game:v2:guest:placement:run", "run")
+  assert.equal(values.has("game:v2:guest:start:daily"), false)
+  assert.equal(values.has("game:v2:guest:placement:run"), false)
+  const unconfirmed = {
+    kind: "account" as const,
+    context_id: "unconfirmed",
+    protocol_version: 2 as const,
+  }
   gameApi.bindGameContext(unconfirmed, "first", () => true)
-  gameApi.adoptAccountStart(unconfirmed, "unconfirmed-destination", "daily")
-  assert.equal(values.has("unconfirmed-destination"), false)
-  const otherAccount = { kind: "account" as const, context_id: "other-account" }
+  gameApi.adoptAccountStart(
+    unconfirmed,
+    "game:v2:unconfirmed:start:daily",
+    "daily",
+  )
+  assert.equal(values.has("game:v2:unconfirmed:start:daily"), false)
+  const otherAccount = {
+    kind: "account" as const,
+    context_id: "other-account",
+    protocol_version: 2 as const,
+  }
   gameApi.bindGameContext(otherAccount, "second", () => true, "owner-second")
-  gameApi.adoptAccountStart(otherAccount, "other-destination", "daily")
-  assert.equal(values.has("other-destination"), false)
+  gameApi.adoptAccountStart(otherAccount, "game:v2:other:start:daily", "daily")
+  assert.equal(values.has("game:v2:other:start:daily"), false)
   assert.equal(
-    values.get("game-start:owner-first:daily"),
-    '{"operation_id":"original"}',
+    values.get("game-start:owner-one:daily"),
+    '{"operation_id":"old-start"}',
+  )
+  assert.equal(
+    values.get("game-placement:owner-one:run"),
+    '{"operation_id":"old-move"}',
   )
 })

@@ -17,6 +17,7 @@ from app.game.catalog_repository import CatalogError, load_options
 from app.game.guest_sessions import bootstrap_guest_session
 from app.game.models import utc_now
 from app.game.projections import public_year
+from app.game.protocol import GAME_PROTOCOL_VERSION
 from app.game.schemas import (
     DailyOverview,
     DailyStart,
@@ -67,7 +68,11 @@ def read_game_session(
     except (run_service.GameServiceError, HTTPException) as exc:
         raise _session_error(exc) from exc
     response.headers.update(SESSION_RESPONSE_HEADERS)
-    return GameSessionPublic(kind=player.kind, context_id=player.context_id)
+    return GameSessionPublic(
+        kind=player.kind,
+        context_id=player.context_id,
+        protocol_version=GAME_PROTOCOL_VERSION,
+    )
 
 
 @router.post(
@@ -102,7 +107,11 @@ def bootstrap_game_session(
         session.rollback()
         raise
     response.headers.update(SESSION_RESPONSE_HEADERS)
-    return GameSessionPublic(kind=player.kind, context_id=player.context_id)
+    return GameSessionPublic(
+        kind=player.kind,
+        context_id=player.context_id,
+        protocol_version=GAME_PROTOCOL_VERSION,
+    )
 
 
 @router.get("/options", response_model=GameOptions)
@@ -110,6 +119,7 @@ def read_options(session: SessionDep) -> GameOptions:
     try:
         options = load_options(session)
         return GameOptions(
+            protocol_version=GAME_PROTOCOL_VERSION,
             catalog_release_id=options.release_id,
             categories=list(options.categories),
             start=public_year(options.start_year_index),

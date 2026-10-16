@@ -1,0 +1,11 @@
+<svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 480 320" role="img" aria-label="Representative art illustration: original abstract canvas and painter's brush">
+  <rect width="480" height="320" rx="24" fill="#f3ebdd"/>
+  <rect x="107" y="55" width="220" height="190" rx="10" fill="#263f4a"/>
+  <rect x="120" y="68" width="194" height="164" fill="#fffaf0"/>
+  <circle cx="181" cy="123" r="33" fill="#dba64d"/>
+  <path d="m123 215 57-53 42 28 37-85 52 110z" fill="#426d73"/>
+  <path d="M200 222q65-83 110-26" fill="none" stroke="#cf785b" stroke-width="13"/>
+  <path d="m345 249 30-115" stroke="#cf785b" stroke-width="13" stroke-linecap="round"/>
+  <path d="m368 144 3-37q5-29 22-30 4 26-7 47l-8 24z" fill="#426d73"/>
+  <path d="M153 271h127" stroke="#263f4a" stroke-width="9" stroke-linecap="round"/>
+</svg>

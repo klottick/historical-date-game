@@ -92,7 +92,7 @@ def start_run(
         timeline = (anchor,)
         eligible = _eligible(order, timeline, events, rules.min_gap)
         if eligible:
-            return RunState(rules, order, timeline, eligible[0], 0, "active", 0)
+            return RunState(rules, order, timeline, eligible[0], 0, 0, 0, "active", 0)
     raise RuleError("insufficient_pool")
 
 
@@ -132,17 +132,38 @@ def place(
         for placed in state.timeline
     )
     if position != correct_slot:
-        lost = RunState(
+        mistakes = state.mistakes + 1
+        if mistakes == 3:
+            lost = RunState(
+                state.rules,
+                state.order,
+                state.timeline,
+                None,
+                0,
+                mistakes,
+                state.correct_count,
+                "lost",
+                state.revision + 1,
+                state.generation_version,
+            )
+            return PlacementOutcome(lost, False, event_id, correct_slot)
+        corrected = (
+            state.timeline[:correct_slot] + (event_id,) + state.timeline[correct_slot:]
+        )
+        eligible = _eligible(state.order, corrected, events, state.rules.min_gap)
+        corrected_state = RunState(
             state.rules,
             state.order,
-            state.timeline,
-            None,
-            state.streak,
-            "lost",
+            corrected,
+            eligible[0] if eligible else None,
+            0,
+            mistakes,
+            state.correct_count,
+            "active" if eligible else "won",
             state.revision + 1,
             state.generation_version,
         )
-        return PlacementOutcome(lost, False, event_id, correct_slot)
+        return PlacementOutcome(corrected_state, False, event_id, correct_slot)
     timeline = state.timeline[:position] + (event_id,) + state.timeline[position:]
     eligible = _eligible(state.order, timeline, events, state.rules.min_gap)
     next_state = RunState(
@@ -151,6 +172,8 @@ def place(
         timeline,
         eligible[0] if eligible else None,
         state.streak + 1,
+        state.mistakes,
+        state.correct_count + 1,
         "active" if eligible else "won",
         state.revision + 1,
         state.generation_version,

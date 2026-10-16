@@ -1,4 +1,5 @@
 import { defineConfig, devices } from "@playwright/test"
+import { boardEvidence } from "./tests/utils/boardEvidence.ts"
 
 // Controlled DTO/native-DOM harness only: no account setup or backend consumer.
 export default defineConfig({
@@ -13,8 +14,7 @@ export default defineConfig({
   workers: 1,
   retries: 0,
   forbidOnly: true,
-  outputDir:
-    "../.superpowers/sdd/2026-10-14-game-board-redesign/integration/board-browser-results",
+  outputDir: `${boardEvidence}/board-browser-results`,
   reporter: "list",
   use: {
     ...devices["Desktop Chrome"],

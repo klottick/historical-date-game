@@ -18,7 +18,7 @@ const card = (id: string) => ({
   explanation: "notes",
   sources: [],
 })
-function run(attempted: number | null, correct: number): RunPublic {
+function run(attempted: number, correct: number): RunPublic {
   return {
     run_id: "r",
     mode: "freeplay",
@@ -32,6 +32,9 @@ function run(attempted: number | null, correct: number): RunPublic {
     },
     categories: [],
     status: "lost",
+    initial_lives: 3,
+    lives_remaining: 0,
+    score: 0,
     streak: 2,
     revision: 3,
     timeline: [card("a"), card("b"), card("c")],
@@ -67,21 +70,21 @@ test("attempted last and correct first retains wrong at end and boundary 0", () 
   assert.equal(result.items[3].card.event_id, "wrong")
   assert.equal(result.correctDisplaySlot, 0)
 })
-test("legacy null does not fabricate location", () => {
-  const result = lossTimeline(run(null, 2))
-  assert.equal(result.items.length, 3)
-  assert.equal(result.attemptedSlot, null)
-  assert.equal(result.legacyWrongCard?.event_id, "wrong")
-  assert.equal(result.correctDisplaySlot, 2)
-})
-test("invalid bounds are unavailable, never inserted or clamped", () => {
+test("invalid attempted slots never invent a wrong-card position", () => {
   for (const attempted of [-1, 4, 1.5, Number.NaN]) {
-    const result = lossTimeline(run(attempted, 9))
+    const result = lossTimeline(run(attempted, 2))
     assert.equal(result.items.length, 3)
+    assert.deepEqual(
+      result.items.map((item) => [item.card.event_id, item.wrong]),
+      [
+        ["a", false],
+        ["b", false],
+        ["c", false],
+      ],
+    )
     assert.equal(result.attemptedSlot, null)
-    assert.equal(result.correctSlot, null)
-    assert.equal(result.correctDisplaySlot, null)
-    assert.equal(result.legacyWrongCard?.event_id, "wrong")
+    assert.equal(result.correctSlot, 2)
+    assert.equal(result.correctDisplaySlot, 2)
   }
 })
 test("correct feedback and active runs never add a wrong card or correct marker", () => {
@@ -92,5 +95,4 @@ test("correct feedback and active runs never add a wrong card or correct marker"
   assert.equal(result.items.length, 3)
   assert.ok(result.items.every((item) => !item.wrong))
   assert.equal(result.correctDisplaySlot, null)
-  assert.equal(result.legacyWrongCard, null)
 })

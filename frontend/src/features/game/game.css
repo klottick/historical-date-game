@@ -2,8 +2,8 @@
   height: 100dvh;
   display: grid;
   grid-template-rows: auto minmax(0, 1fr);
-  background: #17243b;
-  color: #f7f0df;
+  background: #e9e1d2;
+  color: #302a24;
 }
 .play-nav {
   display: flex;
@@ -11,7 +11,7 @@
   justify-content: space-between;
   gap: 1rem;
   padding: 4px 24px;
-  border-bottom: 1px solid #f7f0df33;
+  border-bottom: 1px solid #786d5d55;
 }
 .play-nav a,
 .game-footer a,
@@ -56,12 +56,15 @@
   overflow: auto;
 }
 .game-table {
-  --cream: #f7f0df;
-  --navy: #17243b;
-  --teal: #087f8c;
-  --coral: #d65a42;
-  --card-width: 230px;
-  --card-gap: 16px;
+  --cream: #f7f1e5;
+  --charcoal: #302a24;
+  --stone: #e9e1d2;
+  --stone-deep: #d5c9b5;
+  --moss: #526b4c;
+  --rust: #a94f38;
+  --card-width: clamp(230px, 18vw, 320px);
+  --card-gap: clamp(12px, 1vw, 18px);
+  --card-height: clamp(260px, 34dvh, 320px);
   --hand-reserve: calc(var(--card-width) + 24px);
   height: 100%;
   display: flex;
@@ -89,6 +92,22 @@
 .game-stats p:first-child {
   font-weight: 700;
 }
+.game-lives {
+  display: inline-flex;
+  align-items: center;
+  gap: 0.45em;
+}
+.game-life-indicators {
+  display: inline-flex;
+  gap: 0.1em;
+  line-height: 1;
+}
+.game-life[data-state="remaining"] {
+  color: var(--moss);
+}
+.game-life[data-state="spent"] {
+  color: var(--rust);
+}
 .timeline-stage {
   position: relative;
   flex: 1;
@@ -102,7 +121,7 @@
   overflow: clip;
   min-width: 0;
   border-radius: 12px;
-  background: #20324b;
+  background: var(--stone);
 }
 .timeline-strip {
   position: absolute;
@@ -117,22 +136,26 @@
 .timeline-item,
 .pending-position {
   position: absolute;
-  top: 24px;
+  top: max(24px, calc((100% - var(--card-height) - 52px) / 2));
   transition: left 180ms ease-out;
 }
 .pending-position {
   z-index: 2;
 }
 .game-card {
+  box-sizing: border-box;
+  display: grid;
+  grid-template-rows: auto 120px minmax(0, 1fr);
   background: var(--cream);
-  color: var(--navy);
-  border: 1px solid #d8c9ae;
+  color: var(--charcoal);
+  border: 1px solid #b9aa91;
   border-radius: 12px;
   padding: 10px;
-  height: 320px;
+  height: var(--card-height);
+  min-height: 0;
   width: 100%;
   box-shadow:
-    0 4px 0 #cfbea0,
+    0 4px 0 #b9aa91,
     0 7px 12px #0003;
 }
 .game-card-category {
@@ -140,7 +163,7 @@
   font-weight: 700;
   text-transform: uppercase;
   letter-spacing: 0.04em;
-  border-bottom: 2px solid var(--teal);
+  border-bottom: 2px solid var(--moss);
   padding-bottom: 4px;
   margin-bottom: 6px;
   white-space: nowrap;
@@ -151,12 +174,15 @@
   border-color: var(--coral);
   padding-right: 20px;
 }
+.event-image {
+  margin: 0;
+}
 .event-image-window {
   height: 120px;
   width: 100%;
   overflow: hidden;
-  background: #e6dbc4;
-  border: 1px solid #bdad91;
+  background: #dfd2bd;
+  border: 1px solid #b9aa91;
   border-radius: 7px;
 }
 .event-image-window img {
@@ -175,28 +201,39 @@
   padding: 8px;
 }
 .event-image-placeholder small {
-  overflow: auto;
-  max-height: 3em;
+  overflow: hidden;
+  overflow-wrap: anywhere;
 }
 .game-card-copy {
+  display: flex;
+  flex-direction: column;
+  min-height: 0;
+  overflow: hidden;
   padding-top: 8px;
 }
 .game-card h3 {
   font:
     bold 1rem / 1.3 Georgia,
     serif;
-  height: 4em;
+  height: auto;
+  max-height: 2.6em;
   overflow: hidden;
   overflow-wrap: anywhere;
 }
-.game-card h3:where(.pending-draggable:focus *) {
-  overflow: auto;
+.game-card-footer {
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  gap: 6px;
+  flex: 0 0 44px;
+  min-height: 44px;
 }
 .game-card-year {
   font-size: 0.85rem;
   font-weight: 700;
-  color: #075b65;
-  margin-top: 6px;
+  color: #38553a;
+  margin: 0;
+  line-height: 1.25;
 }
 .game-card button {
   font-size: 0.85rem;
@@ -216,6 +253,21 @@
 .pending-draggable[aria-disabled="true"] {
   cursor: default;
 }
+.pending-confirm {
+  width: 100%;
+  min-height: 48px;
+  margin-top: 8px;
+  border: 1px solid #334c31;
+  border-radius: 8px;
+  background: #526b4c;
+  color: #fffdf7;
+  font-weight: 800;
+  cursor: pointer;
+}
+.pending-confirm:disabled {
+  opacity: 0.55;
+  cursor: not-allowed;
+}
 .tile-grip {
   position: absolute;
   right: 14px;
@@ -224,23 +276,23 @@
 }
 .insertion-preview {
   position: absolute;
-  top: 24px;
-  height: 320px;
-  border: 2px dashed #eed6b5;
+  top: max(24px, calc((100% - var(--card-height) - 52px) / 2));
+  height: var(--card-height);
+  border: 2px dashed #a94f38;
   border-radius: 12px;
   display: grid;
   place-items: center;
-  background: #087f8c33;
+  background: #526b4c22;
 }
 :where(.timeline-item[data-wrong="true"]) .game-card {
-  outline: 4px solid #b73521;
+  outline: 4px solid #a33627;
   outline-offset: -4px;
 }
 .wrong-marker {
   position: absolute;
   top: 8px;
   right: 8px;
-  background: #8f2818;
+  background: #883c2d;
   color: white;
   padding: 2px 6px;
   border-radius: 4px;
@@ -249,9 +301,9 @@
 .correct-location {
   position: absolute;
   top: 0;
-  border-left: 3px solid #96e5c1;
+  border-left: 3px solid #526b4c;
   padding-left: 4px;
-  color: #96e5c1;
+  color: #38553a;
   font-size: 0.8rem;
   white-space: nowrap;
 }
@@ -268,9 +320,9 @@
   height: 44px;
 }
 .timeline-overview > button {
-  background: #17243b;
-  color: #f7f0df;
-  border: 1px solid #a4c8c8;
+  background: #302a24;
+  color: #fffdf7;
+  border: 1px solid #786d5d;
   border-radius: 8px;
 }
 .overview-marks {
@@ -287,22 +339,22 @@
   min-height: 24px;
   height: 24px;
   padding: 0;
-  background: #69828d;
+  background: #b3a58f;
   border-radius: 2px;
 }
 .overview-mark[data-visible="true"] {
-  background: #eed6b5;
+  background: #526b4c;
 }
 .overview-preview,
 .overview-correct {
   position: absolute;
   top: -3px;
   height: 36px;
-  border-left: 3px solid #f77760;
+  border-left: 3px solid #a94f38;
   pointer-events: none;
 }
 .overview-correct {
-  border-color: #96e5c1;
+  border-color: #526b4c;
 }
 .game-controls {
   display: grid;
@@ -331,33 +383,28 @@
 .placement-actions button,
 .game-footer button,
 .game-results button {
-  border: 1px solid #a4c8c8;
+  border: 1px solid #786d5d;
   border-radius: 8px;
   padding: 6px 12px;
-  background: #17243b;
-  color: #f7f0df;
-}
-.placement-actions button:first-child {
-  background: #f7f0df;
-  color: #17243b;
-  font-weight: 800;
+  background: #302a24;
+  color: #fffdf7;
 }
 .game-table :focus-visible,
 .play-nav a:focus-visible {
-  outline: 3px solid #17243b;
+  outline: 3px solid #302a24;
   outline-offset: 2px;
-  box-shadow: 0 0 0 6px #f7f0df;
+  box-shadow: 0 0 0 6px #f7f1e5;
 }
 .move-feedback {
   padding: 8px 12px;
   border-radius: 8px;
-  border-left: 4px solid #087f8c;
-  background: #f7f0df;
-  color: #17243b;
+  border-left: 4px solid #526b4c;
+  background: #f7f1e5;
+  color: #302a24;
   font-size: 0.9rem;
 }
 .move-feedback-wrong {
-  border-left-color: #d65a42;
+  border-left-color: #a94f38;
 }
 .move-feedback-correct {
   animation: card-confirm 180ms ease-out;
@@ -397,25 +444,10 @@
   cursor: pointer;
   min-height: 44px;
 }
-.legacy-loss {
-  position: absolute;
-  top: 0;
-  left: 0;
-  width: var(--card-width);
-  font-size: 0.75rem;
-}
-.legacy-loss-card {
-  position: relative;
-  margin-top: 6px;
-}
-.legacy-loss .game-card {
-  outline: 4px solid #b73521;
-  outline-offset: -4px;
-}
 .freeplay-form {
   max-width: 750px;
   padding: 16px;
-  border: 1px solid #69828d;
+  border: 1px solid #786d5d;
   border-radius: 12px;
   display: grid;
   gap: 12px;
@@ -429,11 +461,11 @@
 }
 .freeplay-form input,
 .freeplay-form select {
-  color: #17243b;
-  background: #f7f0df;
+  color: #302a24;
+  background: #f7f1e5;
 }
 .play-main .text-muted-foreground {
-  color: #c9d3dc;
+  color: #61594e;
 }
 @keyframes card-confirm {
   from {
@@ -460,7 +492,8 @@
     padding: 12px;
   }
   .game-table {
-    --card-width: 200px;
+    --card-width: min(200px, calc(100vw - 40px));
+    --card-height: 320px;
     --hand-reserve: 0px;
     --hand-card-width: 100%;
     height: auto;
@@ -469,20 +502,14 @@
   .timeline-stage[data-has-pending="true"] {
     min-height: 490px;
   }
-  .timeline-stage[data-has-legacy="true"] {
-    min-height: 720px;
-  }
-  .timeline-stage[data-has-legacy="true"] .timeline-viewport {
-    bottom: 360px;
-  }
-  .timeline-stage[data-has-legacy="true"] .legacy-loss {
-    top: 370px;
-  }
   .timeline-stage[data-has-pending="true"] .timeline-viewport {
     bottom: 136px;
   }
   .timeline-stage[data-has-pending="true"] .hand-label {
     top: 348px;
+  }
+  .timeline-stage[data-preview-active="true"] .hand-label {
+    display: none;
   }
   .pending-position[data-in-hand="true"] {
     top: 370px;
@@ -490,8 +517,12 @@
   .pending-position[data-in-hand="true"] .game-card {
     display: grid;
     grid-template-columns: 90px minmax(0, 1fr);
+    grid-template-rows: minmax(0, 1fr);
     gap: 10px;
     height: 120px;
+  }
+  .pending-position[data-in-hand="true"] .pending-confirm {
+    display: none;
   }
   .pending-position[data-in-hand="true"] .game-card-category {
     display: none;
@@ -506,7 +537,11 @@
     font-size: 1.2rem;
   }
   .game-stats {
-    gap: 10px;
+    flex-wrap: wrap;
+    gap: 4px 10px;
+  }
+  .game-stats p:first-child {
+    flex-basis: 100%;
   }
   .game-footer {
     gap: 4px 8px;

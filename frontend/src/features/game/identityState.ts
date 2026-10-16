@@ -33,17 +33,17 @@ export function gameRequestOptions(context: GameSessionPublic): {
 }
 
 export function startStorageKey(contextId: string, mode: "daily" | "freeplay") {
-  return `game:${encodeURIComponent(contextId)}:start:${mode}`
+  return `game:v2:${encodeURIComponent(contextId)}:start:${mode}`
 }
 
 export function placementStorageKey(contextId: string, runId: string) {
-  return `game:${encodeURIComponent(contextId)}:placement:${encodeURIComponent(runId)}`
+  return `game:v2:${encodeURIComponent(contextId)}:placement:${encodeURIComponent(runId)}`
 }
 
 export function gameQueryKey(contextId: string, resource: string, id?: string) {
   return id === undefined
-    ? ["game", contextId, resource]
-    : ["game", contextId, resource, id]
+    ? ["game", 2, contextId, resource]
+    : ["game", 2, contextId, resource, id]
 }
 
 export function sessionError(code: string, message: string) {

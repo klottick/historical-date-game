@@ -1,7 +1,7 @@
 import { useDroppable } from "@dnd-kit/react"
 import { useContext } from "react"
-import type { PendingCard, RevealedCard } from "@/client"
-import { confirmedCardStart } from "./boardGeometry"
+import type { PendingCard } from "@/client"
+import { confirmedCardStart, contentOrigin } from "./boardGeometry"
 import { GameCard } from "./GameCard"
 import type { TimelineDisplayItem } from "./lossTimeline"
 import { PendingTile, TimelineLockContext } from "./PendingTile"
@@ -12,14 +12,16 @@ export function TimelineStage({
   pending,
   previewSlot,
   correctDisplaySlot,
-  legacyWrongCard = null,
+  onConfirm,
+  canConfirm,
   interaction,
 }: {
   items: TimelineDisplayItem[]
   pending: PendingCard | null
   previewSlot: number | null
   correctDisplaySlot: number | null
-  legacyWrongCard?: RevealedCard | null
+  onConfirm: () => void
+  canConfirm: boolean
   interaction: TimelineInteraction
 }) {
   const { ref } = useDroppable({ id: "timeline", disabled: !pending })
@@ -32,20 +34,18 @@ export function TimelineStage({
     ? (interaction.hoveredSlot ?? previewSlot)
     : previewSlot
   const stride = layout.cardWidth + layout.gap
+  const origin = contentOrigin(layout)
   return (
     <section
       className="timeline-stage"
       data-has-pending={pending !== null}
-      data-has-legacy={legacyWrongCard !== null}
+      data-preview-active={previewSlot !== null}
       aria-label="Event timeline"
       onKeyDown={(event) => interaction.keyboard(event.nativeEvent)}
       onFocus={(event) => {
         const item = event.target.closest<HTMLElement>(".timeline-item")
         if (item) interaction.centerCard(Number(item.dataset.displayIndex))
-        else if (
-          tileSlot !== null &&
-          event.target.closest(".pending-draggable")
-        )
+        else if (tileSlot !== null && event.target.closest(".pending-position"))
           interaction.reveal(tileSlot)
       }}
     >
@@ -60,9 +60,7 @@ export function TimelineStage({
           interaction.viewportRef.current = element
         }}
         className="timeline-viewport"
-        style={{
-          marginLeft: pending || legacyWrongCard ? "var(--hand-reserve)" : 0,
-        }}
+        style={{ marginLeft: pending ? "var(--hand-reserve)" : 0 }}
         data-offset={offset}
         data-hovered-slot={interaction.hoveredSlot ?? ""}
       >
@@ -91,7 +89,7 @@ export function TimelineStage({
               aria-hidden="true"
               style={{
                 width: layout.cardWidth,
-                left: visibleSlot * stride,
+                left: origin + visibleSlot * stride,
               }}
             >
               Your card here
@@ -105,10 +103,10 @@ export function TimelineStage({
               style={{
                 left:
                   correctDisplaySlot === 0
-                    ? 0
+                    ? origin
                     : correctDisplaySlot === items.length
-                      ? items.length * stride - layout.gap
-                      : correctDisplaySlot * stride - layout.gap / 2,
+                      ? origin + items.length * stride - layout.gap
+                      : origin + correctDisplaySlot * stride - layout.gap / 2,
               }}
             >
               Correct location
@@ -116,15 +114,6 @@ export function TimelineStage({
           )}
         </div>
       </div>
-      {legacyWrongCard && (
-        <div className="legacy-loss">
-          <p>Old placement position unavailable.</p>
-          <div className="legacy-loss-card">
-            <strong className="wrong-marker">Wrong</strong>
-            <GameCard card={legacyWrongCard} revealed />
-          </div>
-        </div>
-      )}
       {pending && (
         <div
           className="pending-position"
@@ -138,12 +127,23 @@ export function TimelineStage({
             left:
               tileSlot === null
                 ? 0
-                : `calc(var(--hand-reserve) + ${tileSlot * stride}px)`,
+                : `calc(var(--hand-reserve) + ${origin + tileSlot * stride}px)`,
             transform:
               tileSlot === null ? undefined : `translateX(${-offset}px)`,
           }}
         >
           <PendingTile card={pending} disabled={locked} />
+          {previewSlot !== null && (
+            <button
+              type="button"
+              className="pending-confirm"
+              disabled={!canConfirm}
+              onPointerDown={(event) => event.stopPropagation()}
+              onClick={onConfirm}
+            >
+              <span aria-hidden="true">✓ </span>Confirm
+            </button>
+          )}
         </div>
       )}
     </section>

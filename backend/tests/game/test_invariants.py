@@ -69,6 +69,7 @@ def test_seeded_frozen_pool_invariants() -> None:
         successful_runs += 1
         state = start_run(global_events, selection, order)
         assert state.streak == 0 and len(state.timeline) == 1
+        assert state.correct_count == state.mistakes == 0
         permuted = dict(reversed(tuple(global_events.items())))
         assert start_run(permuted, selection, order) == state
         assert all(id_ in ids for id_ in state.timeline)
@@ -95,12 +96,15 @@ def test_seeded_frozen_pool_invariants() -> None:
             wrong = place(
                 state, global_events, pending, (slot + 1) % (len(state.timeline) + 1)
             )
-            assert not wrong.correct and wrong.state.status == "lost"
-            assert wrong.state.streak == state.streak
-            assert wrong.state.timeline == state.timeline
+            assert not wrong.correct and wrong.state.status in {"active", "won"}
+            assert wrong.state.mistakes == state.mistakes + 1
+            assert pending in wrong.state.timeline
+            assert wrong.state.correct_count == state.correct_count
             outcome = place(state, global_events, pending, slot)
             assert outcome.correct and outcome.correct_slot == slot
             assert outcome.state.streak == state.streak + 1
+            assert outcome.state.correct_count == state.correct_count + 1
+            assert outcome.state.mistakes == state.mistakes
             assert outcome.state.revision == state.revision + 1
             assert place(state, permuted, pending, slot) == outcome
             state = outcome.state
@@ -144,5 +148,5 @@ def test_run_has_no_hundred_placement_cap() -> None:
         state = place(state, events, pending, slot).state
         if state.streak == 100:
             assert state.status == "active"
-    assert state.status == "won" and state.streak == state.revision == 124
+    assert state.status == "won" and state.streak == state.correct_count == state.revision == 124
     assert len(state.timeline) == 125

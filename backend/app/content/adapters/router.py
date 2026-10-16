@@ -7,6 +7,7 @@ from pathlib import Path
 from app.content.adapters.base import RawCandidate, SourceAdapter
 from app.content.adapters.onthisday import SOURCE_ID, OnThisDayAdapter, raw_identity
 from app.content.adapters.selected import SelectedSourceAdapter, digest, issue
+from app.content.build_context import evaluation_date
 from app.content.schemas import EventRecord, ValidationIssue
 
 
@@ -38,11 +39,17 @@ def rules_digest() -> str:
         content_root / "importer.py",
         content_root / "schemas.py",
         content_root / "corpus.py",
+        content_root / "build_context.py",
     )
     return digest(
         {
-            str(p.relative_to(content_root)): hashlib.sha256(p.read_bytes()).hexdigest()
-            for p in paths
+            "evaluation_date": evaluation_date().isoformat(),
+            "source_sha256": {
+                str(p.relative_to(content_root)): hashlib.sha256(
+                    p.read_bytes()
+                ).hexdigest()
+                for p in paths
+            },
         }
     )
 

@@ -38,6 +38,7 @@ from app.content.adapters.onthisday import (
     snapshot_bytes,
 )
 from app.content.adapters.selected import digest
+from app.content.build_context import evaluation_date
 from app.content.corpus import CorpusResult, normalize_corpus
 from app.content.importer import _identity, _jsonl, _sources, _sync_directory, _write
 from app.content.media.download import UA, asset_sha256, download_image, immutable_write
@@ -137,14 +138,16 @@ def media_rules_digest() -> str:
         content_root / "validation.py",
         content_root / "importer.py",
         content_root / "corpus.py",
+        content_root / "build_context.py",
         *sorted(content_root.joinpath("adapters").glob("*.py")),
     )
     return digest(
         {
             "rules": "commons-media-v2",
+            "evaluation_date": evaluation_date().isoformat(),
             "source_sha256": {
                 str(path.relative_to(content_root)): hashlib.sha256(
-                    commons_transport.fingerprint_source(path)
+                    path.read_bytes()
                 ).hexdigest()
                 for path in sources
             },
@@ -1235,7 +1238,7 @@ def finalize_media_receipts(workspace: Path) -> tuple[ValidationReceipt, ...]:
         corpus = normalize_corpus(
             raws,
             taxonomy,
-            now.year,
+            evaluation_date().year,
             aliases=json.loads((content / "aliases.json").read_text()),
         )
         for original, event in zip(originals, events, strict=True):
@@ -1253,7 +1256,8 @@ def finalize_media_receipts(workspace: Path) -> tuple[ValidationReceipt, ...]:
                 codes.add("assignment_content_changed")
             event_raws = raw_index.get(event.identity_key, [])
             codes.update(
-                issue.code for issue in validate_event(event, taxonomy, now.year)
+                issue.code
+                for issue in validate_event(event, taxonomy, evaluation_date().year)
             )
             codes.update(_recheck_content(event, event_raws, sources, corpus=corpus))
             codes.update(

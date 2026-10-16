@@ -3,7 +3,7 @@ name: Test Backend
 on:
   push:
     branches:
-      - master
+      - main
   pull_request:
     types:
       - opened
@@ -12,11 +12,14 @@ on:
 jobs:
   test-backend:
     runs-on: ubuntu-latest
+    timeout-minutes: 45
     env:
-      POSTGRES_DB: historical_date_game_guest_test
+      HDG_VERIFICATION_PROFILE: lives
+      POSTGRES_DB: historical_date_game_lives_backend_test
       POSTGRES_SERVER: "127.0.0.1"
       POSTGRES_PORT: "5433"
       ENVIRONMENT: local
+      COMPOSE_PROJECT_NAME: hdg-backend-${{ github.run_id }}-${{ github.run_attempt }}
     steps:
       - name: Checkout
         uses: actions/checkout@v7.0.1
@@ -29,14 +32,13 @@ jobs:
         with:
           version: "0.13.0"
           enable-cache: true
-      - run: docker compose down -v --remove-orphans
       - run: docker compose up -d --wait db mailcatcher
         env:
           # The test helper creates the absent target with its ownership comment.
           # Never let Compose initialize that target as an unowned database.
           POSTGRES_DB: postgres
-      - name: Prepare owned disposable test DB
-        run: uv run python -m tests.browser.guest_test_environment prepare-db --database "$POSTGRES_DB"
+      - name: Prepare owned backend and migration fixture databases
+        run: uv run python -m tests.browser.ci_backend prepare
         working-directory: backend
       - name: Migrate DB
         run: uv run bash scripts/prestart.sh
@@ -45,7 +47,9 @@ jobs:
         run: uv run bash scripts/tests-start.sh "Coverage for ${{ github.sha }}"
         working-directory: backend
       - run: docker compose down -v --remove-orphans
+        if: always()
       - name: Store coverage files
+        if: always()
         uses: actions/upload-artifact@v7.0.2
         with:
           name: coverage-html

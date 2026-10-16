@@ -3,6 +3,10 @@ import { GamesService } from "../../client/sdk.gen.ts"
 import type { GameSessionPublic } from "../../client/types.gen.ts"
 import { withBootstrapLock } from "./bootstrapLock.ts"
 import {
+  hasCompatibleGameProtocol,
+  protocolUpgradeError,
+} from "./gameProtocol.ts"
+import {
   sessionError,
   sessionFailure,
   storageUnavailable,
@@ -80,15 +84,20 @@ function validContext(value: GameSessionPublic): GameSessionPublic {
   if (
     !value ||
     !["guest", "account"].includes(value.kind) ||
+    !hasCompatibleGameProtocol(value) ||
     typeof value.context_id !== "string" ||
     !value.context_id.trim()
   ) {
     throw sessionError(
-      "game_session_invalid",
-      "Invalid session response; retry session setup",
+      hasCompatibleGameProtocol(value)
+        ? "game_session_invalid"
+        : "game_protocol_incompatible",
+      hasCompatibleGameProtocol(value)
+        ? "Invalid session response; retry session setup"
+        : protocolUpgradeError().message,
     )
   }
-  return { kind: value.kind, context_id: value.context_id }
+  return { kind: value.kind, context_id: value.context_id, protocol_version: 2 }
 }
 
 async function runSession(

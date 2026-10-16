@@ -1,4 +1,5 @@
 import { defineConfig, devices } from "@playwright/test"
+import { boardEvidence } from "./tests/utils/boardEvidence"
 
 // Coordinator-only verification: never run account setup or reuse a live UI.
 export default defineConfig({
@@ -6,6 +7,7 @@ export default defineConfig({
   testMatch: "game-session-bootstrap.spec.ts",
   timeout: 40_000,
   retries: 0,
+  outputDir: `${boardEvidence}/bootstrap-browser-results`,
   use: { baseURL: "http://127.0.0.1:5194", serviceWorkers: "block" },
   projects: [{ name: "chromium", use: { ...devices["Desktop Chrome"] } }],
   webServer: {

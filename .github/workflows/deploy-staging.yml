@@ -1,9 +1,8 @@
 name: Deploy to Staging
 
 on:
-  push:
-    branches:
-      - master
+  # Publishing main runs validation only; deployments require operator action.
+  workflow_dispatch:
 
 jobs:
   deploy:

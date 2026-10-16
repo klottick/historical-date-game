@@ -6,10 +6,9 @@ from uuid import UUID
 import pytest
 from fastapi.testclient import TestClient
 from pydantic import ValidationError
-from sqlmodel import Session, select, text
+from sqlmodel import Session, select
 
 from app.core.db import engine
-from app.game import run_service
 from app.game.models import GameOperation, GameRun
 from app.game.run_service import read_run, submit_placement
 from app.game.schemas import MoveFeedback, RunPublic
@@ -45,8 +44,10 @@ def test_wrong_placement_retains_attempted_slot_after_read_and_replay(
     assert outcome.feedback.correct_slot != command.slot
     assert outcome.feedback.correct is False
     assert outcome.feedback.card.event_id == command.event_id
-    assert outcome.timeline == confirmed.timeline
-    assert (outcome.status, outcome.revision, outcome.streak) == ("lost", 2, 1)
+    assert len(outcome.timeline) == len(confirmed.timeline) + 1
+    assert outcome.timeline[outcome.feedback.correct_slot] == outcome.feedback.card
+    assert (outcome.status, outcome.revision, outcome.streak) == ("active", 2, 0)
+    assert outcome.lives_remaining == 2 and outcome.score == 1
 
     owned_response = client.get(url, headers=headers(owner))
     assert owned_response.status_code == 200
@@ -66,8 +67,8 @@ def test_wrong_placement_retains_attempted_slot_after_read_and_replay(
         assert submit_placement(reconnect, owner, initial.run_id, command) == outcome
         stored = reconnect.get(GameRun, initial.run_id)
         assert stored is not None
-        assert stored.timeline == [str(card.event_id) for card in confirmed.timeline]
-        assert (stored.revision, stored.streak) == (2, 1)
+        assert stored.timeline == [str(card.event_id) for card in outcome.timeline]
+        assert (stored.revision, stored.streak) == (2, 0)
         operations = reconnect.exec(
             select(GameOperation).where(GameOperation.run_id == initial.run_id)
         ).all()
@@ -101,73 +102,17 @@ def test_correct_placement_retains_slot(
         assert submit_placement(reconnect, owner, initial.run_id, command) == outcome
 
 
-def test_legacy_feedback_missing_slot_stays_unknown(
-    client: TestClient,
-    db: Session,
-    game_context: tuple[UUID, str],
-    monkeypatch: pytest.MonkeyPatch,
+def test_feedback_requires_attempted_slot(
+    db: Session, game_context: tuple[UUID, str]
 ) -> None:
-    owner, _ = game_context
     initial = start(db, game_context)
-    correct = correct_command(db, initial)
-    command = correct.model_copy(update={"slot": 1 - correct.slot})
-    record = run_service._record
-
-    def record_legacy(
-        session: Session,
-        owner_id: UUID,
-        operation_id: UUID,
-        scope: str,
-        digest: str,
-        response: RunPublic,
-    ) -> None:
-        # Frozen snapshots cannot be updated. Emulate the old writer only at the
-        # pre-insert boundary; the real service, operation row and commit run.
-        record(session, owner_id, operation_id, scope, digest, response)
-        for pending in session.new:
-            if (
-                isinstance(pending, GameOperation)
-                and pending.operation_id == operation_id
-            ):
-                pending.outcome["feedback"].pop("attempted_slot", None)
-
-    with monkeypatch.context() as legacy_writer:
-        legacy_writer.setattr(run_service, "_record", record_legacy)
-        submit_placement(db, owner, initial.run_id, command)
-    operation = db.exec(
-        select(GameOperation).where(
-            GameOperation.owner_id == owner,
-            GameOperation.operation_id == command.operation_id,
-        )
-    ).one()
-
-    def stored_bytes(session: Session) -> bytes:
-        return (
-            session.execute(
-                text("SELECT outcome::text FROM gameoperation WHERE id = :id"),
-                {"id": operation.id},
-            )
-            .scalar_one()
-            .encode()
-        )
-
-    stored_legacy_outcome_bytes_before = stored_bytes(db)
-    assert b'"attempted_slot"' not in stored_legacy_outcome_bytes_before
-    url = BASE + f"/runs/{initial.run_id}"
-    owned_response = client.get(url, headers=headers(owner))
-    assert owned_response.status_code == 200
-    owned_get = RunPublic.model_validate_json(owned_response.text)
-    assert owned_get.feedback is not None
-    assert owned_get.feedback.attempted_slot is None
-    with Session(engine) as reconnect:
-        exact_replay = submit_placement(reconnect, owner, initial.run_id, command)
-        assert exact_replay == owned_get
-        assert exact_replay.feedback.attempted_slot is None
-        assert exact_replay.feedback.correct_slot == correct.slot
-        assert (exact_replay.revision, exact_replay.streak) == (1, 0)
-        assert exact_replay.timeline == initial.timeline
-        stored_legacy_outcome_bytes_after = stored_bytes(reconnect)
-    assert stored_legacy_outcome_bytes_after == stored_legacy_outcome_bytes_before
+    outcome = submit_placement(
+        db, game_context[0], initial.run_id, correct_command(db, initial)
+    )
+    data = outcome.feedback.model_dump(mode="json")
+    del data["attempted_slot"]
+    with pytest.raises(ValidationError):
+        MoveFeedback.model_validate_json(json.dumps(data))
 
 
 def test_foreign_owner_cannot_read_loss(
@@ -213,9 +158,9 @@ def test_feedback_rejects_invalid_attempted_slot(
         MoveFeedback.model_validate_json(json.dumps(data))
 
 
-@pytest.mark.parametrize("slot", [None, 0, 2])
-def test_feedback_accepts_unknown_or_nonnegative_attempted_slot(
-    db: Session, game_context: tuple[UUID, str], slot: int | None
+@pytest.mark.parametrize("slot", [0, 2])
+def test_feedback_accepts_nonnegative_attempted_slot(
+    db: Session, game_context: tuple[UUID, str], slot: int
 ) -> None:
     initial = start(db, game_context)
     outcome = submit_placement(

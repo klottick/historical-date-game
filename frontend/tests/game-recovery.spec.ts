@@ -53,6 +53,7 @@ const test = base.extend<{
       headers: player.headers,
       data: {
         operation_id: crypto.randomUUID(),
+        protocol_version: 2,
         catalog_release_id: options.catalog_release_id,
         config: {
           category_ids: options.categories.map(
@@ -119,7 +120,7 @@ test("committed_move_response_lost_then_retry", async ({
     } else await route.continue()
   })
   await keyboardPreview(page, 0)
-  await page.getByRole("button", { name: "Lock it in", exact: true }).click()
+  await page.getByRole("button", { name: "Confirm", exact: true }).click()
   await expect(
     page.getByRole("button", { name: "Retry same move" }),
   ).toBeVisible()
@@ -154,6 +155,64 @@ test("committed_move_response_lost_then_retry", async ({
   )
 })
 
+// Prepared for the Task 6 fixture runner; do not execute against live defaults.
+test("delayed_older_owned_read_cannot_rollback_committed_revision_or_life", async ({
+  page,
+  player,
+  run,
+}) => {
+  await openRun(page, run)
+  let releaseOldRead!: () => void
+  let reachedOldRead!: () => void
+  const oldReadReached = new Promise<void>((resolve) => {
+    reachedOldRead = resolve
+  })
+  const oldReadGate = new Promise<void>((resolve) => {
+    releaseOldRead = resolve
+  })
+  let held = false
+  await page.route(runURL(run), async (route) => {
+    if (route.request().method() !== "GET" || held) return route.continue()
+    held = true
+    const stale = await route.fetch()
+    const staleRun = (await stale.json()) as RunPublic
+    reachedOldRead()
+    await oldReadGate
+    await route.fulfill({ response: stale, json: staleRun })
+  })
+  await page.evaluate(() => {
+    window.dispatchEvent(new Event("offline"))
+    window.dispatchEvent(new Event("online"))
+  })
+  await oldReadReached
+  const commands: PlaceCommand[] = []
+  let committed: RunPublic | undefined
+  await page.route(`${runURL(run)}/placements`, async (route) => {
+    commands.push(route.request().postDataJSON())
+    const response = await route.fetch()
+    committed = await response.json()
+    await route.fulfill({ response, json: committed })
+  })
+  await keyboardPreview(page, 0)
+  await page.getByRole("button", { name: "Confirm", exact: true }).click()
+  await expect(page.getByTestId("run-revision")).toHaveText(
+    `Revision: ${run.revision + 1}`,
+  )
+  releaseOldRead()
+  await expect(page.getByTestId("run-revision")).toHaveText(
+    `Revision: ${run.revision + 1}`,
+  )
+  expect(commands).toHaveLength(1)
+  expect(committed).toBeDefined()
+  const after = (await (
+    await page.request.get(runURL(run), { headers: player.headers })
+  ).json()) as RunPublic
+  expect(after.revision).toBe(run.revision + 1)
+  expect(after.lives_remaining).toBe(
+    run.lives_remaining - (committed!.feedback?.correct ? 0 : 1),
+  )
+})
+
 for (const committed of [false, true]) {
   test(`route re-entry waits for fresh progress before ${committed ? "clearing a committed" : "restoring an uncertain"} command`, async ({
     page,
@@ -170,9 +229,7 @@ for (const committed of [false, true]) {
         (value) => value.url() === `${runURL(initial)}/placements`,
       )
       await keyboardPreview(page, 0)
-      await page
-        .getByRole("button", { name: "Lock it in", exact: true })
-        .click()
+      await page.getByRole("button", { name: "Confirm", exact: true }).click()
       const result: RunPublic = await (await response).json()
       await expect(page.getByTestId("run-revision")).toHaveText("Revision: 1")
       if (result.status === "active") {
@@ -183,6 +240,7 @@ for (const committed of [false, true]) {
         headers: player.headers,
         data: {
           operation_id: crypto.randomUUID(),
+          protocol_version: 2,
           catalog_release_id: initial.catalog_release_id,
           config: initial.config,
         },
@@ -195,12 +253,18 @@ for (const committed of [false, true]) {
       "A successful blind move is required to reproduce cross-round cache hydration",
     ).toBeDefined()
     const round = advanced!
+    if (round.feedback && !round.feedback.correct) {
+      await expect(
+        page.getByRole("button", { name: "Continue", exact: true }),
+      ).toBeVisible()
+      await page.getByRole("button", { name: "Continue", exact: true }).click()
+    }
     const session = await (
       await page.request.get(`${api}/games/session`, {
         headers: player.headers,
       })
     ).json()
-    const storageKey = `game:${encodeURIComponent(session.context_id)}:placement:${encodeURIComponent(round.run_id)}`
+    const storageKey = `game:v2:${encodeURIComponent(session.context_id)}:placement:${encodeURIComponent(round.run_id)}`
     const commands: PlaceCommand[] = []
     await page.route(
       `**/games/runs/${round.run_id}/placements`,
@@ -213,7 +277,7 @@ for (const committed of [false, true]) {
       },
     )
     await keyboardPreview(page, 0)
-    await page.getByRole("button", { name: "Lock it in", exact: true }).click()
+    await page.getByRole("button", { name: "Confirm", exact: true }).click()
     await expect(
       page.getByRole("button", { name: "Retry same move" }),
     ).toBeVisible()
@@ -268,7 +332,7 @@ for (const committed of [false, true]) {
       ).toBeVisible()
       await expect(page.getByTestId("pending-card")).toHaveCount(0)
       await expect(
-        page.getByRole("button", { name: "Lock it in", exact: true }),
+        page.getByRole("button", { name: "Confirm", exact: true }),
       ).toHaveCount(0)
       expect(commands).toHaveLength(1)
       const read = page.waitForResponse(
@@ -289,7 +353,7 @@ for (const committed of [false, true]) {
           round.pending!.prompt,
         )
         await expect(
-          page.getByRole("button", { name: "Lock it in", exact: true }),
+          page.getByRole("button", { name: "Confirm", exact: true }),
         ).toBeDisabled()
         expect(
           await page.evaluate(
@@ -309,11 +373,19 @@ for (const committed of [false, true]) {
           page.getByRole("button", { name: "Retry same move" }),
         ).toHaveCount(0)
         expect(commands).toHaveLength(1)
-        if (fresh!.pending)
+        if (fresh!.pending) {
+          if (fresh!.feedback && !fresh!.feedback.correct) {
+            await expect(
+              page.getByRole("button", { name: "Continue", exact: true }),
+            ).toBeVisible()
+            await page
+              .getByRole("button", { name: "Continue", exact: true })
+              .click()
+          }
           await expect(page.getByTestId("pending-card")).toContainText(
             fresh!.pending.prompt,
           )
-        else await expect(page.getByTestId("pending-card")).toHaveCount(0)
+        } else await expect(page.getByTestId("pending-card")).toHaveCount(0)
       }
       const after: RunPublic = await (
         await page.request.get(runURL(round), { headers: player.headers })
@@ -350,7 +422,7 @@ test("equal revision focus and reconnect preserve an uncertain command", async (
     else await route.continue()
   })
   await keyboardPreview(page, 0)
-  await page.getByRole("button", { name: "Lock it in", exact: true }).click()
+  await page.getByRole("button", { name: "Confirm", exact: true }).click()
   await expect(
     page.getByRole("button", { name: "Retry same move" }),
   ).toBeVisible()
@@ -406,17 +478,17 @@ test("validation and service failure are not historical losses", async ({
     }),
   )
   await keyboardPreview(page, 0)
-  await page.getByRole("button", { name: "Lock it in", exact: true }).click()
+  await page.getByRole("button", { name: "Confirm", exact: true }).click()
   await expect(page.getByRole("alert")).toContainText("Invalid placement")
   await expect(
-    page.getByRole("button", { name: "Lock it in", exact: true }),
+    page.getByRole("button", { name: "Confirm", exact: true }),
   ).toBeEnabled()
   await expect(page.locator("[data-preview-slot]")).toHaveAttribute(
     "data-preview-slot",
     "0",
   )
   status = 503
-  await page.getByRole("button", { name: "Lock it in", exact: true }).click()
+  await page.getByRole("button", { name: "Confirm", exact: true }).click()
   await expect(page.getByRole("alert")).toContainText(
     "Game service unavailable",
   )
@@ -432,7 +504,7 @@ test("validation and service failure are not historical losses", async ({
   ).toBe(run.revision)
   await page.getByRole("button", { name: "Check server progress" }).click()
   await expect(
-    page.getByRole("button", { name: "Lock it in", exact: true }),
+    page.getByRole("button", { name: "Confirm", exact: true }),
   ).toBeEnabled()
   await expect(
     page.getByTestId("pending-card").locator(".game-card"),
@@ -468,7 +540,7 @@ test("delayed authoritative read cannot roll back a committed move", async ({
   await ready
   try {
     await keyboardPreview(page, 0)
-    await page.getByRole("button", { name: "Lock it in", exact: true }).click()
+    await page.getByRole("button", { name: "Confirm", exact: true }).click()
     await expect(page.getByTestId("run-revision")).toHaveText(
       `Revision: ${run.revision + 1}`,
     )
@@ -515,7 +587,7 @@ test("placement authentication renewal keeps the exact recoverable command", asy
       })
     else await route.continue()
   })
-  await page.getByRole("button", { name: "Lock it in", exact: true }).click()
+  await page.getByRole("button", { name: "Confirm", exact: true }).click()
   await expect(
     page.getByRole("button", { name: "Retry session", exact: true }),
   ).toBeVisible()
@@ -574,7 +646,7 @@ test("public won DTO displays exhaustion rather than mistake and Daily has no re
   await expect(page.getByText(/cannot be replayed/)).toBeVisible()
   await expect(
     page.getByRole("button", {
-      name: /Lock it in|Start Daily|Retry same move/,
+      name: /Confirm|Start Daily|Retry same move/,
     }),
   ).toHaveCount(0)
   await expect(page.getByRole("link", { name: "New Freeplay" })).toHaveCount(0)
@@ -592,16 +664,14 @@ test("two_tabs_one_authoritative_move", async ({
     await openRun(second, run)
     await keyboardPreview(page, 0)
     await keyboardPreview(second, 0)
-    await page.getByRole("button", { name: "Lock it in", exact: true }).click()
+    await page.getByRole("button", { name: "Confirm", exact: true }).click()
     await expect(page.getByTestId("run-revision")).toHaveText(
       `Revision: ${run.revision + 1}`,
     )
     const response = second.waitForResponse((value) =>
       value.url().endsWith("/placements"),
     )
-    await second
-      .getByRole("button", { name: "Lock it in", exact: true })
-      .click()
+    await second.getByRole("button", { name: "Confirm", exact: true }).click()
     expect((await response).status()).toBe(409)
     await expect(second.getByTestId("run-revision")).toHaveText(
       `Revision: ${run.revision + 1}`,
@@ -625,7 +695,7 @@ test("reload_and_login_renewal_preserve_progress", async ({
 }) => {
   await openRun(page, run)
   await keyboardPreview(page, 0)
-  await page.getByRole("button", { name: "Lock it in", exact: true }).click()
+  await page.getByRole("button", { name: "Confirm", exact: true }).click()
   await expect(page.getByTestId("run-revision")).toHaveText(
     `Revision: ${run.revision + 1}`,
   )
@@ -713,6 +783,7 @@ test("preview sends no move and feedback instructions work on active cards and r
       headers: player.headers,
       data: {
         operation_id: crypto.randomUUID(),
+        protocol_version: 2,
         expected_revision: current.revision,
         event_id: current.pending!.event_id,
         slot: 0,
@@ -721,7 +792,11 @@ test("preview sends no move and feedback instructions work on active cards and r
     expect(response.ok()).toBeTruthy()
     const previous = current
     current = await response.json()
-    if (current.status === "lost") expect(current.streak).toBe(previous.streak)
+    if (current.status === "lost") {
+      expect(current.streak).toBe(0)
+      expect(current.score).toBe(previous.score)
+      expect(current.lives_remaining).toBe(0)
+    }
   }
   await page.reload()
   await expect(

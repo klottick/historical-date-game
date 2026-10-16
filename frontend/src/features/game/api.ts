@@ -12,6 +12,11 @@ import type {
   RunPublic,
 } from "../../client/types.gen.ts"
 import {
+  hasCompatibleGameProtocol,
+  isProtocolUpgradeError,
+  protocolUpgradeError,
+} from "./gameProtocol.ts"
+import {
   gameRequestOptions,
   sessionError,
   sessionFailure,
@@ -75,42 +80,29 @@ async function ownedResult<T>(
     throw error
   }
 }
-export function adoptLegacyOperation(legacy: string, destination: string) {
-  const saved = sessionStorage.getItem(legacy)
-  if (!saved) return
-  const existing = sessionStorage.getItem(destination)
-  if (existing && existing !== saved)
-    throw new Error(
-      "Saved recovery commands conflict. Neither command was replaced.",
-    )
-  sessionStorage.setItem(destination, saved)
-  sessionStorage.removeItem(legacy)
-}
 export function adoptAccountStart(
   context: GameSessionPublic,
-  key: string,
-  mode: "daily" | "freeplay",
+  _key: string,
+  _mode: "daily" | "freeplay",
 ) {
+  // Unversioned commands belong to the incompatible protocol and are never replayed.
   assertContext(context)
-  const accountId = bindings.get(context)?.accountId
-  if (context.kind === "account" && accountId)
-    adoptLegacyOperation(`game-start:${accountId}:${mode}`, key)
 }
 // Caller must have completed a fresh owned GET, never merely a cached read.
 export function adoptAccountPlacement(
   context: GameSessionPublic,
-  key: string,
-  runId: string,
+  _key: string,
+  _runId: string,
 ) {
+  // Unversioned commands belong to the incompatible protocol and are never replayed.
   assertContext(context)
-  const accountId = bindings.get(context)?.accountId
-  if (context.kind === "account" && accountId)
-    adoptLegacyOperation(`game-placement:${accountId}:${runId}`, key)
 }
 
 // Reuse the generated client's base URL, bearer auth, and Axios error shape.
 export async function getGameOptions(): Promise<GameOptions> {
-  return (await GamesService.readOptions({ throwOnError: true })).data
+  const options = (await GamesService.readOptions({ throwOnError: true })).data
+  if (!hasCompatibleGameProtocol(options)) throw protocolUpgradeError()
+  return options
 }
 export async function getPublicConfig(): Promise<PublicConfig> {
   return (await UtilsService.publicConfig({ throwOnError: true })).data
@@ -182,7 +174,15 @@ export async function placeCard(
 
 export function gameFailure(
   error: unknown,
-): "auth" | "conflict" | "validation" | "unavailable" | "network" | "rejected" {
+):
+  | "auth"
+  | "conflict"
+  | "validation"
+  | "unavailable"
+  | "network"
+  | "rejected"
+  | "incompatible" {
+  if (isProtocolUpgradeError(error)) return "incompatible"
   const status = isAxiosError(error) ? error.response?.status : undefined
   // The existing auth dependency returns 403 for expired/invalid bearer tokens.
   if (status === 401 || status === 403) return "auth"
@@ -208,7 +208,8 @@ export async function getLeaderboard(
 }
 
 export function isKnownFailure(error: unknown): boolean {
-  if (sessionFailure(error) !== null) return false
+  if (sessionFailure(error) !== null || isProtocolUpgradeError(error))
+    return false
   const status = isAxiosError(error) ? error.response?.status : undefined
   // Transport errors, timeouts, throttling and server failures may follow a commit.
   return (

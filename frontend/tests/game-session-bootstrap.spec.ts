@@ -6,6 +6,7 @@ type Outcome = {
   context_id?: string
   kind?: string
   failure?: string | null
+  message?: string
   name?: string
 }
 declare global {
@@ -40,6 +41,7 @@ class SessionServer {
   failPost = false
   mismatch = false
   malformed = false
+  protocolVersion = 2
   postGate: ReturnType<typeof gate> | null = null
   confirmationGate: ReturnType<typeof gate> | null = null
   url = ""
@@ -126,6 +128,7 @@ class SessionServer {
               this.mismatch && request.method === "GET"
                 ? "g:different"
                 : context,
+            protocol_version: this.protocolVersion,
           },
     )
   })
@@ -194,6 +197,7 @@ async function begin(
           (error) =>
             window.outcomes.push({
               failure: window.bootstrap.sessionFailure(error),
+              message: error.message,
               name: error.name,
             }),
         )
@@ -240,10 +244,12 @@ test("cold_tabs_share_confirmed_identity", async ({ context, page, api }) => {
   expect(await other.evaluate(() => window.outcomes)).toEqual([])
   api.confirmationGate.release()
   expect(await outcomes(page, 2)).toEqual([
-    { kind: "guest", context_id: "g:1" },
-    { kind: "guest", context_id: "g:1" },
+    { kind: "guest", context_id: "g:1", protocol_version: 2 },
+    { kind: "guest", context_id: "g:1", protocol_version: 2 },
   ])
-  expect(await outcomes(other)).toEqual([{ kind: "guest", context_id: "g:1" }])
+  expect(await outcomes(other)).toEqual([
+    { kind: "guest", context_id: "g:1", protocol_version: 2 },
+  ])
   expect(api.allocations).toBe(1)
   expect(api.mutations).toBe(0)
   expect(
@@ -270,6 +276,31 @@ test("cold_tabs_share_confirmed_identity", async ({ context, page, api }) => {
       })
     }),
   ).toEqual([1])
+})
+
+test("unsupported_protocol_never_bootstraps_or_accepts_a_session", async ({
+  page,
+  api,
+}) => {
+  api.protocolVersion = 1
+  await load(page, api)
+  await page.context().addCookies([
+    {
+      name: "bootstrap_test",
+      value: "1",
+      url: "http://127.0.0.1:5194",
+      httpOnly: true,
+      sameSite: "Lax",
+    },
+  ])
+  await begin(page)
+  const result = (await outcomes(page))[0]
+  expect(result.failure).toBeNull()
+  expect(result.message).toBe("Game updated. Refresh and start a new game.")
+  expect(result.name).toBe("Error")
+  expect(api.requests.filter(({ method }) => method === "GET")).toHaveLength(1)
+  expect(api.requests.filter(({ method }) => method === "POST")).toHaveLength(0)
+  expect(api.allocations).toBe(0)
 })
 
 test("rejected_cookie_stops_bootstrap", async ({ context, page, api }) => {
@@ -331,6 +362,7 @@ test("successful_guest_inspection_clears_rejection_without_allocating", async ({
   expect((await outcomes(page, 2))[1]).toEqual({
     kind: "guest",
     context_id: "g:1",
+    protocol_version: 2,
   })
   expect(
     await page.evaluate(() =>
@@ -388,6 +420,7 @@ test("explicit_guest_retry_confirms_cookie_and_does_not_join_automatic_flight", 
   expect((await outcomes(page, 3))[2]).toEqual({
     kind: "guest",
     context_id: "g:2",
+    protocol_version: 2,
   })
   expect(
     await page.evaluate(() =>
@@ -431,6 +464,7 @@ test("aborted_explicit_retry_keeps_rejection_and_cannot_write_after_unlock", asy
   expect((await outcomes(other))[0]).toEqual({
     kind: "guest",
     context_id: "g:3",
+    protocol_version: 2,
   })
   expect(
     await other.evaluate(() =>
@@ -522,7 +556,9 @@ test("closed_tab_releases_coordination", async ({ context, page, api }) => {
   await page.close()
   await expect.poll(() => api.requests[1].aborted).toBe(true)
   api.postGate.release()
-  expect(await outcomes(other)).toEqual([{ kind: "guest", context_id: "g:2" }])
+  expect(await outcomes(other)).toEqual([
+    { kind: "guest", context_id: "g:2", protocol_version: 2 },
+  ])
   expect(api.requests[1].aborted).toBe(true)
   expect(api.mutations).toBe(0)
 })
@@ -650,6 +686,7 @@ test("account_bearer_switch_aborts_without_reusing_old_flight", async ({
   expect((await outcomes(page, 2))[1]).toEqual({
     kind: "account",
     context_id: "a:account-two",
+    protocol_version: 2,
   })
   expect(api.allocations).toBe(0)
   expect(
@@ -660,6 +697,7 @@ test("account_bearer_switch_aborts_without_reusing_old_flight", async ({
   expect((await outcomes(page, 3))[2]).toEqual({
     kind: "guest",
     context_id: "g:1",
+    protocol_version: 2,
   })
 })
 
@@ -692,7 +730,9 @@ test("confirmation_mismatch_or_malformed_identity_never_becomes_ready", async ({
   api.mismatch = false
   api.malformed = true
   await begin(page)
-  expect((await outcomes(page, 2))[1].failure).toBe("invalid")
+  expect((await outcomes(page, 2))[1].message).toBe(
+    "Game updated. Refresh and start a new game.",
+  )
   expect(api.mutations).toBe(0)
 })
 
@@ -732,7 +772,11 @@ test("one_cancelled_subscriber_does_not_abort_another", async ({
   api.postGate.release()
   const results = await outcomes(page, 2)
   expect(results[0].context_id).toBeUndefined()
-  expect(results[1]).toEqual({ kind: "guest", context_id: "g:1" })
+  expect(results[1]).toEqual({
+    kind: "guest",
+    context_id: "g:1",
+    protocol_version: 2,
+  })
   expect(api.requests[1].aborted).toBe(false)
 })
 
@@ -757,6 +801,7 @@ test("auth_change_during_confirmation_rejects_old_context", async ({
   expect((await outcomes(page, 2))[1]).toEqual({
     kind: "account",
     context_id: "a:account-one",
+    protocol_version: 2,
   })
 })
 
@@ -775,6 +820,7 @@ test("configured_auth_source_takes_precedence_over_fallback", async ({
   expect((await outcomes(page))[0]).toEqual({
     kind: "account",
     context_id: "a:account-one",
+    protocol_version: 2,
   })
   expect(api.requests.every((r) => r.auth === "Bearer account-one")).toBe(true)
   expect(api.allocations).toBe(0)

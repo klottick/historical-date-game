@@ -87,7 +87,7 @@ export async function lock(page: Page): Promise<RunPublic> {
   const response = page.waitForResponse(
     (r) => r.request().method() === "POST" && r.url().endsWith("/placements"),
   )
-  await page.getByRole("button", { name: "Lock it in", exact: true }).click()
+  await page.getByRole("button", { name: "Confirm", exact: true }).click()
   const result = await response
   expect(result.status()).toBe(200)
   const run: RunPublic = await result.json()

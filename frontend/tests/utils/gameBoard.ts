@@ -33,11 +33,20 @@ export async function dragPendingToIndex(
   const dimensions = await page
     .locator(".timeline-viewport")
     .evaluate((element) => {
-      const style = getComputedStyle(element)
+      const probe = document.createElement("span")
+      probe.style.cssText =
+        "position:absolute;visibility:hidden;pointer-events:none;height:0;padding:0;border:0"
+      probe.style.width = "var(--card-width)"
+      element.append(probe)
+      const width = probe.getBoundingClientRect().width
+      probe.style.width = "var(--card-gap)"
+      const gap = probe.getBoundingClientRect().width
+      probe.remove()
       return {
-        width: Number.parseFloat(style.getPropertyValue("--card-width")),
-        gap: Number.parseFloat(style.getPropertyValue("--card-gap")),
+        width,
+        gap,
         offset: Number(element.getAttribute("data-offset")),
+        origin: 0,
       }
     })
   if (!source || !viewport) throw new Error("Board geometry unavailable")
@@ -46,7 +55,11 @@ export async function dragPendingToIndex(
     viewport.x + 8,
     Math.min(
       viewport.x + viewport.width - 4,
-      viewport.x + slot * stride - dimensions.offset - dimensions.gap / 2,
+      viewport.x +
+        dimensions.origin +
+        slot * stride -
+        dimensions.offset -
+        dimensions.gap / 2,
     ),
   )
   const y = viewport.y + 90
@@ -113,14 +126,28 @@ export async function assertBoardFits(page: Page): Promise<void> {
   expect([dimensions.x, dimensions.y, dimensions.scale]).toEqual([0, 0, 1])
   for (const control of await page
     .locator(
-      ".game-heading, .timeline-stage, .timeline-overview, .placement-actions button, .game-results > a, .game-results > button, .game-footer > button, .game-footer > a",
+      ".game-heading, .timeline-stage, .timeline-overview, .pending-confirm, .placement-actions button, .game-results > a, .game-results > button, .game-footer > button, .game-footer > a",
     )
     .all()) {
     const rect = await control.boundingBox()
+    const label = await control.evaluate((element) => ({
+      tag: element.tagName,
+      className: (element as HTMLElement).className,
+      text: element.textContent?.trim().slice(0, 48),
+    }))
     expect(rect).not.toBeNull()
-    expect(rect!.x).toBeGreaterThanOrEqual(0)
-    expect(rect!.y).toBeGreaterThanOrEqual(0)
-    expect(rect!.x + rect!.width).toBeLessThanOrEqual(dimensions.viewportWidth)
+    expect(
+      rect!.x,
+      `${JSON.stringify(label)} bounds=${JSON.stringify(rect)}`,
+    ).toBeGreaterThanOrEqual(0)
+    expect(
+      rect!.y,
+      `${JSON.stringify(label)} bounds=${JSON.stringify(rect)}`,
+    ).toBeGreaterThanOrEqual(0)
+    expect(
+      rect!.x + rect!.width,
+      `${JSON.stringify(label)} bounds=${JSON.stringify(rect)}`,
+    ).toBeLessThanOrEqual(dimensions.viewportWidth)
     expect(rect!.y + rect!.height).toBeLessThanOrEqual(
       dimensions.viewportHeight,
     )

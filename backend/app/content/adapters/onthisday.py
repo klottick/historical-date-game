@@ -9,13 +9,14 @@ import json
 import re
 import unicodedata
 from collections.abc import Iterable
-from datetime import UTC, date, datetime
+from datetime import date, datetime
 from pathlib import Path
 from typing import Any
 from uuid import NAMESPACE_URL, uuid5
 
 from app.content.adapters.base import RawCandidate
 from app.content.adapters.selected import digest, issue
+from app.content.build_context import evaluation_date
 from app.content.schemas import (
     CategoryRecord,
     EventRecord,
@@ -342,9 +343,9 @@ class OnThisDayAdapter:
             return fail("invalid_date")
         if parts != (row["year"], row["month"], row["day"]):
             return fail("date_mismatch")
-        if row["year"] > datetime.now(UTC).year:
+        if row["year"] > evaluation_date().year:
             return fail("future_year")
-        now = datetime.now(UTC)
+        now = evaluation_date()
         if parts > (now.year, now.month, now.day):
             return fail("future_event")
         if (
@@ -400,6 +401,6 @@ class OnThisDayAdapter:
         issues = validate_event(
             event,
             (CategoryRecord(id=category, label=category),),
-            datetime.now(UTC).year,
+            evaluation_date().year,
         )
         return issues or event

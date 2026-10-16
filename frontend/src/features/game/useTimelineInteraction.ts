@@ -1,6 +1,11 @@
 import type { DragMoveEvent, DragStartEvent } from "@dnd-kit/dom"
 import { type RefObject, useCallback, useEffect, useRef, useState } from "react"
-import { type BoardLayout, clampOffset, insertionIndex } from "./boardGeometry"
+import {
+  type BoardLayout,
+  clampOffset,
+  contentOrigin,
+  insertionIndex,
+} from "./boardGeometry"
 import {
   createTimelineNavigator,
   type TimelineNavigator,
@@ -120,10 +125,18 @@ export function useTimelineInteraction(args: {
       owner.locked === latest.current.locked
     const measure = () => {
       if (!current()) return
-      const style = getComputedStyle(viewport)
+      const probe = viewport.ownerDocument.createElement("span")
+      probe.style.cssText =
+        "position:absolute;visibility:hidden;pointer-events:none;height:0;padding:0;border:0"
+      probe.style.width = "var(--card-width)"
+      viewport.append(probe)
+      const cardWidth = probe.getBoundingClientRect().width
+      probe.style.width = "var(--card-gap)"
+      const gap = probe.getBoundingClientRect().width
+      probe.remove()
       const next = {
-        cardWidth: Number.parseFloat(style.getPropertyValue("--card-width")),
-        gap: Number.parseFloat(style.getPropertyValue("--card-gap")),
+        cardWidth,
+        gap,
         viewportWidth: viewport.clientWidth,
       }
       // Detached/hidden views and unavailable CSS must not poison the last
@@ -131,8 +144,10 @@ export function useTimelineInteraction(args: {
       if (
         !Number.isFinite(next.cardWidth) ||
         next.cardWidth <= 0 ||
+        next.cardWidth > next.viewportWidth ||
         !Number.isFinite(next.gap) ||
         next.gap < 0 ||
+        next.gap > next.viewportWidth ||
         !Number.isFinite(next.viewportWidth) ||
         next.viewportWidth <= 0
       )
@@ -146,6 +161,7 @@ export function useTimelineInteraction(args: {
               ? 1
               : 0)) *
             (next.cardWidth + next.gap) +
+          contentOrigin(measured) +
           next.cardWidth / 2 -
           next.viewportWidth / 2
       const cards = measured.count + (measured.previewSlot === null ? 0 : 1)
@@ -228,6 +244,7 @@ export function useTimelineInteraction(args: {
       (index +
         (layout.previewSlot !== null && index >= layout.previewSlot ? 1 : 0)) *
         (layout.cardWidth + layout.gap) +
+        contentOrigin(layout) +
         layout.cardWidth / 2 -
         layout.viewportWidth / 2,
       layout,

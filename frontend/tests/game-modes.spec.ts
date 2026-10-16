@@ -155,6 +155,7 @@ base(
           headers,
           data: {
             operation_id: crypto.randomUUID(),
+            protocol_version: 2,
             expected_revision: run.revision,
             event_id: run.pending.event_id,
             slot: 0,

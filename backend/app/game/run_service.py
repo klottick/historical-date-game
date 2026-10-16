@@ -7,7 +7,7 @@ that transaction, commit once, and roll back all failures; they never nest begin
 import hashlib
 import json
 from collections.abc import Mapping
-from typing import Any, Literal
+from typing import Any, Literal, cast
 from uuid import UUID
 
 from pydantic import ValidationError
@@ -189,6 +189,8 @@ def start_freeplay(
             pending_event_id=state.pending_event_id,
             status=state.status,
             streak=state.streak,
+            mistakes=state.mistakes,
+            correct_count=state.correct_count,
             revision=state.revision,
         )
         session.add(run)
@@ -254,13 +256,16 @@ def submit_placement(
         )
         status: Literal["active", "lost", "won"] = run.status  # type: ignore[assignment]
         state = RunState(
-            rules,
-            tuple(UUID(id_) for id_ in run.order),
-            tuple(UUID(id_) for id_ in run.timeline),
-            run.pending_event_id,
-            run.streak,
-            status,
-            run.revision,
+            rules=rules,
+            order=tuple(UUID(id_) for id_ in run.order),
+            timeline=tuple(UUID(id_) for id_ in run.timeline),
+            pending_event_id=run.pending_event_id,
+            streak=run.streak,
+            mistakes=run.mistakes,
+            correct_count=run.correct_count,
+            status=status,
+            revision=run.revision,
+            generation_version=cast(Literal[1], run.generation_version),
         )
         outcome = place(state, _keys(events), command.event_id, command.slot)
         after = outcome.state
@@ -271,6 +276,8 @@ def submit_placement(
             after.streak,
             after.revision,
         )
+        run.mistakes = after.mistakes
+        run.correct_count = after.correct_count
         run.updated_at = utc_now()
         if after.status != "active":
             run.finished_at = run.updated_at

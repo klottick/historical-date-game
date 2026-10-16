@@ -17,6 +17,11 @@ import {
   startDaily,
 } from "./api"
 import { useGameSession, useGameSessionError } from "./GameSessionProvider"
+import {
+  GAME_PROTOCOL_VERSION,
+  isProtocolUpgradeError,
+  protocolUpgradeMessage,
+} from "./gameProtocol"
 import { gameQueryKey, sessionFailure, startStorageKey } from "./identityState"
 import { operationId } from "./operationId"
 
@@ -187,7 +192,7 @@ export function DailyPanel({ context }: { context: GameSessionPublic }) {
 
   return (
     <div className="daily-entry">
-      <section className="daily-start-panel max-w-2xl space-y-3 rounded-xl border border-[#426d73]/40 p-4">
+      <section className="daily-start-panel max-w-2xl space-y-3 rounded-xl border border-[#786d5d]/40 p-4">
         <p>
           One scored attempt per{" "}
           {context.kind === "guest" ? "browser" : "account"} per UTC day.
@@ -222,9 +227,10 @@ export function DailyPanel({ context }: { context: GameSessionPublic }) {
                 .join(", ")}
             </p>
             {options.error && (
-              <p className="text-sm">
-                Current catalog unavailable; saved Daily results can still be
-                opened.
+              <p role="alert" className="text-sm">
+                {isProtocolUpgradeError(options.error)
+                  ? protocolUpgradeMessage
+                  : "Current catalog unavailable; saved Daily results can still be opened."}
               </p>
             )}
             {runId ? (
@@ -232,7 +238,9 @@ export function DailyPanel({ context }: { context: GameSessionPublic }) {
                 {run.isPending && <p>Loading your attempt…</p>}
                 {run.error && (
                   <p role="alert">
-                    Attempt unavailable: {extractErrorMessage(run.error)}{" "}
+                    {isProtocolUpgradeError(run.error)
+                      ? protocolUpgradeMessage
+                      : `Attempt unavailable: ${extractErrorMessage(run.error)}`}{" "}
                     <Button variant="outline" onClick={() => run.refetch()}>
                       Retry attempt
                     </Button>
@@ -251,12 +259,19 @@ export function DailyPanel({ context }: { context: GameSessionPublic }) {
             ) : (
               <LoadingButton
                 loading={mutation.isPending}
-                disabled={expired || overview.isFetching}
+                disabled={
+                  expired ||
+                  overview.isFetching ||
+                  options.data?.protocol_version !== GAME_PROTOCOL_VERSION
+                }
                 onClick={() => {
                   if (!current() || mutation.isPending) return
                   const command = saveStartOperation(
                     key,
-                    operation ?? { operation_id: operationId() },
+                    operation ?? {
+                      operation_id: operationId(),
+                      protocol_version: GAME_PROTOCOL_VERSION,
+                    },
                   )
                   setOperation(command)
                   mutation.mutate(command)

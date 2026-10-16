@@ -28,6 +28,6 @@ def test_db_fixture_rejects_before_init_or_cleanup(
     monkeypatch.setattr(integration_fixtures, "init_db", fail_on_database_access)
     monkeypatch.setattr(integration_fixtures, "delete", fail_on_database_access)
 
-    fixture = integration_fixtures.db.__wrapped__()
+    fixture = integration_fixtures.db.__wrapped__(None)
     with pytest.raises(RuntimeError):
         next(fixture)

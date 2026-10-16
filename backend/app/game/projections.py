@@ -31,6 +31,7 @@ from app.game.schemas import (
     SourcePublic,
     YearInput,
 )
+from app.game.types import INITIAL_LIVES
 from app.game.years import from_year_index
 
 
@@ -204,6 +205,9 @@ def project_run(
     except KeyError:
         raise CatalogError("catalog_unavailable")
     return RunPublic(
+        initial_lives=INITIAL_LIVES,
+        lives_remaining=INITIAL_LIVES - run.mistakes,
+        score=run.correct_count,
         run_id=run.id,
         mode=run.mode,  # type: ignore[arg-type]
         daily_date=daily_date,

@@ -39,6 +39,14 @@ MIGRATION_DATABASE = "historical_date_game_guest_migration_test"
 BOARD_DATABASES = frozenset(
     {"historical_date_game_board_test", "historical_date_game_board_fixture_test"}
 )
+LIVES_DATABASES = frozenset(
+    {
+        "historical_date_game_lives_test",
+        "historical_date_game_lives_fixture_test",
+        "historical_date_game_lives_migration_test",
+        "historical_date_game_lives_backend_test",
+    }
+)
 EVIDENCE = (
     WORKTREE
     / ".superpowers/sdd/2026-10-13-historical-date-game-guest-play/task-5-evidence"
@@ -47,16 +55,18 @@ NODE = Path("/tmp/opencode/node-v26.11.1-linux-x64/bin/node")
 MANIFEST_SHA = "804ec52ccfc3e19cd955913b05cbfd59158f562408e45c1916fa8626d3ac50d3"
 
 
-def verification_profile() -> Literal["guest", "board"]:
+def verification_profile() -> Literal["guest", "board", "lives"]:
     profile = os.environ.get("HDG_VERIFICATION_PROFILE", "guest")
-    if profile not in {"guest", "board"}:
+    if profile not in {"guest", "board", "lives"}:
         raise RuntimeError("Unknown verification profile")
-    return "board" if profile == "board" else "guest"
+    return profile  # type: ignore[return-value]
 
 
 def evidence_directory() -> Path:
     if verification_profile() == "board":
         return WORKTREE / ".superpowers/sdd/2026-10-14-game-board-redesign/integration"
+    if verification_profile() == "lives":
+        return WORKTREE / ".superpowers/board-polish-three-lives/verification"
     return EVIDENCE
 
 
@@ -420,7 +430,9 @@ def audit_browser(target: str) -> None:
 
 def require_guest_test_target(database: str, host: str, environment: str) -> None:
     databases = (
-        BOARD_DATABASES if verification_profile() == "board" else GUEST_DATABASES
+        {"board": BOARD_DATABASES, "lives": LIVES_DATABASES}.get(
+            verification_profile(), GUEST_DATABASES
+        )
     )
     if (
         database not in databases
@@ -433,7 +445,9 @@ def require_guest_test_target(database: str, host: str, environment: str) -> Non
 
 
 def ownership_comment(database: str) -> str:
-    label = "board" if verification_profile() == "board" else "guest-play"
+    label = {"board": "board", "lives": "board-polish-three-lives"}.get(
+        verification_profile(), "guest-play"
+    )
     return f"historical-date-game {label} verification; worktree={WORKTREE}; database={database}"
 
 

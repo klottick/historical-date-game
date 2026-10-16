@@ -3,7 +3,7 @@ import { spawnSync } from "node:child_process"
 import { resolve } from "node:path"
 import { test } from "node:test"
 
-for (const profile of ["board", "guest"]) {
+for (const profile of ["board", "guest", "lives"]) {
   test(`private runtime probes retain the ${profile} verification profile`, () => {
     const env: NodeJS.ProcessEnv = {
       ...process.env,
@@ -26,15 +26,26 @@ for (const profile of ["board", "guest"]) {
     const actual = JSON.parse(result.stdout)
     assert.equal(
       actual.evidence,
-      resolve("../.superpowers/sdd/2026-10-14-game-board-redesign/integration"),
+      resolve(
+        profile === "lives"
+          ? "../.superpowers/board-polish-three-lives/verification"
+          : "../.superpowers/sdd/2026-10-14-game-board-redesign/integration",
+      ),
     )
-    assert.equal(actual.database, `historical_date_game_${profile}_test`)
+    assert.equal(
+      actual.database,
+      profile === "lives"
+        ? "historical_date_game_lives_test"
+        : `historical_date_game_${profile}_test`,
+    )
     assert.equal(
       actual.runtime,
       resolve(
-        profile === "board"
-          ? "../.superpowers/sdd/2026-10-14-game-board-redesign/integration/real-runtime"
-          : "../.superpowers/sdd/2026-10-13-historical-date-game-guest-play/task-5-evidence/real-runtime",
+        profile === "lives"
+          ? "../.superpowers/board-polish-three-lives/verification/real-runtime"
+          : profile === "board"
+            ? "../.superpowers/sdd/2026-10-14-game-board-redesign/integration/real-runtime"
+            : "../.superpowers/sdd/2026-10-13-historical-date-game-guest-play/task-5-evidence/real-runtime",
       ),
     )
   })

@@ -22,13 +22,21 @@ from app.content.schemas import EventRecord
 from app.core.db import engine
 from app.game.catalog_repository import activate_catalog, load_events
 from app.game.models import CatalogSelection, DailyDefinition, GameOperation, GameRun
-from app.game.schemas import DailyStart, RunPublic
+from app.game.schemas import DailyStart as DailyStartSchema
+from app.game.schemas import RunPublic
 from app.models import User
 from tests.api.routes.test_game_runs import correct_command, start_command
 from tests.content.test_importer import snapshot
 from tests.content.test_media import SELECTION
 
 _days = count()
+
+
+def DailyStart(*, operation_id: Any, protocol_version: int = 2) -> DailyStartSchema:
+    """Build current-protocol Daily commands; allow explicit negative versions."""
+    return DailyStartSchema(
+        protocol_version=protocol_version, operation_id=operation_id
+    )
 
 
 def release(session: Session, root: Path, *, shift: int = 0) -> str:
@@ -441,14 +449,18 @@ def test_rank_ties_and_display_name_privacy(
             )
     low = start_daily(db, owners[2], DailyStart(operation_id=uuid4()), now)
     low = submit_placement(db, owners[2], low.run_id, correct_command(db, low))
-    move = correct_command(db, low)
-    lost = submit_placement(
-        db,
-        owners[2],
-        low.run_id,
-        move.model_copy(update={"slot": (move.slot + 1) % (len(low.timeline) + 1)}),
-    )
-    assert lost.status == "lost" and lost.streak == 1
+    lost = low
+    while lost.status == "active" and lost.lives_remaining > 0:
+        move = correct_command(db, lost)
+        lost = submit_placement(
+            db,
+            owners[2],
+            low.run_id,
+            move.model_copy(
+                update={"slot": (move.slot + 1) % (len(lost.timeline) + 1)}
+            ),
+        )
+    assert lost.status == "lost" and lost.streak == 0 and lost.score == 1
     free = start_freeplay(db, owners[3], start_command(release_id))
     move = correct_command(db, free)
     submit_placement(
@@ -457,7 +469,7 @@ def test_rank_ties_and_display_name_privacy(
     start_daily(db, owners[4], DailyStart(operation_id=uuid4()), now)
     board = read_leaderboard(db, now.date())
     assert [e.rank for e in board.entries] == [1, 1, 3]
-    assert [e.streak for e in board.entries] == [5, 5, 1]
+    assert [e.streak for e in board.entries] == [5, 5, 0]
     assert [e.status for e in board.entries] == ["won", "won", "lost"]
     assert {e.display_name for e in board.entries[:2]} == {"Ada", "Player"}
     assert board.entries[2].display_name == "Grace"
@@ -678,11 +690,18 @@ def test_server_clock_and_command_boundaries(
         )
     for key in ("now", "day", "config", "seed"):
         with pytest.raises(ValidationError):
-            DailyStart.model_validate_json(
-                json.dumps({"operation_id": str(uuid4()), key: 1})
+            DailyStartSchema.model_validate_json(
+                json.dumps(
+                    {"protocol_version": 2, "operation_id": str(uuid4()), key: 1}
+                )
             )
     with pytest.raises(GameServiceError) as error:
-        start_daily(db, owners[0], DailyStart.model_construct(operation_id=True), now)
+        start_daily(
+            db,
+            owners[0],
+            DailyStartSchema.model_construct(protocol_version=2, operation_id=True),
+            now,
+        )
     assert (
         error.value.status_code == 422
         and not definitions(db, now.date())

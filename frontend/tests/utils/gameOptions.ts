@@ -28,6 +28,7 @@ export async function readGameOptions(
   const body: unknown = await response.json()
   if (
     !record(body) ||
+    body.protocol_version !== 2 ||
     !nonempty(body.catalog_release_id) ||
     !Array.isArray(body.categories) ||
     body.categories.length === 0 ||

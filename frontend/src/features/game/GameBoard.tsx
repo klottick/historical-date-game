@@ -8,13 +8,14 @@ import {
 } from "@dnd-kit/dom"
 import { DragDropProvider } from "@dnd-kit/react"
 import { Link } from "@tanstack/react-router"
-import { useEffect } from "react"
+import { useEffect, useRef } from "react"
 import type { GameSessionPublic } from "@/client"
 import { Button } from "@/components/ui/button"
 import { overviewMarks, visibleConfirmedRange } from "./boardGeometry"
 import { ContentIssueDialog } from "./ContentIssueDialog"
 import { GameCreditsDialog } from "./GameCreditsDialog"
 import { GameResults } from "./GameResults"
+import { isProtocolUpgradeError, protocolUpgradeMessage } from "./gameProtocol"
 import { lossTimeline } from "./lossTimeline"
 import { TimelineLockContext } from "./PendingTile"
 import { TimelineOverview } from "./TimelineOverview"
@@ -58,7 +59,9 @@ function OwnedBoard({
         {(owned.readError || owned.message) && (
           <p role="alert">
             {owned.message ||
-              "Unable to read this run. This does not erase your history."}
+              (isProtocolUpgradeError(owned.readError)
+                ? protocolUpgradeMessage
+                : "Unable to read this run. This does not erase your history.")}
           </p>
         )}
         {!owned.loading && <Button onClick={owned.retryRead}>Retry run</Button>}
@@ -77,8 +80,10 @@ function BoardSurface({
 }) {
   const state = owned.state!
   const run = state.run
-  const locked = state.phase !== "idle" || run.status !== "active"
-  const display = lossTimeline(run)
+  const locked =
+    state.phase !== "idle" || run.status !== "active" || owned.reviewingMistake
+  const display = lossTimeline(run, owned.reviewingMistake)
+  const continueRef = useRef<HTMLButtonElement>(null)
   const interaction = useTimelineInteraction({
     count: display.items.length,
     selectedSlot: state.selectedSlot,
@@ -100,6 +105,12 @@ function BoardSurface({
     interaction.reveal,
     interaction.centerCard,
   ])
+  useEffect(() => {
+    if (owned.reviewingMistake) continueRef.current?.focus()
+    else if (run.status === "active")
+      document.querySelector<HTMLElement>(".pending-draggable")?.focus()
+    else document.querySelector<HTMLElement>(".game-results h2")?.focus()
+  }, [owned.reviewingMistake, run.status])
   const visible = visibleConfirmedRange(layout)
   const cards = [
     ...run.timeline,
@@ -114,6 +125,28 @@ function BoardSurface({
           {run.mode === "daily" && <p>Daily · {run.daily_date} UTC</p>}
         </div>
         <div className="game-stats">
+          <p>
+            <span className="game-lives">
+              <span className="game-life-indicators" aria-hidden="true">
+                {Array.from({ length: run.initial_lives }, (_, index) => (
+                  <span
+                    key={index}
+                    className="game-life"
+                    data-state={
+                      index < run.lives_remaining ? "remaining" : "spent"
+                    }
+                  >
+                    {index < run.lives_remaining ? "♥" : "♡"}
+                  </span>
+                ))}
+              </span>
+              <span>
+                Lives: {run.lives_remaining} of {run.initial_lives}
+              </span>
+            </span>
+            {" · Score: "}
+            {run.score}
+          </p>
           <p>Streak: {run.streak}</p>
           <p>Status: {run.status}</p>
           <p data-testid="run-revision">Revision: {run.revision}</p>
@@ -133,7 +166,7 @@ function BoardSurface({
         >
           {run.feedback.correct
             ? "Correct — beautifully placed!"
-            : "Wrong — your final streak is preserved. The correct location is marked."}
+            : `Incorrect — ${run.lives_remaining} ${run.lives_remaining === 1 ? "life" : "lives"} left. The correct location is marked.`}
         </p>
       )}
       <DragDropProvider
@@ -159,11 +192,11 @@ function BoardSurface({
           Accessibility.configure({
             screenReaderInstructions: {
               draggable:
-                "Space or Enter lifts this card. Arrows choose a position, Space or Enter drops, Escape cancels. Lock it in submits.",
+                "Space or Enter lifts this card. Arrows choose a position, Space or Enter drops, Escape cancels. Activate Confirm to submit.",
             },
             announcements: {
               dragstart: () =>
-                "Card lifted. Drop only previews; Lock it in submits.",
+                "Card lifted. Drop only previews; Confirm submits.",
               dragmove: () =>
                 interaction.hoveredSlot === null
                   ? "Outside the timeline. Your prior preview is preserved."
@@ -171,7 +204,7 @@ function BoardSurface({
               dragend: ({ canceled }: DragEndEvent) =>
                 canceled
                   ? "Canceled. No move submitted."
-                  : "Preview ready. Lock it in to submit.",
+                  : "Preview ready. Confirm to submit.",
             },
           }),
         ]}
@@ -182,10 +215,20 @@ function BoardSurface({
         <TimelineLockContext.Provider value={locked}>
           <TimelineStage
             items={display.items}
-            pending={run.status === "active" ? run.pending : null}
+            pending={
+              run.status === "active" && !owned.reviewingMistake
+                ? run.pending
+                : null
+            }
             previewSlot={state.selectedSlot}
             correctDisplaySlot={display.correctDisplaySlot}
-            legacyWrongCard={display.legacyWrongCard}
+            onConfirm={owned.submit}
+            canConfirm={
+              !locked &&
+              !interaction.dragging &&
+              state.selectedSlot !== null &&
+              state.phase === "idle"
+            }
             interaction={interaction}
           />
         </TimelineLockContext.Provider>
@@ -200,11 +243,17 @@ function BoardSurface({
         correctSlot={display.correctDisplaySlot}
         onNavigate={interaction.reveal}
       />
-      {run.status === "active" && run.pending ? (
+      {owned.reviewingMistake ? (
+        <section className="game-controls" aria-label="Mistake review">
+          <Button ref={continueRef} onClick={owned.continueAfterMistake}>
+            Continue
+          </Button>
+        </section>
+      ) : run.status === "active" && run.pending ? (
         <section className="game-controls" aria-label="Placement controls">
           <p id="placement-instructions">
-            Move the card into the timeline, then Lock it in. Space/Enter and
-            arrows work too.
+            Move the card into the timeline, then use its Confirm button.
+            Space/Enter and arrows choose a position.
           </p>
           <p role="status" className="preview-status">
             {interaction.dragging
@@ -216,14 +265,6 @@ function BoardSurface({
             {state.phase === "reconcile" && " Checking server progress…"}
           </p>
           <div className="placement-actions">
-            <Button
-              onClick={owned.submit}
-              disabled={
-                locked || interaction.dragging || state.selectedSlot === null
-              }
-            >
-              Lock it in
-            </Button>
             <Button
               variant="outline"
               disabled={

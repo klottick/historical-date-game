@@ -1,5 +1,28 @@
 # FastAPI Project - Deployment
 
+## Historical catalogue startup and storage
+
+The backend image packages the reviewed default at `/app/catalogue`. After
+successful migrations/account setup, prestart verifies and initializes it only
+when no catalogue is selected. No source acquisition or rebuild runs at startup,
+and there is **no silent default upgrade**. Existing runs, Dailies and credentials
+are retained. The populated-gameplay refusal in the three-life migration remains
+in force: do not reset gameplay to bypass it.
+
+The default `GAME_DATA_DIR` is internal packaged storage. If overridden, prestart
+and backend **must share the same mount and root**, so provisioned assets are
+actually visible to the serving process. A matching environment path in isolated
+containers is not sufficient. See [catalogue operations](docs/operations/catalogue.md)
+for a safe shared-volume override and exact offline verify/initialize/install/run
+commands. Do not expose catalogue answer files as HTTP-static content.
+
+Dataset generation is a separate maintainer workflow. The documented `fresh`
+command builds a new validated chronology catalogue from public sources, without
+an old dataset, private cache or database. It does not activate or replace the
+committed default. Its Births category is empty; see the generated coverage report.
+Exact historical recreation is optional; legacy inputs remain on Mustafar and
+no archive publication is required. Offline packaged startup is unchanged.
+
 You can deploy the project using Docker Compose to a remote server.
 
 This project expects you to have a Traefik proxy handling communication to the outside world and HTTPS certificates.
@@ -275,7 +298,10 @@ The current Github Actions workflows expect these secrets:
 
 There are GitHub Action workflows in the `.github/workflows` directory already configured for deploying to the environments (GitHub Actions runners with the labels):
 
-* `staging`: after pushing (or merging) to the branch `master`.
+* `staging`: only after an operator explicitly runs **Deploy to Staging** using
+  GitHub Actions' manual workflow dispatch. A push/merge to `main` runs validation,
+  not deployment. This still requires configured staging secrets and a registered
+  self-hosted staging runner.
 * `production`: after publishing a release.
 
 If you need to add extra environments you could use those as a starting point.

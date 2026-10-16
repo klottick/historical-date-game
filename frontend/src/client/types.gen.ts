@@ -89,6 +89,10 @@ export type DailyOverview = {
  */
 export type DailyStart = {
   /**
+   * Protocol Version
+   */
+  protocol_version: 2
+  /**
    * Operation Id
    */
   operation_id: string
@@ -116,6 +120,10 @@ export type EventLinkPublic = {
  * FreeplayStart
  */
 export type FreeplayStart = {
+  /**
+   * Protocol Version
+   */
+  protocol_version: 2
   /**
    * Operation Id
    */
@@ -148,6 +156,10 @@ export type GameConfig = {
  */
 export type GameOptions = {
   /**
+   * Protocol Version
+   */
+  protocol_version: 2
+  /**
    * Catalog Release Id
    */
   catalog_release_id: string
@@ -167,6 +179,10 @@ export type GameOptions = {
  * GameSessionPublic
  */
 export type GameSessionPublic = {
+  /**
+   * Protocol Version
+   */
+  protocol_version: 2
   /**
    * Kind
    */
@@ -264,6 +280,10 @@ export type LeaderboardEntry = {
    */
   streak: number
   /**
+   * Score
+   */
+  score: number
+  /**
    * Status
    */
   status: "lost" | "won"
@@ -339,7 +359,7 @@ export type MoveFeedback = {
   /**
    * Attempted Slot
    */
-  attempted_slot?: number | null
+  attempted_slot: number
 }
 
 /**
@@ -379,6 +399,10 @@ export type PendingCard = {
  * PlaceCommand
  */
 export type PlaceCommand = {
+  /**
+   * Protocol Version
+   */
+  protocol_version: 2
   /**
    * Operation Id
    */
@@ -462,6 +486,18 @@ export type RevealedCard = {
  * RunPublic
  */
 export type RunPublic = {
+  /**
+   * Initial Lives
+   */
+  initial_lives: 3
+  /**
+   * Lives Remaining
+   */
+  lives_remaining: number
+  /**
+   * Score
+   */
+  score: number
   /**
    * Run Id
    */

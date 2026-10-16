@@ -34,9 +34,10 @@ try {
       const response = await http.post(`${api}/games/${mode}`, {
         data:
           mode === "daily"
-            ? { operation_id: randomUUID() }
+            ? { operation_id: randomUUID(), protocol_version: 2 }
             : {
                 operation_id: randomUUID(),
+                protocol_version: 2,
                 catalog_release_id: catalog.manifest.release_id,
                 config: {
                   category_ids: slugs,
@@ -61,6 +62,7 @@ try {
         {
           data: {
             operation_id: randomUUID(),
+            protocol_version: 2,
             expected_revision: run.revision,
             event_id: run.pending.event_id,
             slot,
@@ -135,9 +137,7 @@ try {
           (r) =>
             r.request().method() === "POST" && r.url().endsWith("/placements"),
         )
-        await page
-          .getByRole("button", { name: "Lock it in", exact: true })
-          .click()
+        await page.getByRole("button", { name: "Confirm", exact: true }).click()
         const move = await scored
         assert.equal(move.status(), 200)
         const after: RunPublic = await move.json()

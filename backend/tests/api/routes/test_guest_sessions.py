@@ -423,7 +423,7 @@ def test_guest_owner_deletion_cascades_existing_game_progress(
     run = start_daily(
         db,
         guest.player.owner_id,
-        DailyStart(operation_id=uuid4()),
+        DailyStart(protocol_version=2, operation_id=uuid4()),
         datetime(2400, 1, 1, tzinfo=UTC),
     )
     definition_id = db.get(GameRun, run.run_id).daily_definition_id

@@ -57,7 +57,7 @@ class Settings(BaseSettings):
     POSTGRES_USER: str
     POSTGRES_PASSWORD: str = ""
     POSTGRES_DB: str = ""
-    GAME_DATA_DIR: Path = Path("../data/game")
+    GAME_DATA_DIR: Path = Path(__file__).resolve().parents[2] / "catalogue"
     GAME_EVENT_LINKS_FILE: Path | None = None
     GAME_EVENT_LINKS_SHA256: str | None = None
     PUBLIC_REGISTRATION_ENABLED: bool = True

@@ -11,6 +11,7 @@ async function helper() {
 }
 
 const options = {
+  protocol_version: 2,
   catalog_release_id: "synthetic-release",
   categories: [{ id: "history", label: "History" }],
   start: { value: 1, era: "CE" },

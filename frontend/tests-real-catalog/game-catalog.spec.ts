@@ -171,7 +171,7 @@ export async function lock(
   const response = page.waitForResponse(
     (r) => r.request().method() === "POST" && r.url().endsWith("/placements"),
   )
-  await page.getByRole("button", { name: "Lock it in", exact: true }).click()
+  await page.getByRole("button", { name: "Confirm", exact: true }).click()
   const scored = await response
   expect(scored.ok()).toBeTruthy()
   const next: RunPublic = await scored.json()
@@ -496,7 +496,7 @@ test("genuine two-year range and pairwise gap win with keyboard drop preview", a
   await page.reload()
   expect(await readRun(page, run, players[0])).toEqual(run)
   await expect(
-    page.getByRole("button", { name: "Lock it in", exact: true }),
+    page.getByRole("button", { name: "Confirm", exact: true }),
   ).toHaveCount(0)
   await page.screenshot({
     path: `${evidence}/real-win-${info.project.name}.png`,
@@ -545,8 +545,29 @@ test("broad freeplay correct, exact idempotency, reload resume, loss and new run
     `Revision: ${run.revision}`,
   )
   run = await lock(page, run, slot(run, catalog.years) === 0 ? 1 : 0, isMobile)
+  expect(run.status).toBe("active")
+  expect(run.lives_remaining).toBe(2)
+  expect(run.feedback!.correct).toBe(false)
+  expect(run.score).toBe(1)
+  expect(run.streak).toBe(0)
+  await expect(
+    page.getByRole("button", { name: "Continue", exact: true }),
+  ).toBeVisible()
+  for (const lives of [1, 0]) {
+    if (run.status === "active")
+      await page.getByRole("button", { name: "Continue", exact: true }).click()
+    run = await lock(
+      page,
+      run,
+      slot(run, catalog.years) === 0 ? 1 : 0,
+      isMobile,
+    )
+    expect(run.lives_remaining).toBe(lives)
+    expect(run.feedback!.correct).toBe(false)
+  }
   expect(run.status).toBe("lost")
-  expect(run.streak).toBe(1)
+  expect(run.score).toBe(1)
+  expect(run.streak).toBe(0)
   await expect(
     page.getByRole("heading", { name: "Mistake — run complete" }),
   ).toBeVisible()
@@ -582,7 +603,7 @@ test("uncertain real committed response retries same operation without double sc
     await expect(page.locator(".pending-draggable")).toBeInViewport({
       ratio: 1,
     })
-  await page.getByRole("button", { name: "Lock it in", exact: true }).click()
+  await page.getByRole("button", { name: "Confirm", exact: true }).click()
   await expect(page.getByRole("alert")).toContainText("your run is not lost")
   expect(committed!.revision).toBe(run.revision + 1)
   expect(committed!.status).toBe("active")
@@ -691,7 +712,7 @@ test("two fresh Daily players share real correct prefix, one attempt and owned r
     for (let i = 0; i < 2; i++) {
       const repeat = await page.request.post(`${api}/games/daily`, {
         headers: players[i].headers,
-        data: { operation_id: randomUUID() },
+        data: { operation_id: randomUUID(), protocol_version: 2 },
       })
       expect(repeat.ok()).toBeTruthy()
       expect(await repeat.json()).toEqual(runs[i])

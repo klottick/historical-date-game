@@ -47,6 +47,7 @@ const test = base.extend<{ run: RunPublic; headers: Record<string, string> }>({
       headers,
       data: {
         operation_id: crypto.randomUUID(),
+        protocol_version: 2,
         catalog_release_id: options.catalog_release_id,
         config: {
           category_ids: options.categories.map((c: { id: string }) => c.id),
@@ -103,7 +104,7 @@ test("drop_previews_reposition_and_lock", async ({
   expect(commands).toHaveLength(0)
   await capture(page, `U3-${info.project.name}`)
   const response = page.waitForResponse((r) => r.url().endsWith("/placements"))
-  await page.getByRole("button", { name: "Lock it in", exact: true }).click()
+  await page.getByRole("button", { name: "Confirm", exact: true }).click()
   expect((await response).ok()).toBeTruthy()
   await expect(page.getByTestId("run-revision")).toHaveText(
     `Revision: ${run.revision + 1}`,
@@ -157,8 +158,8 @@ test("outside_drop_and_escape_do_not_submit", async ({
   await page.keyboard.press("Escape")
   await expect(surface).toBeFocused()
   await expect(
-    page.getByRole("button", { name: "Lock it in", exact: true }),
-  ).toBeDisabled()
+    page.getByRole("button", { name: "Confirm", exact: true }),
+  ).toHaveCount(0)
   await expect(page.getByTestId("run-revision")).toHaveText(
     `Revision: ${run.revision}`,
   )
@@ -314,7 +315,11 @@ test("long_timeline_all_gaps_and_controls_remain_reachable", async ({
     await page.keyboard.press("Escape")
     await page.mouse.up()
   }
-  for (const name of ["Show beginning", "Show end", "Lock it in"]) {
+  for (const name of [
+    "Show beginning",
+    "Show end",
+    ...(isMobile ? ["Confirm"] : []),
+  ]) {
     const control = page.getByRole("button", { name, exact: true })
     await expect(control).toBeVisible()
     expect((await control.boundingBox())!.height).toBeGreaterThanOrEqual(44)
@@ -370,7 +375,7 @@ test("slow_image_and_primary_failure_preserve_target_geometry", async ({
     const before = await geometry()
     await keyboardPreview(page, 0)
     await expect(
-      page.getByRole("button", { name: "Lock it in", exact: true }),
+      page.getByRole("button", { name: "Confirm", exact: true }),
     ).toBeEnabled()
     release()
     const image = page.getByTestId("pending-card").locator("img")
@@ -404,7 +409,7 @@ test("lifted_overlay_keeps_the_frame_and_reduced_motion_removes_decoration", asy
     await tile
       .locator(".game-card")
       .evaluate((e) => getComputedStyle(e).backgroundColor),
-  ).toBe("rgb(247, 240, 223)")
+  ).toBe("rgb(247, 241, 229)")
   await capture(page, `U3-lift-${info.project.name}`)
   await page.keyboard.press("Escape")
   await expect(page.locator(".insertion-preview")).toHaveCount(0)
@@ -419,8 +424,8 @@ test("lifted_overlay_keeps_the_frame_and_reduced_motion_removes_decoration", asy
   ).toBe("0s")
   await page.keyboard.press("Escape")
   await expect(
-    page.getByRole("button", { name: "Lock it in", exact: true }),
-  ).toBeDisabled()
+    page.getByRole("button", { name: "Confirm", exact: true }),
+  ).toHaveCount(0)
 })
 
 test("victory_keeps_full_width_timeline_and_navigation_nonblocking", async ({
@@ -431,6 +436,9 @@ test("victory_keeps_full_width_timeline_and_navigation_nonblocking", async ({
   const won: RunPublic = {
     ...run,
     status: "won",
+    initial_lives: 3,
+    lives_remaining: 3,
+    score: 3,
     pending: null,
     feedback: null,
     streak: 7,
@@ -475,16 +483,25 @@ test("mistake_credits_remain_readable_on_the_cream_result_in_dark_theme", async 
   const lost: RunPublic = {
     ...run,
     status: "lost",
+    initial_lives: 3,
+    lives_remaining: 0,
+    score: 0,
     pending: null,
-    feedback: { correct: false, card: run.timeline[0], correct_slot: 0 },
+    feedback: {
+      correct: false,
+      card: { ...run.timeline[0], event_id: "mistaken-event" },
+      attempted_slot: 0,
+      correct_slot: 0,
+    },
   }
   await page.route(`**/games/runs/${run.run_id}`, (route) =>
     route.fulfill({ json: lost }),
   )
   await page.goto(`/play/${run.run_id}`)
+  await expect(page.locator('.timeline-item[data-wrong="true"]')).toHaveCount(1)
   await expect(
     page.getByText("Old placement position unavailable.", { exact: true }),
-  ).toBeVisible()
+  ).toHaveCount(0)
   await page
     .getByRole("button", { name: "Credits/Sources", exact: true })
     .click()
@@ -540,7 +557,7 @@ test("reduced_motion_preserves_feedback", async ({ page, run }, info) => {
   await open(page, run)
   await keyboardPreview(page, slot)
   const response = page.waitForResponse((r) => r.url().endsWith("/placements"))
-  await page.getByRole("button", { name: "Lock it in", exact: true }).click()
+  await page.getByRole("button", { name: "Confirm", exact: true }).click()
   const scored: RunPublic = await (await response).json()
   expect(scored.feedback!.correct).toBe(true)
   await expect(page.getByTestId("move-feedback")).toContainText("Correct")

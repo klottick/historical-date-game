@@ -13,6 +13,7 @@ import {
 } from "../src/features/game/config.ts"
 
 const options: GameOptions = {
+  protocol_version: 2,
   catalog_release_id: "fixture",
   categories: [
     { id: "births", label: "Births" },

@@ -2,23 +2,33 @@ import type { RevealedCard, RunPublic } from "../../client/types.gen.ts"
 
 export type TimelineDisplayItem = { card: RevealedCard; wrong: boolean }
 
-export function lossTimeline(run: RunPublic): {
+export function lossTimeline(
+  run: RunPublic,
+  reviewingMistake = false,
+): {
   items: TimelineDisplayItem[]
   attemptedSlot: number | null
   correctSlot: number | null
   correctDisplaySlot: number | null
-  legacyWrongCard: RevealedCard | null
 } {
-  const items = run.timeline.map((card) => ({ card, wrong: false }))
+  const timeline =
+    reviewingMistake && run.feedback?.correct === false
+      ? run.timeline.filter(
+          (card) => card.event_id !== run.feedback!.card.event_id,
+        )
+      : run.timeline
+  const items = timeline.map((card) => ({ card, wrong: false }))
   const feedback =
-    run.status === "lost" && run.feedback && !run.feedback.correct
+    (run.status === "lost" || reviewingMistake) &&
+    run.feedback &&
+    !run.feedback.correct
       ? run.feedback
       : null
   const valid = (slot: number | null | undefined): slot is number =>
     typeof slot === "number" &&
     Number.isInteger(slot) &&
     slot >= 0 &&
-    slot <= run.timeline.length
+    slot <= timeline.length
   const attemptedSlot =
     feedback && valid(feedback.attempted_slot) ? feedback.attempted_slot : null
   const correctSlot =
@@ -34,6 +44,5 @@ export function lossTimeline(run: RunPublic): {
         ? null
         : correctSlot +
           (attemptedSlot !== null && attemptedSlot <= correctSlot ? 1 : 0),
-    legacyWrongCard: feedback && attemptedSlot === null ? feedback.card : null,
   }
 }

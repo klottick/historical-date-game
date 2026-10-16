@@ -34,10 +34,7 @@ from app.content.schemas import SourceSelection
 def _selection(path: Path) -> SourceSelection:
     selection = SourceSelection.model_validate_json(_safe_root(path).read_bytes())
     approved = SourceSelection.model_validate_json(
-        Path(__file__)
-        .parents[3]
-        .joinpath("docs/research/source-selection.json")
-        .read_bytes()
+        Path(__file__).with_name("source-selection.json").read_bytes()
     )
     if selection != approved:
         raise ValueError("unsupported_source_selection")
@@ -73,6 +70,16 @@ def main(argv: list[str] | None = None) -> int:
     verifying.add_argument("--release", type=Path, required=True)
     verifying.add_argument("--media", type=Path, required=True)
     verifying.add_argument("--require-beta", action="store_true")
+    runtime_verifying = commands.add_parser("runtime-verify")
+    runtime_verifying.add_argument("--release", type=Path, required=True)
+    runtime_verifying.add_argument("--media", type=Path, required=True)
+    runtime_verifying.add_argument("--expected-sha256")
+    runtime_verifying.add_argument("--require-beta", action="store_true")
+    runtime_exporting = commands.add_parser("runtime-export")
+    runtime_exporting.add_argument("--release", type=Path, required=True)
+    runtime_exporting.add_argument("--media", type=Path, required=True)
+    runtime_exporting.add_argument("--output", type=Path, required=True)
+    runtime_exporting.add_argument("--lock", type=Path, required=True)
     activating = commands.add_parser("activate")
     activating.add_argument("--release", type=Path, required=True)
     activating.add_argument("--media", type=Path, required=True)
@@ -118,6 +125,26 @@ def main(argv: list[str] | None = None) -> int:
         elif args.command == "publish":
             result = publish_release(
                 args.workspace, args.output, args.release_id, fixture=args.fixture
+            ).model_dump(mode="json")
+        elif args.command == "runtime-verify":
+            from app.content.runtime import verify_runtime
+
+            result = verify_runtime(
+                args.release,
+                args.media,
+                expected_sha256=args.expected_sha256,
+                require_beta=args.require_beta,
+            ).manifest.model_dump(mode="json")
+        elif args.command == "runtime-export":
+            from app.content.runtime import read_checked, strict_json
+            from app.content.runtime_export import export_runtime
+            from app.content.runtime_models import BuildLock
+
+            data = read_checked(args.lock)
+            strict_json(data)
+            lock = BuildLock.model_validate_json(data)
+            result = export_runtime(
+                args.release, args.media, args.output, lock
             ).model_dump(mode="json")
         elif args.command == "activate":
             # Keep all acquisition/publication/verification commands DB-independent.

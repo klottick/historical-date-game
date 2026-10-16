@@ -1,4 +1,5 @@
 import type { PlaceCommand, RunPublic } from "../../client/types.gen.ts"
+import { GAME_PROTOCOL_VERSION } from "./gameProtocol.ts"
 
 export type PlacementState = {
   run: RunPublic
@@ -16,8 +17,10 @@ function validSlot(state: PlacementState, slot: number): boolean {
 export function selectSlot(
   state: PlacementState,
   slot: number | null,
+  reviewingMistake = false,
 ): PlacementState {
   if (
+    reviewingMistake ||
     state.phase !== "idle" ||
     state.run.status !== "active" ||
     !state.run.pending ||
@@ -30,7 +33,9 @@ export function selectSlot(
 export function beginPlacement(
   state: PlacementState,
   operationId: string,
+  reviewingMistake = false,
 ): PlacementState {
+  if (reviewingMistake) return state
   if (state.phase === "uncertain" && state.command)
     return { ...state, phase: "sending" }
   if (
@@ -46,6 +51,7 @@ export function beginPlacement(
     ...state,
     phase: "sending",
     command: {
+      protocol_version: GAME_PROTOCOL_VERSION,
       operation_id: operationId,
       expected_revision: state.run.revision,
       event_id: state.run.pending.event_id,

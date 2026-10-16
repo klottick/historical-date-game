@@ -74,6 +74,7 @@ def start_command(release_id: str, **changes: Any) -> Any:
     from app.game.schemas import FreeplayStart
 
     data = {
+        "protocol_version": 2,
         "operation_id": str(uuid4()),
         "catalog_release_id": release_id,
         "config": {
@@ -94,6 +95,7 @@ def correct_command(session: Session, response: Any, **changes: Any) -> Any:
     year = events[response.pending.event_id].year_index
     slot = sum(events[card.event_id].year_index < year for card in response.timeline)
     data = {
+        "protocol_version": 2,
         "operation_id": uuid4(),
         "expected_revision": response.revision,
         "event_id": response.pending.event_id,
@@ -121,6 +123,9 @@ def test_owner_and_pending_answer_boundaries(
 
     response = start(db, game_context)
     assert set(response.model_dump()) == {
+        "initial_lives",
+        "lives_remaining",
+        "score",
         "run_id",
         "mode",
         "daily_date",
@@ -218,9 +223,14 @@ def test_invalid_settings_and_terminal_commands_do_not_lose(
     correct = correct_command(db, response)
     wrong = correct.model_copy(update={"slot": 1 - correct.slot})
     lost = submit_placement(db, owner_id, response.run_id, wrong)
-    assert lost.status == "lost" and lost.pending is None
+    assert lost.status == "active" and lost.pending is not None
     assert (
-        lost.timeline == response.timeline and lost.streak == 0 and lost.revision == 1
+        len(lost.timeline) == len(response.timeline) + 1
+        and lost.feedback.card in lost.timeline
+        and lost.streak == 0
+        and lost.revision == 1
+        and lost.lives_remaining == 2
+        and lost.score == 0
     )
     assert (
         not lost.feedback.correct
@@ -605,26 +615,34 @@ def test_win_does_not_reveal_ineligible_unused_pool(
     assert all(event_id not in won.model_dump_json() for event_id in unused)
 
 
-def test_loss_preserves_previously_scored_timeline_and_feedback_on_reconnect(
+def test_three_misses_end_run_and_preserve_feedback_on_reconnect(
     db: Session, game_context: tuple[UUID, str]
 ) -> None:
     from app.game.run_service import read_run, submit_placement
 
     owner_id, _ = game_context
     initial = start(db, game_context)
-    good = submit_placement(db, owner_id, initial.run_id, correct_command(db, initial))
-    correct = correct_command(db, good)
-    wrong = correct.model_copy(
-        update={"slot": (correct.slot + 1) % (len(good.timeline) + 1)}
-    )
-    lost = submit_placement(db, owner_id, good.run_id, wrong)
+    outcome = initial
+    for _ in range(3):
+        correct = correct_command(db, outcome)
+        wrong = correct.model_copy(
+            update={"slot": (correct.slot + 1) % (len(outcome.timeline) + 1)}
+        )
+        outcome = submit_placement(db, owner_id, initial.run_id, wrong)
+    lost = outcome
     assert lost.status == "lost" and lost.pending is None
-    assert lost.timeline == good.timeline and lost.streak == 1 and lost.revision == 2
-    assert lost.feedback.card.event_id == good.pending.event_id
+    assert (
+        len(lost.timeline) == len(initial.timeline) + 2
+        and lost.streak == 0
+        and lost.revision == 3
+        and lost.lives_remaining == 0
+        and lost.score == 0
+    )
+    assert lost.feedback.card.event_id == correct.event_id
     assert lost.feedback.correct is False and lost.feedback.correct_slot == correct.slot
     with Session(engine) as reconnect:
-        assert read_run(reconnect, owner_id, good.run_id) == lost
-        assert submit_placement(reconnect, owner_id, good.run_id, wrong) == lost
+        assert read_run(reconnect, owner_id, initial.run_id) == lost
+        assert submit_placement(reconnect, owner_id, initial.run_id, wrong) == lost
 
 
 @pytest.mark.parametrize(

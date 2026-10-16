@@ -178,6 +178,6 @@ def test_integration_fixture_rejects_live_target_before_session(
         pytest.fail("destructive fixture opened a session on an unowned database")
 
     monkeypatch.setattr(conftest, "Session", forbidden)
-    fixture = conftest.db.__wrapped__()
+    fixture = conftest.db.__wrapped__(None)
     with pytest.raises(RuntimeError):
         next(fixture)

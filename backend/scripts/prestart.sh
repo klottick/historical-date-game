@@ -11,3 +11,7 @@ alembic upgrade head
 
 # Create initial data in DB
 python app/initial_data.py
+
+# Verify packaged bytes and initialize only if no catalogue is selected.
+# Never acquire/rebuild content, reset gameplay, or implicitly upgrade selection.
+python -m app.game.runtime_catalog initialize

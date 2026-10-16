@@ -86,6 +86,7 @@ def test_http_commands_reject_answers_and_score(
     assert response.status_code == 200
     run = response.json()
     place = {
+        "protocol_version": 2,
         "operation_id": str(uuid4()),
         "expected_revision": 0,
         "event_id": run["pending"]["event_id"],
@@ -105,7 +106,11 @@ def test_http_commands_reject_answers_and_score(
             client.post(
                 BASE + "/daily",
                 headers=headers(owner),
-                json={"operation_id": str(uuid4()), field: "2026-01-01"},
+                json={
+                    "protocol_version": 2,
+                    "operation_id": str(uuid4()),
+                    field: "2026-01-01",
+                },
             ).status_code
             == 422
         )
@@ -245,13 +250,14 @@ def test_options_and_public_config(
         assert response.status_code == 200
         assert response.json()["catalog_release_id"] == release_id
         assert response.json()["registration_open"] is enabled
-        assert set(response.json()) == {
-            "catalog_release_id",
-            "categories",
-            "start",
-            "end",
-            "registration_open",
-        }
+    assert set(response.json()) == {
+        "protocol_version",
+        "catalog_release_id",
+        "categories",
+        "start",
+        "end",
+        "registration_open",
+    }
 
 
 def test_catalog_and_daily_unavailable(
@@ -290,7 +296,10 @@ def test_catalog_and_daily_unavailable(
         raise FileNotFoundError("private policy location")
 
     monkeypatch.setattr(daily_service, "load_daily_config", missing_policy)
-    for method, body in (("GET", None), ("POST", {"operation_id": str(uuid4())})):
+    for method, body in (
+        ("GET", None),
+        ("POST", {"protocol_version": 2, "operation_id": str(uuid4())}),
+    ):
         response = client.request(
             method, BASE + "/daily", headers=headers(owner), json=body
         )
@@ -341,11 +350,13 @@ def test_daily_http_uses_server_utc_and_packaged_proper_pool(
         set(events[UUID(id_)].category_ids) & set(overview["category_ids"])
         for id_ in definition.pool
     )
-    command = {"operation_id": str(uuid4())}
+    command = {"protocol_version": 2, "operation_id": str(uuid4())}
     first = client.post(BASE + "/daily", headers=headers(owners[0]), json=command)
     assert first.status_code == 200
     second = client.post(
-        BASE + "/daily", headers=headers(owners[1]), json={"operation_id": str(uuid4())}
+        BASE + "/daily",
+        headers=headers(owners[1]),
+        json={"protocol_version": 2, "operation_id": str(uuid4())},
     )
     assert second.status_code == 200
     assert first.json()["timeline"] == second.json()["timeline"]
@@ -375,7 +386,15 @@ def test_daily_http_uses_server_utc_and_packaged_proper_pool(
     assert leaderboard.status_code == 200
     assert leaderboard.json() == {
         "day": clock.date().isoformat(),
-        "entries": [{"display_name": "Ada", "streak": 5, "status": "won", "rank": 1}],
+        "entries": [
+            {
+                "display_name": "Ada",
+                "streak": 5,
+                "score": 5,
+                "status": "won",
+                "rank": 1,
+            }
+        ],
     }
 
 
@@ -512,7 +531,11 @@ def test_openapi_exposes_only_public_game_models() -> None:
             & fields.keys()
         )
         assert models[name]["additionalProperties"] is False
-    assert set(models["GameSessionPublic"]["properties"]) == {"kind", "context_id"}
+    assert set(models["GameSessionPublic"]["properties"]) == {
+        "protocol_version",
+        "kind",
+        "context_id",
+    }
     assert models["GameSessionPublic"]["properties"]["kind"]["enum"] == [
         "guest",
         "account",

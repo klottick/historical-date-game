@@ -1,5 +1,27 @@
 # Full Stack FastAPI Template
 
+## Historical Date Game catalogue
+
+The backend includes an offline runtime catalogue: **1,276 historical events and
+eight CC0 fallback illustrations**, with source citations and catalogue licensing.
+Normal startup initializes a fresh database without downloading/rebuilding content;
+an existing catalogue selection is never automatically upgraded.
+
+Build a **new dataset from public sources**, without an old dataset/private cache
+or a database (from `backend/`, after installing dependencies):
+
+```bash
+.venv/bin/python -m app.content.rebuild_cli fresh \
+  --output ../data/catalogue-build/fresh-a --release-id chronology-fresh-a
+```
+
+This chronology-only build normally contains about 1,271 events; Births is empty.
+It preserves validation, attribution and assets without replacing the committed
+default. See [catalogue operations](docs/operations/catalogue.md) for coverage,
+offline verification, installation, shared media and optional exact replay.
+Exact historical recreation is not required; legacy files remain on Mustafar.
+Code is MIT; adapted text is CC BY-SA 4.0, separately from CC0 artwork/data.
+
 <a href="https://github.com/fastapi/full-stack-fastapi-template/actions?query=workflow%3A%22Test+Docker+Compose%22" target="_blank"><img src="https://github.com/fastapi/full-stack-fastapi-template/workflows/Test%20Docker%20Compose/badge.svg" alt="Test Docker Compose"></a>
 <a href="https://github.com/fastapi/full-stack-fastapi-template/actions?query=workflow%3A%22Test+Backend%22" target="_blank"><img src="https://github.com/fastapi/full-stack-fastapi-template/workflows/Test%20Backend/badge.svg" alt="Test Backend"></a>
 <a href="https://coverage-badge.samuelcolvin.workers.dev/redirect/fastapi/full-stack-fastapi-template" target="_blank"><img src="https://coverage-badge.samuelcolvin.workers.dev/fastapi/full-stack-fastapi-template.svg" alt="Coverage"></a>

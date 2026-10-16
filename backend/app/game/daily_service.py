@@ -4,15 +4,15 @@ from datetime import UTC, date, datetime, time, timedelta
 from typing import Literal, cast
 from uuid import UUID
 
-from sqlalchemy import func
-from sqlmodel import Session, col, select
+from sqlalchemy import func, select
+from sqlmodel import Session, col
 
 from app.game import run_service
 from app.game.catalog_repository import CatalogError, load_events, load_options
-from app.game.daily_config import DailyConfig, load_daily_config
+from app.game.daily_config import daily_pool, load_daily_config
 from app.game.models import DailyDefinition, GameRun, utc_now
 from app.game.ordering import GENERATION_VERSION, generate_seed, seeded_order
-from app.game.rules import filter_pool, start_run
+from app.game.rules import start_run
 from app.game.run_repository import (
     find_daily_attempt,
     find_daily_definition,
@@ -44,25 +44,11 @@ def _definition(session: Session, day: date) -> DailyDefinition:
         return existing
     try:
         config = load_daily_config()
-        # Revalidate even a constructed/mutated server-side configuration.
-        config = DailyConfig(config.category_ids, config.min_gap)
         options = load_options(session)
-        categories = frozenset(config.category_ids)
         known = frozenset(c.id for c in options.categories)
-        if not categories < known:
-            raise CatalogError("catalog_unavailable")
         events = load_events(session, options.release_id)
         keys = run_service._keys(events)
-        selected = tuple(e for e in keys.values() if e.category_ids & categories)
-        if not selected or len(selected) == len(keys):
-            raise CatalogError("catalog_unavailable")
-        rules = RunRules(
-            categories,
-            min(e.year_index for e in selected),
-            max(e.year_index for e in selected),
-            config.min_gap,
-        )
-        pool = filter_pool(tuple(keys.values()), rules, known)
+        rules, pool = daily_pool(tuple(keys.values()), known, config)
         seed = generate_seed()
         order = seeded_order(tuple(e.event_id for e in pool), seed)
         state = start_run(keys, rules, order)
@@ -72,7 +58,7 @@ def _definition(session: Session, day: date) -> DailyDefinition:
             seed=seed,
             generation_version=GENERATION_VERSION,
             rules={
-                "category_ids": sorted(categories),
+                "category_ids": sorted(rules.category_ids),
                 "start_year_index": rules.start_year_index,
                 "end_year_index": rules.end_year_index,
                 "min_gap": rules.min_gap,
@@ -156,6 +142,8 @@ def start_daily(
                 pending_event_id=state.pending_event_id,
                 status=state.status,
                 streak=state.streak,
+                mistakes=state.mistakes,
+                correct_count=state.correct_count,
                 revision=state.revision,
             )
             session.add(run)
@@ -174,26 +162,27 @@ def start_daily(
 
 
 def read_leaderboard(session: Session, day: date) -> LeaderboardPublic:
-    # rank's window orders by streak ONLY: completion speed never breaks ties.
+    # Rank completed runs by correct confirmations, without secondary scoring.
     # A separate private UUID ordering makes presentation deterministic, without
     # exposing either that identifier or account emails in public entries.
-    rows = session.exec(
+    rows = session.execute(
         select(
-            User.full_name,
-            GameRun.streak,
-            GameRun.status,
-            func.rank().over(order_by=col(GameRun.streak).desc()).label("rank"),
+            col(User.full_name),
+            col(GameRun.correct_count),
+            col(GameRun.streak),
+            col(GameRun.status),
+            func.rank().over(order_by=col(GameRun.correct_count).desc()).label("rank"),
         )
         .join(GameRun, col(GameRun.owner_id) == col(User.id))
         .join(
             DailyDefinition, col(DailyDefinition.id) == col(GameRun.daily_definition_id)
         )
         .where(
-            DailyDefinition.day == day,
-            GameRun.mode == "daily",
+            col(DailyDefinition.day) == day,
+            col(GameRun.mode) == "daily",
             col(GameRun.status).in_(("lost", "won")),
         )
-        .order_by(col(GameRun.streak).desc(), col(GameRun.id))
+        .order_by(col(GameRun.correct_count).desc(), col(GameRun.id))
     ).all()
     return LeaderboardPublic(
         day=day,
@@ -201,9 +190,10 @@ def read_leaderboard(session: Session, day: date) -> LeaderboardPublic:
             LeaderboardEntry(
                 display_name=name or "Player",
                 streak=streak,
+                score=score,
                 status=cast(Literal["lost", "won"], status),
                 rank=rank,
             )
-            for name, streak, status, rank in rows
+            for name, score, streak, status, rank in rows
         ],
     )

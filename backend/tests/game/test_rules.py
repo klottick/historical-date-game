@@ -69,7 +69,7 @@ def test_all_pairs_gap_and_viable_anchor() -> None:
     assert state.pending_event_id == UUID(int=22)
 
 
-def test_wrong_place_loses_without_increment() -> None:
+def test_wrong_place_corrects_without_point_and_consumes_life() -> None:
     events = mapping(event(1, 1800), event(2, 1810), event(3, 1790))
     before = start_run(events, rules(10), tuple(events))
     wrong_outcome = place(before, events, UUID(int=2), 0)
@@ -77,9 +77,12 @@ def test_wrong_place_loses_without_increment() -> None:
     assert wrong_outcome.revealed_event_id == UUID(int=2)
     assert wrong_outcome.correct_slot == 1
     assert wrong_outcome.state.streak == before.streak
-    assert wrong_outcome.state.status == "lost"
-    assert wrong_outcome.state.timeline == before.timeline
-    assert wrong_outcome.state.pending_event_id is None
+    assert wrong_outcome.state.status == "active"
+    assert wrong_outcome.state.timeline == (UUID(int=1), UUID(int=2))
+    assert wrong_outcome.state.pending_event_id == UUID(int=3)
+    assert wrong_outcome.state.mistakes == 1
+    assert wrong_outcome.state.correct_count == 0
+    assert wrong_outcome.state.lives_remaining == 2
     assert wrong_outcome.state.revision == before.revision + 1
     assert before.status == "active" and before.pending_event_id == UUID(int=2)
     assert before.timeline == (UUID(int=1),)
@@ -219,7 +222,7 @@ def test_invalid_commands_leave_state_unchanged(slot: Any) -> None:
 
 
 def test_stale_terminal_and_missing_event_commands() -> None:
-    events = mapping(event(1, 1), event(2, 2), event(3, 3))
+    events = mapping(event(1, 1), event(2, 2), event(3, 3), event(4, 4), event(5, 5))
     state = start_run(events, rules(), tuple(events))
     for event_id in (UUID(int=1), UUID(int=3), UUID(int=99), "bad"):
         with pytest.raises(RuleError):
@@ -229,7 +232,9 @@ def test_stale_terminal_and_missing_event_commands() -> None:
             eligible_ids(state, pool)  # type: ignore[arg-type]
         with pytest.raises(RuleError):
             place(state, pool, UUID(int=2), 1)  # type: ignore[arg-type]
-    lost = place(state, events, UUID(int=2), 0).state
+    missed = place(state, events, UUID(int=2), 0).state
+    missed = place(missed, events, missed.pending_event_id, 0).state
+    lost = place(missed, events, missed.pending_event_id, 0).state
     won = place(
         place(state, events, UUID(int=2), 1).state, events, UUID(int=3), 2
     ).state
