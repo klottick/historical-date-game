@@ -96,6 +96,14 @@ Do **not** run full `up`/initialization before restoring:
 set -eu
 umask 077
 : "${HDG_RECOVERY_PROJECT:?Set a NEW unique recovery project name}"
+case "$HDG_RECOVERY_PROJECT" in
+  ''|[!a-z0-9]*|*[!a-z0-9_-]*) echo 'Invalid recovery project name' >&2; exit 1 ;;
+esac
+recovery_env=$(mktemp .env.recovery.XXXXXX)
+trap 'rm -f "$recovery_env"' EXIT
+sed '/^COMPOSE_PROJECT_NAME=/d' .env > "$recovery_env"
+printf '\nCOMPOSE_PROJECT_NAME=%s\n' "$HDG_RECOVERY_PROJECT" >> "$recovery_env"
+mv "$recovery_env" .env
 docker compose --env-file .env -f compose.yaml -p "$HDG_RECOVERY_PROJECT" up -d --wait db
 test "$(docker compose --env-file .env -f compose.yaml -p "$HDG_RECOVERY_PROJECT" exec -T db sh -c 'psql -XAt -U "$POSTGRES_USER" -d "$POSTGRES_DB" -c "SELECT (SELECT count(*) FROM pg_class WHERE relnamespace = current_schema()::regnamespace) + (SELECT count(*) FROM pg_proc WHERE pronamespace = current_schema()::regnamespace) + (SELECT count(*) FROM pg_type WHERE typnamespace = current_schema()::regnamespace)"')" = 0
 docker compose --env-file .env -f compose.yaml -p "$HDG_RECOVERY_PROJECT" exec -T db sh -c 'exec pg_restore --exit-on-error --no-owner -U "$POSTGRES_USER" -d "$POSTGRES_DB"' < database.dump
@@ -103,8 +111,15 @@ docker compose --env-file .env -f compose.yaml -p "$HDG_RECOVERY_PROJECT" run --
 docker compose --env-file .env -f compose.yaml -p "$HDG_RECOVERY_PROJECT" up -d --wait
 ```
 
-Media restore refuses unsafe archive paths, links, corrupted hashed assets and
-nonempty destination storage. PostgreSQL restore has no `--clean`, drop, or
+The procedure saves `COMPOSE_PROJECT_NAME` in private `.env`; leave it there for
+all later maintenance, backup and update commands. A directory name alone must
+not switch a recovered installation to different volumes. An explicit `-p` or
+exported `COMPOSE_PROJECT_NAME` overrides this setting; do not use a different one.
+
+Media restore requires the terminal inventory/checksums produced by `export-media`;
+it refuses empty/incomplete exports, unsafe paths, links, corrupt hashed assets and
+nonempty destination storage. Inventory-free archives are not accepted: create a
+new verified export from the original retained installation. PostgreSQL restore has no `--clean`, drop, or
 automatic rollback. An interrupted restore is not a working installation: retain
 it for diagnosis and use another new project/empty volumes. Verify existing
 guest sessions, account login, progressed games, exact replay, catalogue selection
@@ -113,7 +128,8 @@ and old media before considering recovery successful.
 ## Safety and operations
 
 Use `docker compose --env-file .env -f compose.yaml logs --no-color` for logs;
-`GET /healthz` is read-only readiness (database/schema/catalogue/media), not simply
+`GET /healthz` is read-only readiness (frontend entry/static and lazy assets,
+database/schema/catalogue/media), not simply
 an HTTP-process check. Ordinary `stop` and `down` without `-v` retain named volumes.
 **Never use `down -v`, volume pruning or deletion as an upgrade/recovery step.**
 
@@ -142,6 +158,7 @@ amd64 emulation on another architecture is not claimed as native verified suppor
 
 For ordinary maintenance:
 
+<!-- distribution:maintenance -->
 ```sh
 docker compose --env-file .env -f compose.yaml ps
 docker compose --env-file .env -f compose.yaml logs --no-color
@@ -165,6 +182,11 @@ of its exact archive, and attachment. No release or image action deploys a serve
 The version, `sha-<full-source-SHA>` and `latest` tags must have the same native
 manifest digest at publication; install bundles pin the immutable version/digest,
 never the mutable `latest` tag.
+
+The publisher also validates the current registry `latest` image's native config,
+canonical version and matching immutable aliases independently of GitHub release
+history. Deleting or marking a newer release prerelease cannot authorize a
+backward promotion. Changed or unverifiable registry state stops publication.
 
 Tag promotions are not atomic. Inspect the run-specific tested archive/metadata,
 `publication.json`, staging tag, stable version tag, full-SHA tag and `latest`
@@ -197,3 +219,11 @@ Keep its diagnostic artifacts private and sanitized. Access denial is an unmet
 anonymous-pull gate, not permission to change package visibility. Real hosted CI,
 GHCR accessibility and released-asset installation must be verified explicitly;
 local smoke success alone proves none of them.
+
+Uploaded browser diagnostics are conservative metadata-only copies: nested trace
+archives are processed, while request/response bodies, screenshots, serialized
+JavaScript values and arbitrary text are omitted. They are not viewer-complete
+Playwright blobs and are not merged into an HTML report. Raw originals are kept
+privately outside upload directories on the verification host; hosted runner-local
+copies are ephemeral, not durable private backups. Preserve any needed sensitive
+evidence through a separately approved private process, never a public artifact.

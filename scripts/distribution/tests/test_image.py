@@ -187,6 +187,8 @@ for path in ('/app/LICENSE', '/app/backend/catalogue/README.md', '/app/backend/c
 import psycopg, pydantic_core, PIL._imaging, mwparserfromhell.parser._tokenizer, uvloop, argon2
 from app.content.runtime import verify_default
 assert verify_default(pathlib.Path('/app/backend/catalogue')).manifest.event_count == 1276
+from app.distribution.frontend import check_frontend
+check_frontend(pathlib.Path('/app/frontend/dist'))
 assert os.stat('/data').st_uid == 10001
 print('native runtime privacy/import/catalogue checks passed')
 """

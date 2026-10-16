@@ -44,9 +44,71 @@ retries. These smokes cover:
 - Bounded clean app/database shutdown, first-failure evidence and strictly
   ownership-checked cleanup; no unrelated Docker pruning or service restart.
 
-Final verification results and the independent review are recorded below when
-completed. Earlier source-free preview runs used only installer files in the
-installation directory; they are not evidence of downloaded GitHub assets.
+### Final local checkpoint
+
+At source commit `098c9b1a4a63c091913ad4adc0a99b8d74e13ff0`:
+
+| Gate | Observed result |
+| --- | --- |
+| Fresh full isolated backend | 1,574 passed; legacy pytest collector coverage 89% (release checks run separately) |
+| Distribution checks with actual context/image probes | 58 passed |
+| Backend mypy/Ruff/format | Passed, 76 application files |
+| Frontend lint/typecheck/unit/build | Passed, 86 unit tests |
+| Workflow contracts/actionlint | Passed |
+| Controlled bootstrap/identity browsers | 23 / 34 passed, zero retries |
+| Controlled board full suite | **Failed:** 66 passed, one skipped, one failed in the same baseline navigation test; final failure is geometry delta exactly 0.5 versus `< 0.5` at line 498 |
+| Compiled image desktop/mobile browsers | Passed in both normal loopback and offline source-free installations, zero retries |
+| Documented backup/restore, replacement and shutdown | Passed in both final image smokes; populated-target restore refused |
+| Packaged catalogue/media/licence preservation | All 36 paths match public base exactly |
+| Saved image privacy audit | 12 layers, 9,686 files; injected private-data sentinels absent |
+
+The final preview image ID is
+`sha256:54d236eb204758415e9c4e0d3e1f681a90c051235420d398d5b2d0eda65aa214`
+(100,458,561 bytes). This is a local Docker image ID, **not a published registry
+manifest digest**. It was built once from a task-owned source archive with nested
+synthetic secret/raw/private-worktree files; the saved layers were then audited.
+Normal and offline full image smokes used this same image and the exact shipped
+backup/restore command blocks. Private evidence and first failures remain in the
+ignored execution workspace; the protected `.env` hash and LAN process identities
+were checked unchanged.
+
+**The overall all-green gate remains blocked by the pre-existing controlled-board
+failure.** No retries or unrelated board/tolerance changes were made. A source
+fixture browser attempt also encountered the existing Vite denial of a scratch
+checkout under `.superpowers` (setup failed, 112 tests not run). A fresh run outside
+that tree had 101 passed/12 failed because the launcher expected internal-IP URLs
+while the browser correctly used the same-origin proxy. Trace inspection confirmed
+the mismatch. Correcting only that launcher origin produced **113 passed, zero
+retries**, with fresh owned DB/API/mail fixtures; all prior failures are retained.
+A separate scratch-directory cleanup failure came from root-owned Python cache
+files, not retained data. Test containers/network were removed after label checks;
+the source copy remains private, without an ownership workaround.
+
+The independent whole-change review found five Important issues and no Critical
+or Minor issues: nested artifact/body credential exposure, complete-member-boundary
+truncated media acceptance, recovery project continuity, registry `latest` rollback
+after release metadata changes, and missing frontend asset readiness. Each received
+an observed failing behavioral regression before its fix. The repair pass:
+
+- Recursively sanitizes nested diagnostics and drops body/image resources and
+  arbitrary serialized values; raw copies stay private. Uploaded diagnostics are
+  metadata-only, not viewer-complete blobs/merged HTML reports. Hosted runner-local
+  originals are ephemeral, not durable private storage.
+- Requires a terminal complete path/size/hash media inventory before promotion.
+- Persists the validated recovery project name in private `.env`; the smoke also
+  runs the later maintenance commands without `-p` and does not bake resource
+  project names into its fixture.
+- Independently verifies current registry `latest` config/version/immutable aliases,
+  rejecting backward/equal promotion or changed state even if GitHub history was
+  edited. Registry writes still are not atomic; external concurrent mutation is
+  not a supported substitute for serialized publication.
+- Emits Vite's build manifest and checks the entry plus all static/dynamic assets
+  at app creation and on readiness, refusing missing index/JS/CSS/lazy chunks.
+
+Post-review revised-image verification is recorded separately after execution;
+the prior preview ID above does not contain these fixes. Earlier source-free preview runs
+used only installer files in the installation directory; they are not evidence of
+downloaded GitHub assets.
 
 ## Reproducing local checks
 

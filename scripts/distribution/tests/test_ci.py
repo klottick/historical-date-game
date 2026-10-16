@@ -16,6 +16,95 @@ def workflow(name):
 
 
 class CiTests(unittest.TestCase):
+    def test_blob_nested_traces_resources_and_serialized_values_do_not_leak(self):
+        import io
+        import json
+        import zipfile
+
+        from scripts.distribution.diagnostics import sanitize_tree
+
+        with tempfile.TemporaryDirectory(dir="/tmp/opencode") as tmp:
+            root = Path(tmp)
+            nested = io.BytesIO()
+            with zipfile.ZipFile(nested, "w") as archive:
+                archive.writestr(
+                    "0-trace.network",
+                    json.dumps(
+                        {
+                            "snapshot": {
+                                "request": {
+                                    "headers": [
+                                        {
+                                            "name": "Authorization",
+                                            "value": "Bearer NESTED_PRIVATE",
+                                        }
+                                    ],
+                                    "postData": {"_sha1": "body.dat"},
+                                }
+                            }
+                        }
+                    ),
+                )
+                archive.writestr(
+                    "resources/body.dat", b"username=admin&password=FORM_PRIVATE"
+                )
+                archive.writestr(
+                    "0-trace.trace",
+                    json.dumps(
+                        {
+                            "type": "before",
+                            "apiName": "page.evaluate",
+                            "params": {
+                                "expression": "() => localStorage.getItem('access_token')",
+                                "arg": {"value": {"s": "ARG_PRIVATE"}},
+                            },
+                            "result": {"value": {"s": "RESULT_PRIVATE"}},
+                        }
+                    ),
+                )
+                archive.writestr(
+                    "resources/storage.json",
+                    b'{"entries":[{"key":"access_token","data":"STORAGE_PRIVATE"}]}',
+                )
+            with zipfile.ZipFile(root / "report.zip", "w") as archive:
+                archive.writestr(
+                    "report.jsonl",
+                    json.dumps(
+                        {
+                            "method": "onTestEnd",
+                            "params": {
+                                "result": {
+                                    "stdout": ["LOG_PRIVATE"],
+                                    "attachments": [{"path": "resources/trace.zip"}],
+                                }
+                            },
+                        }
+                    ),
+                )
+                archive.writestr("resources/trace.zip", nested.getvalue())
+            (root / "error-context.md").write_text("password=LOOSE_PRIVATE")
+            sanitize_tree(root)
+
+            def inspect(data):
+                with zipfile.ZipFile(io.BytesIO(data)) as archive:
+                    for name in archive.namelist():
+                        body = archive.read(name)
+                        if name.endswith(".zip"):
+                            inspect(body)
+                        else:
+                            for secret in (
+                                b"NESTED_PRIVATE",
+                                b"FORM_PRIVATE",
+                                b"ARG_PRIVATE",
+                                b"RESULT_PRIVATE",
+                                b"STORAGE_PRIVATE",
+                                b"LOG_PRIVATE",
+                            ):
+                                self.assertNotIn(secret, body, name)
+
+            inspect((root / "report.zip").read_bytes())
+            self.assertNotIn(b"LOOSE_PRIVATE", (root / "error-context.md").read_bytes())
+
     def test_unparseable_trace_is_quarantined_instead_of_uploaded_unredacted(self):
         import json
         import zipfile
@@ -76,7 +165,9 @@ class CiTests(unittest.TestCase):
                 )
             sanitize_tree(root)
             with zipfile.ZipFile(root / "trace.zip") as archive:
-                self.assertEqual(archive.read("resources/screenshot.png"), b"PNG")
+                self.assertEqual(
+                    archive.read("resources/screenshot.png"), b"[REDACTED RESOURCE]"
+                )
                 content = archive.read("trace.network").decode()
                 self.assertNotIn("guest-private", content)
                 self.assertNotIn("private-token", content)

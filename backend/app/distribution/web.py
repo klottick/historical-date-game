@@ -25,8 +25,10 @@ SPA_ROUTES = {
 
 
 def create_app(frontend_dir: Path) -> FastAPI:
+    from app.distribution.frontend import check_frontend
     from app.main import app as api
 
+    check_frontend(frontend_dir)
     app = FastAPI(title=api.title, openapi_url=api.openapi_url)
     app.router.routes = list(api.router.routes)
     app.user_middleware = list(api.user_middleware)
@@ -49,6 +51,7 @@ def create_app(frontend_dir: Path) -> FastAPI:
         from app.distribution.startup import check_ready
 
         try:
+            check_frontend(frontend_dir)
             check_ready()
         except Exception:
             return JSONResponse(

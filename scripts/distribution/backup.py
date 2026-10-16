@@ -2,6 +2,8 @@
 
 import argparse
 import hashlib
+import io
+import json
 import os
 import re
 import stat
@@ -15,6 +17,8 @@ FILE = re.compile(r"media/[A-Za-z0-9][A-Za-z0-9._-]{0,127}/([0-9a-f]{64})\.(svg|
 DIRECTORY = re.compile(r"media(?:/[A-Za-z0-9][A-Za-z0-9._-]{0,127})?")
 MAX_BYTES = 4 * 1024**3
 MAX_FILES = 100_000
+INVENTORY = "media-inventory.json"
+MAX_INVENTORY_BYTES = 32 * 1024**2
 
 
 def trusted_root(root: Path) -> None:
@@ -28,6 +32,7 @@ def export_media(root: Path, destination: BinaryIO) -> None:
     if not media.is_dir() or media.is_symlink():
         raise ValueError("No real media directory to export")
     total = 0
+    inventory = {}
     with tarfile.open(fileobj=destination, mode="w|") as archive:
         paths = sorted(media.rglob("*"))
         if len(paths) > MAX_FILES:
@@ -51,6 +56,16 @@ def export_media(root: Path, destination: BinaryIO) -> None:
                 member.size = info.st_size
                 member.mode = 0o600
                 archive.addfile(member, stream)
+                inventory[name] = {"size": info.st_size, "sha256": match[1]}
+        if not inventory:
+            raise ValueError("Cannot export empty media")
+        data = json.dumps({"format": 1, "files": inventory}, sort_keys=True).encode()
+        if len(data) > MAX_INVENTORY_BYTES:
+            raise ValueError("Media inventory limit exceeded")
+        terminal = tarfile.TarInfo(INVENTORY)
+        terminal.size = len(data)
+        terminal.mode = 0o600
+        archive.addfile(terminal, io.BytesIO(data))
 
 
 def restore_media(root: Path, source: BinaryIO) -> None:
@@ -63,10 +78,25 @@ def restore_media(root: Path, source: BinaryIO) -> None:
         staging = Path(tmp)
         (staging / "media").mkdir(mode=0o700)
         seen = set()
+        inventory = {}
+        complete = False
         total = 0
         with tarfile.open(fileobj=source, mode="r|*") as archive:
             for member in archive:
                 name = member.name
+                if complete:
+                    raise ValueError("Media inventory must be terminal")
+                if name == INVENTORY:
+                    if not member.isreg() or not 0 < member.size <= MAX_INVENTORY_BYTES:
+                        raise ValueError("Invalid media inventory")
+                    record = archive.extractfile(member)
+                    if record is None:
+                        raise ValueError("Missing media inventory")
+                    expected = json.loads(record.read())
+                    if not inventory or expected != {"format": 1, "files": inventory}:
+                        raise ValueError("Incomplete media archive inventory")
+                    complete = True
+                    continue
                 if name in seen or len(seen) >= MAX_FILES:
                     raise ValueError("Duplicate media or file-count limit")
                 seen.add(name)
@@ -96,6 +126,9 @@ def restore_media(root: Path, source: BinaryIO) -> None:
                         remaining -= len(data)
                 if digest.hexdigest() != match[1]:
                     raise ValueError("Corrupted immutable media")
+                inventory[name] = {"size": member.size, "sha256": match[1]}
+        if not complete:
+            raise ValueError("Interrupted or inventory-free media export")
         os.replace(staging / "media", root / "media")
 
 

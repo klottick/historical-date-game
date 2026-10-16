@@ -130,11 +130,11 @@ jobs:
       with:
         name: playwright-service-logs-${{ matrix.shardIndex }}
         path: frontend/service-logs.txt
-    - name: Upload blob report to GitHub Actions Artifacts
+    - name: Upload sanitized first-failure diagnostics
       if: ${{ always() && steps.sanitize.outcome == 'success' }}
       uses: actions/upload-artifact@v7.0.2
       with:
-        name: blob-report-${{ matrix.shardIndex }}
+        name: browser-diagnostics-${{ matrix.shardIndex }}
         path: frontend/blob-report
         include-hidden-files: true
         retention-days: 1
@@ -181,40 +181,8 @@ jobs:
         path: frontend/test-results
         retention-days: 1
 
-  merge-playwright-reports:
-    needs:
-      - test-playwright
-      - changes
-    # Merge reports after playwright-tests, even if some shards have failed
-    if: ${{ !cancelled() && needs.changes.outputs.changed == 'true' }}
-    runs-on: ubuntu-latest
-    steps:
-    - uses: actions/checkout@v7.0.1
-      with:
-        persist-credentials: false
-    - uses: actions/setup-node@v7.1.0
-      with:
-        node-version: "26.11.1"
-    - name: Install dependencies
-      run: npm ci
-      working-directory: frontend
-    - name: Download blob reports from GitHub Actions Artifacts
-      uses: actions/download-artifact@v8.0.2
-      with:
-        path: frontend/all-blob-reports
-        pattern: blob-report-*
-        merge-multiple: true
-    - name: Merge into HTML Report
-      run: npx playwright merge-reports --reporter html ./all-blob-reports
-      working-directory: frontend
-    - name: Upload HTML report
-      uses: actions/upload-artifact@v7.0.2
-      with:
-        name: html-report--attempt-${{ github.run_attempt }}
-        path: frontend/playwright-report
-        retention-days: 30
-        include-hidden-files: true
-
+  # Diagnostic archives intentionally omit bodies, screenshots and arbitrary
+  # evaluation values; they are not mergeable raw Playwright blob reports.
   # https://github.com/marketplace/actions/alls-green#why
   alls-green-playwright:  # This job does nothing and is only used for the branch protection
     if: always()

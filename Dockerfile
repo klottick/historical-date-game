@@ -7,7 +7,7 @@ COPY frontend/index.html frontend/tsconfig*.json frontend/vite.config.ts ./
 COPY frontend/src ./src
 COPY frontend/public ./public
 ENV VITE_API_URL=""
-RUN npm run build
+RUN npm run build -- --manifest
 
 FROM ghcr.io/astral-sh/uv:0.13.0@sha256:22fbda6ef3b6466750a6fb1c7ce1d23a2a63a53be91e03d408b6e4274753998d AS uv
 

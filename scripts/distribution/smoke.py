@@ -702,7 +702,7 @@ def check_shutdown(project: Installation) -> None:
 
 
 def documented_commands(guide: Path, name: str) -> str:
-    if name not in {"backup", "restore"}:
+    if name not in {"backup", "restore", "maintenance"}:
         raise ValueError("Unknown documented operator command block")
     blocks = re.findall(
         r"<!-- distribution:" + name + r" -->\n```sh\n(.*?)```",
@@ -714,17 +714,33 @@ def documented_commands(guide: Path, name: str) -> str:
     return blocks[0]
 
 
-def stage_operator_directory(project: Installation, directory: Path) -> None:
+def stage_operator_directory(
+    project: Installation, directory: Path, *, persist_project=False
+) -> None:
     directory.mkdir(mode=0o700)
     # Render only the ownership/network test override. Docker Compose's rendered
     # JSON is valid YAML, so the guide's exact -f compose.yaml commands consume it
     # without a wrapper, altered shell blocks or an undocumented restore path.
     config = json.loads(project.compose("config", "--format", "json").stdout)
     assert config["name"] == project.project
+    # Do not bake resolved project names into the fixture: that would conceal
+    # whether the guide preserves project selection for later -p-free commands.
+    config.pop("name")
+    for group in ("volumes", "networks"):
+        for resource in config.get(group, {}).values():
+            resource.pop("name", None)
     assert not any("build" in service for service in config["services"].values())
     for name, data in (
         ("compose.yaml", json.dumps(config).encode()),
-        (".env", (project.directory / ".env").read_bytes()),
+        (
+            ".env",
+            (project.directory / ".env").read_bytes()
+            + (
+                f"COMPOSE_PROJECT_NAME={project.project}\n".encode()
+                if persist_project
+                else b""
+            ),
+        ),
         ("image-digest.txt", json.dumps({"preview_image": project.image}).encode()),
     ):
         with (directory / name).open("xb") as stream:
@@ -812,7 +828,7 @@ def full_probe(project: Installation, evidence: Path, browser: bool = False) -> 
     with tempfile.TemporaryDirectory(prefix="hdg-backup-", dir=private_temp()) as tmp:
         root = Path(tmp)
         original = root / "original"
-        stage_operator_directory(project, original)
+        stage_operator_directory(project, original, persist_project=True)
         run_documented(project, "backup", original)
         project.refresh_endpoint()
         backup = original / "backup"
@@ -831,6 +847,7 @@ def full_probe(project: Installation, evidence: Path, browser: bool = False) -> 
                 shutil.copyfile(source, recovery / source.name)
                 (recovery / source.name).chmod(0o600)
             run_documented(restored, "restore", recovery)
+            run_documented(restored, "maintenance", recovery)
             restored.refresh_endpoint()
             assert state(restored) == before
             # Reexecute the actual guide: its guard must refuse populated state.

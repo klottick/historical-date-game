@@ -1,5 +1,6 @@
 """Release boundary tests; never initialize or connect to a real database."""
 
+import json
 import os
 import subprocess
 import tempfile
@@ -23,7 +24,56 @@ ENV = {
 }
 
 
+def frontend_fixture(root):
+    (root / "assets").mkdir(exist_ok=True)
+    (root / ".vite").mkdir(exist_ok=True)
+    (root / "index.html").write_text(
+        '<div id="root"></div><script type="module" src="/assets/app-1234abcd.js"></script>'
+    )
+    (root / "assets/app-1234abcd.js").write_text("export const a=1")
+    (root / "assets/lazy-1234abcd.js").write_text("export const lazy=1")
+    (root / "assets/app-1234abcd.css").write_text("body{margin:0}")
+    (root / ".vite/manifest.json").write_text(
+        json.dumps(
+            {
+                "index.html": {
+                    "isEntry": True,
+                    "file": "assets/app-1234abcd.js",
+                    "css": ["assets/app-1234abcd.css"],
+                    "dynamicImports": ["lazy"],
+                },
+                "lazy": {"file": "assets/lazy-1234abcd.js"},
+            }
+        )
+    )
+
+
 class RuntimeTests(unittest.TestCase):
+    def test_frontend_missing_index_or_asset_closure_refuses_start_and_readiness(self):
+        from app.distribution.web import create_app
+        from fastapi.testclient import TestClient
+
+        for missing in (
+            "index.html",
+            ".vite/manifest.json",
+            "assets/app-1234abcd.js",
+            "assets/lazy-1234abcd.js",
+            "assets/app-1234abcd.css",
+        ):
+            with (
+                tempfile.TemporaryDirectory(dir="/tmp/opencode") as tmp,
+                self.subTest(missing=missing),
+            ):
+                root = Path(tmp)
+                frontend_fixture(root)
+                client = TestClient(create_app(root))
+                with patch("app.distribution.startup.check_ready", return_value=None):
+                    self.assertEqual(client.get("/healthz").status_code, 200)
+                    (root / missing).unlink()
+                    self.assertEqual(client.get("/healthz").status_code, 503)
+                with self.assertRaises(ValueError):
+                    create_app(root)
+
     def setUp(self):
         environment = patch.dict(os.environ, ENV)
         environment.start()
@@ -106,9 +156,7 @@ class RuntimeTests(unittest.TestCase):
             tempfile.TemporaryDirectory(dir="/tmp/opencode") as tmp,
         ):
             root = Path(tmp)
-            (root / "assets").mkdir()
-            (root / "index.html").write_text('<div id="root"></div>')
-            (root / "assets/app-1234abcd.js").write_text("export const a=1")
+            frontend_fixture(root)
             (root / "assets/link.js").symlink_to(
                 ROOT / "backend/catalogue/default.json"
             )
@@ -168,7 +216,7 @@ class RuntimeTests(unittest.TestCase):
             tempfile.TemporaryDirectory(dir="/tmp/opencode") as tmp,
         ):
             root = Path(tmp)
-            (root / "index.html").write_text("ready")
+            frontend_fixture(root)
             client = TestClient(create_app(root))
             with patch(
                 "app.distribution.startup.check_ready",
@@ -254,6 +302,7 @@ class RuntimeTests(unittest.TestCase):
             patch.dict(os.environ, ENV),
             tempfile.TemporaryDirectory(dir="/tmp/opencode") as tmp,
         ):
+            frontend_fixture(Path(tmp))
             app = create_app(Path(tmp))
             session = MagicMock()
             app.dependency_overrides[get_db] = lambda: session

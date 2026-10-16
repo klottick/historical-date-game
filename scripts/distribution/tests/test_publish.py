@@ -15,6 +15,150 @@ ID = "sha256:" + "b" * 64
 
 
 class PublishTests(unittest.TestCase):
+    def test_latest_requires_native_canonical_identity_and_both_immutable_aliases(self):
+        from scripts.distribution.publish import verify_latest
+
+        body = json.dumps({"config": {"digest": ID}}).encode()
+        manifest = (
+            "sha256:" + hashlib.sha256(body).hexdigest(),
+            body,
+            "application/vnd.oci.image.manifest.v1+json",
+        )
+        good = {
+            "os": "linux",
+            "architecture": "amd64",
+            "config": {
+                "Labels": {
+                    "org.opencontainers.image.version": "1.9.0",
+                    "org.opencontainers.image.revision": SHA,
+                }
+            },
+        }
+        with (
+            patch("scripts.distribution.registry.manifest", return_value=manifest),
+            patch("scripts.distribution.registry.config_blob", return_value=good),
+        ):
+            self.assertEqual(verify_latest("1.10.0", "token"), manifest[0])
+        for config in (
+            good | {"architecture": "arm64"},
+            good
+            | {
+                "config": {
+                    "Labels": {
+                        "org.opencontainers.image.version": "unreleased",
+                        "org.opencontainers.image.revision": SHA,
+                    }
+                }
+            },
+            good
+            | {
+                "config": {
+                    "Labels": {
+                        "org.opencontainers.image.version": "1.9.0",
+                        "org.opencontainers.image.revision": "main",
+                    }
+                }
+            },
+        ):
+            with (
+                patch("scripts.distribution.registry.manifest", return_value=manifest),
+                patch("scripts.distribution.registry.config_blob", return_value=config),
+                self.assertRaises(ValueError),
+            ):
+                verify_latest("1.10.0", "token")
+        for aliases in ([manifest, None], [manifest, manifest, None]):
+            with (
+                patch("scripts.distribution.registry.manifest", side_effect=aliases),
+                patch("scripts.distribution.registry.config_blob", return_value=good),
+                self.assertRaises(ValueError),
+            ):
+                verify_latest("1.10.0", "token")
+
+    def test_registry_latest_prevents_rollback_after_newer_release_is_hidden(self):
+        from scripts.distribution.publish import publish
+        from scripts.distribution.release import validate_release
+
+        current = {
+            "id": 7,
+            "tag_name": "v1.0.0",
+            "draft": False,
+            "prerelease": False,
+            "published_at": "2026-10-16T12:00:00Z",
+        }
+        hidden = current | {
+            "id": 8,
+            "tag_name": "v2.0.0",
+            "prerelease": True,
+            "published_at": "2026-10-17T12:00:00Z",
+        }
+        self.assertEqual(
+            validate_release(current, [current, hidden], 7, SHA, SHA, True), "1.0.0"
+        )
+        newer_config = {
+            "os": "linux",
+            "architecture": "amd64",
+            "config": {
+                "Labels": {
+                    "org.opencontainers.image.version": "2.0.0",
+                    "org.opencontainers.image.revision": "c" * 40,
+                }
+            },
+        }
+        newer_body = json.dumps({"config": {"digest": "sha256:" + "e" * 64}}).encode()
+        newer = (
+            "sha256:" + hashlib.sha256(newer_body).hexdigest(),
+            newer_body,
+            "application/vnd.oci.image.manifest.v1+json",
+        )
+        for live in ([current, hidden], [current]):
+            with tempfile.TemporaryDirectory(dir="/tmp/opencode") as tmp:
+                root = Path(tmp)
+                archive, metadata, calls, _, docker = self.setup_boundaries(root)
+                writes = []
+
+                def manifest(_image, reference, _token):
+                    return (
+                        newer
+                        if reference in {"latest", "2.0.0", "sha-" + "c" * 40}
+                        else None
+                    )
+
+                with (
+                    patch.dict(
+                        os.environ,
+                        {
+                            "GITHUB_RUN_ID": "123",
+                            "GITHUB_RUN_ATTEMPT": "2",
+                            "GH_TOKEN": "ephemeral",
+                            "GITHUB_ACTOR": "owner",
+                        },
+                    ),
+                    patch("scripts.distribution.publish.docker", side_effect=docker),
+                    patch(
+                        "scripts.distribution.publish.refresh_release",
+                        return_value=validate_release(current, live, 7, SHA, SHA, True),
+                    ),
+                    patch(
+                        "scripts.distribution.registry.token",
+                        return_value="registry-token",
+                    ),
+                    patch(
+                        "scripts.distribution.registry.manifest", side_effect=manifest
+                    ),
+                    patch(
+                        "scripts.distribution.registry.config_blob",
+                        return_value=newer_config,
+                    ),
+                    patch(
+                        "scripts.distribution.registry.put_manifest",
+                        side_effect=lambda *args, writes=writes: writes.append(args),
+                    ),
+                    self.assertRaises(ValueError),
+                ):
+                    publish(archive, metadata, REPO, 7, SHA, root / "publication.json")
+                self.assertEqual(writes, [])
+                self.assertFalse(any(call[0] in {"login", "push"} for call in calls))
+
     def test_actual_cli_promotes_exact_bytes_through_local_registry_and_refuses_retry(
         self,
     ):

@@ -1,6 +1,7 @@
 """Preserve sanitized first-failure evidence and clean only journalled test owners."""
 
 import argparse
+import io
 import json
 import os
 import re
@@ -16,11 +17,30 @@ SENSITIVE = re.compile(
 
 
 def scrub(value):
+    # Diagnostic archives are not a safe channel for arbitrary application or
+    # JavaScript values. Preserve structure/numbers and a small vocabulary only;
+    # selectors, logs, serialized evaluation args/results and bodies are private.
     if isinstance(value, list):
         if len(value) == 2 and value[0] == "value" and isinstance(value[1], str):
             return ["value", "[REDACTED]"]
         return [scrub(item) for item in value]
     if isinstance(value, dict):
+        if isinstance(value.get("name"), str) and value["name"].lower() in {
+            "accept",
+            "content-type",
+        }:
+            return {
+                "name": value["name"],
+                "value": value.get("value")
+                if value.get("value")
+                in {
+                    "application/json",
+                    "text/html",
+                    "image/svg+xml",
+                    "application/octet-stream",
+                }
+                else "[REDACTED]",
+            }
         if "fill" in str(value.get("apiName", "")) and isinstance(
             value.get("params"), dict
         ):
@@ -29,12 +49,44 @@ def scrub(value):
             value = value | {"value": "[REDACTED]"}
         if SENSITIVE.search(str(value.get("name", ""))) and "value" in value:
             return value | {"value": "[REDACTED]"}
-        return {
-            key: "[REDACTED]"
-            if SENSITIVE.search(key) or key == "postData"
-            else scrub(item)
-            for key, item in value.items()
-        }
+        result = {}
+        for key, item in value.items():
+            if SENSITIVE.search(key) or key in {
+                "postData",
+                "params",
+                "result",
+                "arg",
+                "args",
+                "expression",
+                "stdout",
+                "stderr",
+                "error",
+                "html",
+            }:
+                result[key] = "[REDACTED]"
+            elif (
+                key == "type"
+                and isinstance(item, str)
+                and item
+                in {"before", "after", "event", "resource-snapshot", "context-options"}
+                or key == "apiName"
+                and isinstance(item, str)
+                and re.fullmatch(r"[a-zA-Z]+\.[a-zA-Z]+", item)
+                or isinstance(item, str)
+                and (
+                    (key == "owner" and re.fullmatch(r"[a-f0-9]{32}", item))
+                    or (
+                        key == "project"
+                        and re.fullmatch(r"hdg-dist-[a-f0-9]{32}", item)
+                    )
+                )
+            ):
+                result[key] = item
+            else:
+                result[key] = scrub(item)
+        return result
+    if isinstance(value, str):
+        return "[REDACTED]"
     return value
 
 
@@ -53,25 +105,69 @@ def sanitize_bytes(data: bytes) -> bytes:
     return ("\n".join(lines) + "\n").encode()
 
 
+def sanitize_archive(data: bytes, *, depth=0) -> bytes:
+    if depth > 4:
+        raise ValueError("Nested diagnostic archive limit exceeded")
+    output = io.BytesIO()
+    with (
+        zipfile.ZipFile(io.BytesIO(data)) as source,
+        zipfile.ZipFile(output, "w", compression=zipfile.ZIP_DEFLATED) as target,
+    ):
+        if sum(item.file_size for item in source.infolist()) > 256 * 1024**2:
+            raise ValueError("Diagnostic archive limit exceeded")
+        for member in source.infolist():
+            name = member.filename
+            if name.endswith(".zip"):
+                content = sanitize_archive(source.read(member), depth=depth + 1)
+            elif name.startswith("resources/"):
+                # HAR bodies can be JSON, form .dat, HTML, JS or images. None is
+                # safe to copy. Original resources remain in private evidence.
+                content = b"[REDACTED RESOURCE]"
+            elif name.endswith((".network", ".trace", ".json", ".jsonl")):
+                content = sanitize_bytes(source.read(member))
+            else:
+                content = b"[REDACTED RESOURCE]"
+            target.writestr(member, content)
+        target.writestr(
+            "sanitization-policy.json",
+            json.dumps(
+                {
+                    "policy": "metadata-only",
+                    "viewer_complete": False,
+                    "raw_evidence": "retained privately outside upload directories",
+                    "removed": [
+                        "body resources",
+                        "screenshots",
+                        "serialized values",
+                        "arbitrary text",
+                    ],
+                }
+            ),
+        )
+    return output.getvalue()
+
+
 def sanitize_tree(root: Path) -> None:
     if not root.exists():
         return
-    for path in root.rglob("*.zip"):
+    for path in [item for item in root.rglob("*") if item.is_file()]:
         temporary = path.with_suffix(".sanitized")
         try:
-            with (
-                zipfile.ZipFile(path) as source,
-                zipfile.ZipFile(
-                    temporary, "w", compression=zipfile.ZIP_DEFLATED
-                ) as target,
-            ):
-                for member in source.infolist():
-                    data = source.read(member)
-                    if member.filename.endswith(
-                        (".network", ".trace", ".json", ".jsonl")
-                    ):
-                        data = sanitize_bytes(data)
-                    target.writestr(member, data)
+            data = path.read_bytes()
+            if path.suffix == ".zip":
+                sanitized = sanitize_archive(data)
+            elif path.suffix in {".json", ".jsonl", ".network", ".trace"}:
+                sanitized = sanitize_bytes(data)
+            else:
+                sanitized = b"[REDACTED RESOURCE]"
+            private = (
+                Path(tempfile.mkdtemp(prefix="hdg-private-trace-", dir=private_temp()))
+                / path.name
+            )
+            with private.open("xb") as stream:
+                os.fchmod(stream.fileno(), 0o600)
+                stream.write(data)
+            temporary.write_bytes(sanitized)
             temporary.replace(path)
         except (ValueError, UnicodeError, zipfile.BadZipFile):
             # Keep original evidence privately, but never let an always-run

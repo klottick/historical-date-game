@@ -80,6 +80,29 @@ def verify_config(config: dict, revision: str, version: str) -> None:
         raise ValueError("Image source/version labels do not match tested release")
 
 
+def verify_latest(version: str, credential: str) -> str | None:
+    latest = registry.manifest(IMAGE, "latest", credential)
+    if latest is None:
+        return None
+    config_id = json.loads(latest[1])["config"]["digest"]
+    config = registry.config_blob(IMAGE, config_id, credential)
+    labels = config.get("config", {}).get("Labels", {})
+    prior = labels.get("org.opencontainers.image.version", "")
+    revision = labels.get("org.opencontainers.image.revision", "")
+    previous = VERSION.fullmatch(prior)
+    target = VERSION.fullmatch(version)
+    if not previous or not target or not SHA.fullmatch(revision):
+        raise ValueError("Existing latest has unverifiable release identity")
+    verify_config(config, revision, prior)
+    if tuple(map(int, previous.groups())) >= tuple(map(int, target.groups())):
+        raise ValueError("Existing latest forbids equal or backward publication")
+    for reference in (prior, "sha-" + revision):
+        alias = registry.manifest(IMAGE, reference, credential)
+        if alias is None or alias[:2] != latest[:2]:
+            raise ValueError("Existing latest does not match immutable release aliases")
+    return latest[0]
+
+
 def publish(
     archive: Path,
     metadata: Path,
@@ -148,6 +171,8 @@ def publish(
                 raise ValueError("Release version changed since testing")
             credential = registry.token(IMAGE, push=True)
             registry.require_absent_version(IMAGE, version, revision, credential)
+            latest_before = verify_latest(version, credential)
+            record["latest_before"] = latest_before
             actor = os.environ.get("GITHUB_ACTOR")
             secret = os.environ.get("GH_TOKEN") or os.environ.get("GITHUB_TOKEN")
             if not actor or not secret:
@@ -184,6 +209,10 @@ def publish(
             for tag in (version, "sha-" + revision, "latest"):
                 if refresh_release(repository, release_id, revision) != version:
                     raise ValueError("Release eligibility changed before promotion")
+                if verify_latest(version, credential) != latest_before:
+                    raise ValueError(
+                        "Latest changed during publication; inspect partial state"
+                    )
                 # Immutable aliases must still be absent immediately before PUT.
                 if (
                     tag != "latest"
