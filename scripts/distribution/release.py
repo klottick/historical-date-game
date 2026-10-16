@@ -35,6 +35,7 @@ def api_request(
     data: bytes | None = None,
     accept="application/vnd.github+json",
     upload=False,
+    anonymous=False,
 ) -> bytes:
     if not path.startswith("/repos/") or "\n" in path or "\r" in path:
         raise ValueError("Invalid API path")
@@ -43,7 +44,11 @@ def api_request(
         "X-GitHub-Api-Version": "2022-11-28",
         "Cache-Control": "no-cache",
     }
-    token = os.environ.get("GH_TOKEN") or os.environ.get("GITHUB_TOKEN")
+    token = (
+        None
+        if anonymous
+        else os.environ.get("GH_TOKEN") or os.environ.get("GITHUB_TOKEN")
+    )
     if token:
         headers["Authorization"] = "Bearer " + token
     if data is not None:

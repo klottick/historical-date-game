@@ -101,7 +101,7 @@ jobs:
           assert labels['org.opencontainers.image.version']==os.environ['RELEASE_VERSION']
           with (destination/'image.tar').open('rb') as stream:
               checksum=hashlib.file_digest(stream,'sha256').hexdigest()
-          metadata={'image_id':image['Id'],'revision':os.environ['GITHUB_SHA'],'version':os.environ['RELEASE_VERSION'],'platform':'linux/amd64','archive_sha256':checksum}
+          metadata={'image_id':image['Id'],'revision':os.environ['GITHUB_SHA'],'version':os.environ['RELEASE_VERSION'],'platform':'linux/amd64','archive_sha256':checksum,'run_id':os.environ['GITHUB_RUN_ID'],'run_attempt':os.environ['GITHUB_RUN_ATTEMPT'],'smoke_passed':True}
           (destination/'image.json').write_text(json.dumps(metadata,sort_keys=True)+'\n')
           (destination/'SHA256SUMS').write_text(checksum+'  image.tar\n')
           PY

@@ -159,6 +159,17 @@ class Installation:
             if k in ("PATH", "HOME", "DOCKER_HOST", "DOCKER_CONFIG", "XDG_RUNTIME_DIR")
         }
 
+    def child(self, directory: Path, *, settings=None, offline=None):
+        child = Installation(
+            self.image,
+            self.directory,
+            directory,
+            self.settings if settings is None else settings,
+            offline=self.offline if offline is None else offline,
+        )
+        child.env = dict(self.env)
+        return child
+
     def compose_command(self, *args: str) -> list[str]:
         command = [
             "docker",
@@ -659,9 +670,7 @@ with Session(engine) as session:
     session.commit()
 """
     with tempfile.TemporaryDirectory(prefix="hdg-legacy-", dir=private_temp()) as tmp:
-        child = Installation(
-            project.image, project.directory, Path(tmp) / "legacy", offline=True
-        )
+        child = project.child(Path(tmp) / "legacy", offline=True)
         with owned_child(child, evidence):
             assert not child.resources()
             child.compose("up", "-d", "--wait", "db")
@@ -784,13 +793,7 @@ def full_probe(project: Installation, evidence: Path, browser: bool = False) -> 
         saved_settings = dict(
             line.split("=", 1) for line in environment_backup.read_text().splitlines()
         )
-        restored = Installation(
-            project.image,
-            project.directory,
-            root / "restored",
-            saved_settings,
-            offline=project.offline,
-        )
+        restored = project.child(root / "restored", settings=saved_settings)
         with owned_child(restored, evidence):
             if restored.resources():
                 raise ValueError("Restore target unexpectedly exists")

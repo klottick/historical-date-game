@@ -24,6 +24,7 @@ CURRENT = {
 class Fixture:
     def __enter__(self):
         self.requests = []
+        self.authorization = []
         self.routes = {
             "/repos/owner/repo/releases/7": CURRENT,
             "/repos/owner/repo/releases?per_page=100&page=1": [CURRENT],
@@ -48,11 +49,14 @@ class Fixture:
         class Handler(BaseHTTPRequestHandler):
             def do_GET(self):
                 fixture.requests.append(self.path)
+                fixture.authorization.append(self.headers.get("Authorization"))
                 value = fixture.routes.get(self.path, (404, {"message": "missing"}))
                 code, data = value if isinstance(value, tuple) else (200, value)
                 self.send_response(code)
                 self.end_headers()
-                self.wfile.write(json.dumps(data).encode())
+                self.wfile.write(
+                    data if isinstance(data, bytes) else json.dumps(data).encode()
+                )
 
             def log_message(self, *_):
                 pass

@@ -29,6 +29,28 @@ class Response(io.BytesIO):
 
 
 class RegistryTests(unittest.TestCase):
+    def test_anonymous_token_request_does_not_use_inherited_workflow_credentials(self):
+        import os
+
+        from scripts.distribution.registry import token
+        from scripts.distribution.tests.test_release import Fixture
+
+        with Fixture() as fixture:
+            fixture.routes[
+                "/token?service=ghcr.io&scope=repository%3Aklottick%2Fhistorical-date-game%3Apull"
+            ] = {"token": "anonymous-registry-token"}
+            with (
+                patch("scripts.distribution.registry.ROOT", fixture.url),
+                patch.dict(
+                    os.environ,
+                    {"GH_TOKEN": "MUST-NOT-BE-SENT", "GITHUB_ACTOR": "private-actor"},
+                ),
+            ):
+                self.assertEqual(
+                    token(IMAGE, anonymous=True), "anonymous-registry-token"
+                )
+            self.assertEqual(fixture.authorization, [None])
+
     def test_registry_redirects_cannot_forward_the_bearer_token(self):
         from http.server import BaseHTTPRequestHandler, ThreadingHTTPServer
         from threading import Thread

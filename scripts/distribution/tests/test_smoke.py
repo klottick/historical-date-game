@@ -7,6 +7,28 @@ from pathlib import Path
 
 
 class SmokeTests(unittest.TestCase):
+    def test_child_restore_keeps_the_same_isolated_docker_credentials(self):
+        from scripts.distribution.smoke import Installation
+
+        with tempfile.TemporaryDirectory(dir="/tmp/opencode") as tmp:
+            root = Path(tmp)
+            assets = root / "assets"
+            assets.mkdir()
+            (assets / "compose.yaml").write_text("services: {}")
+            (assets / "env.example").write_text("HDG_IMAGE=\n")
+            parent = Installation("image", assets, root / "parent")
+            parent.env = {
+                "DOCKER_CONFIG": str(root / "empty-config"),
+                "PATH": "/usr/bin",
+            }
+            child = parent.child(root / "child", offline=True)
+            self.assertEqual(child.env, parent.env)
+            self.assertTrue(child.offline)
+            self.assertNotEqual(child.owner, parent.owner)
+            self.assertEqual(
+                child.settings["SECRET_KEY"], parent.settings["SECRET_KEY"]
+            )
+
     def test_sigterm_is_a_recorded_interruption_instead_of_skipping_cleanup(self):
         import signal
 

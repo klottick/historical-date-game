@@ -1,6 +1,7 @@
 name: Test Backend
 
 on:
+  workflow_call:
   push:
     branches:
       - main
