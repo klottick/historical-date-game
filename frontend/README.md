@@ -4,6 +4,12 @@ The frontend is built with [Vite](https://vitejs.dev/), [React](https://reactjs.
 
 ## Frontend development
 
+When using Docker, first set
+`export COMPOSE_FILE="$(git rev-parse --show-toplevel)/docker-compose.yml:$(git rev-parse --show-toplevel)/docker-compose.override.yml"`.
+The new `compose.yaml` is a source-free release installer, not a dev stack.
+Browser CI uses zero retries and retains the first failure; generated-client CI
+is read-only for all PRs (commit generated updates locally).
+
 Before you begin, ensure that you have either the Node Version Manager (nvm) or Fast Node Manager (fnm) installed on your system.
 
 * To install fnm follow the [official fnm guide](https://github.com/Schniz/fnm#installation). If you prefer nvm, you can install it using the [official nvm guide](https://github.com/nvm-sh/nvm#installing-and-updating).

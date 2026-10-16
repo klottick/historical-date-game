@@ -6,21 +6,16 @@ on:
     - opened
     - synchronize
 
+permissions:
+  contents: read
+
 jobs:
   generate-client:
-    permissions:
-      contents: write
     runs-on: ubuntu-latest
     steps:
-    # For PRs from forks
     - uses: actions/checkout@v7.0.1
-      if: ( github.event_name == 'pull_request' && github.secret_source != 'Actions' )
-    # For PRs from the same repo
-    - uses: actions/checkout@v7.0.1
-      if: ( github.event_name != 'pull_request' || github.secret_source == 'Actions' )
       with:
-        ref: ${{ github.head_ref }}
-        token: ${{ secrets.FULL_STACK_FASTAPI_TEMPLATE_REPO_TOKEN || github.token }}
+        persist-credentials: false
     - uses: actions/setup-node@v7.1.0
       with:
         node-version: "26.11.1"
@@ -43,19 +38,5 @@ jobs:
         SECRET_KEY: just-for-generating-client
         POSTGRES_PASSWORD: just-for-generating-client
         FIRST_SUPERUSER_PASSWORD: just-for-generating-client
-    - name: Add changes to git
-      run: |
-        git config --local user.email "github-actions@github.com"
-        git config --local user.name "github-actions"
-        git add frontend/src/client
-    # Same repo PRs
-    - name: Push changes
-      if: ( github.event_name != 'pull_request' || github.secret_source == 'Actions' )
-      run: |
-        git diff --staged --quiet || git commit -m "✨ Autogenerate frontend client"
-        git push
-    # Fork PRs
     - name: Check changes
-      if: ( github.event_name == 'pull_request' && github.secret_source != 'Actions' )
-      run: |
-        git diff --staged --quiet || (echo "Changes detected in generated client, run scripts/generate-client.sh and commit the changes" && exit 1)
+      run: git diff --exit-code -- frontend/src/client frontend/openapi.json

@@ -1,0 +1,115 @@
+name: Test prebuilt distribution
+
+on:
+  push:
+    branches: [main]
+  pull_request:
+  workflow_call:
+    inputs:
+      release-version:
+        description: Canonical version from release validation, or unreleased
+        type: string
+        default: unreleased
+
+permissions:
+  contents: read
+
+jobs:
+  image:
+    runs-on: ubuntu-24.04
+    timeout-minutes: 45
+    env:
+      IMAGE: hdg-distribution-ci:${{ github.run_id }}-${{ github.run_attempt }}
+      RELEASE_VERSION: ${{ inputs.release-version || 'unreleased' }}
+    steps:
+      - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
+        with:
+          persist-credentials: false
+          ref: ${{ github.sha }}
+      - uses: actions/setup-python@5fda3b95a4ea91299a34e894583c3862153e4b97 # v7.0.0
+        with:
+          python-version: '3.15'
+      - uses: actions/setup-node@949feb2413d6458794dcd2491c4babbbce0c15c1 # v7.1.0
+        with:
+          node-version: '26.11.1'
+      - uses: astral-sh/setup-uv@1c37ad07a6a961277cf70c0d37d6f313000f5884 # v10.3.0
+        with:
+          version: '0.13.0'
+      - name: Install locked verification tools
+        run: |
+          install -d -m 0700 /tmp/opencode
+          uv sync --frozen --project backend
+          npm ci --prefix frontend
+          cd frontend
+          npx playwright install --with-deps chromium
+      - name: Distribution contracts
+        run: PYTHONPATH=backend backend/.venv/bin/python -m unittest discover -s scripts/distribution/tests -v
+      - name: Build native amd64 image once
+        run: |
+          set -euo pipefail
+          test "$(uname -m)" = x86_64
+          test "$(git rev-parse HEAD)" = "$GITHUB_SHA"
+          docker build --platform linux/amd64 --build-arg "VERSION=$RELEASE_VERSION" --build-arg "VCS_REF=$GITHUB_SHA" -t "$IMAGE" . 2>&1 | tee "$RUNNER_TEMP/distribution-build.log"
+      - name: Probe image and safe build context
+        run: HDG_CONTEXT_AUDIT=1 HDG_TEST_IMAGE="$IMAGE" backend/.venv/bin/python -m unittest discover -s scripts/distribution/tests -p test_image.py -v
+      - name: Smoke actual installed image
+        id: smoke
+        run: |
+          set -euo pipefail
+          python3 scripts/distribution/smoke.py --image "$IMAGE" --platform linux/amd64 --browser --evidence-dir "$RUNNER_TEMP/distribution-normal"
+          python3 scripts/distribution/smoke.py --image "$IMAGE" --platform linux/amd64 --offline --browser --evidence-dir "$RUNNER_TEMP/distribution-offline"
+      - name: Preserve diagnostics and clean journalled test resources
+        id: diagnostics
+        if: always()
+        run: python3 -m scripts.distribution.diagnostics --evidence "$RUNNER_TEMP/distribution-normal" --evidence "$RUNNER_TEMP/distribution-offline" --cleanup-owned
+      - name: Upload first-failure diagnostics
+        if: always()
+        uses: actions/upload-artifact@cf430e030ddbb5b0abf93d22962f4752f3646cd9 # v7.0.2
+        with:
+          name: distribution-diagnostics-${{ github.run_id }}-${{ github.run_attempt }}
+          path: |
+            ${{ runner.temp }}/distribution-build.log
+            ${{ runner.temp }}/distribution-normal/*.log
+            ${{ runner.temp }}/distribution-normal/*.json
+            ${{ runner.temp }}/distribution-normal/*.jsonl
+            ${{ runner.temp }}/distribution-offline/*.log
+            ${{ runner.temp }}/distribution-offline/*.json
+            ${{ runner.temp }}/distribution-offline/*.jsonl
+          retention-days: 7
+      - name: Upload sanitized first-failure browser traces
+        if: ${{ always() && steps.diagnostics.outcome == 'success' }}
+        uses: actions/upload-artifact@cf430e030ddbb5b0abf93d22962f4752f3646cd9 # v7.0.2
+        with:
+          name: distribution-browser-${{ github.run_id }}-${{ github.run_attempt }}
+          path: |
+            ${{ runner.temp }}/distribution-normal/browser
+            ${{ runner.temp }}/distribution-offline/browser
+          retention-days: 7
+      - name: Archive successful tested image without rebuilding
+        if: ${{ success() && github.event_name == 'release' && inputs.release-version != 'unreleased' }}
+        run: |
+          mkdir "$RUNNER_TEMP/tested-image"
+          docker save "$IMAGE" -o "$RUNNER_TEMP/tested-image/image.tar"
+          python3 - <<'PY'
+          import hashlib,json,os,subprocess
+          from pathlib import Path
+          destination=Path(os.environ['RUNNER_TEMP'])/'tested-image'
+          image=json.loads(subprocess.check_output(['docker','image','inspect',os.environ['IMAGE']]))[0]
+          assert (image['Os'],image['Architecture'])==('linux','amd64')
+          labels=image['Config']['Labels']
+          assert labels['org.opencontainers.image.revision']==os.environ['GITHUB_SHA']
+          assert labels['org.opencontainers.image.version']==os.environ['RELEASE_VERSION']
+          with (destination/'image.tar').open('rb') as stream:
+              checksum=hashlib.file_digest(stream,'sha256').hexdigest()
+          metadata={'image_id':image['Id'],'revision':os.environ['GITHUB_SHA'],'version':os.environ['RELEASE_VERSION'],'platform':'linux/amd64','archive_sha256':checksum}
+          (destination/'image.json').write_text(json.dumps(metadata,sort_keys=True)+'\n')
+          (destination/'SHA256SUMS').write_text(checksum+'  image.tar\n')
+          PY
+      - name: Upload tested image
+        if: ${{ success() && github.event_name == 'release' && inputs.release-version != 'unreleased' }}
+        uses: actions/upload-artifact@cf430e030ddbb5b0abf93d22962f4752f3646cd9 # v7.0.2
+        with:
+          name: tested-image
+          path: ${{ runner.temp }}/tested-image
+          if-no-files-found: error
+          retention-days: 7

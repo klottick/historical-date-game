@@ -11,6 +11,10 @@ this modernization starts with a fresh, disposable development database.
 
 ## Docker Compose
 
+Select development files explicitly, even with the release installer present:
+`export COMPOSE_FILE="$(git rev-parse --show-toplevel)/docker-compose.yml:$(git rev-parse --show-toplevel)/docker-compose.override.yml"`.
+Use fresh owned fixtures for tests; see [owned test entry points](../development.md#owned-test-entry-points).
+
 Start the local development environment with Docker Compose following the guide in [../development.md](../development.md).
 
 ## General Workflow
@@ -134,8 +138,10 @@ workflow's volume teardown commands on your local stack.
 
 An already-running backend container is **not** a safe test entrypoint: its
 database and worktree ownership may differ. Use the host invocation above with
-the explicit disposable environment, not `docker compose exec backend` or the
-root `scripts/test.sh` (which tears down volumes).
+the explicit disposable environment, not an arbitrary `docker compose exec backend`.
+Root `scripts/test.sh` now refuses unlabelled stacks and never provisions or tears
+down volumes; it is only a compatibility wrapper for already-prepared, exactly
+owned fixture containers whose database-profile guards also pass.
 
 ```bash
 uv run bash scripts/tests-start.sh -x

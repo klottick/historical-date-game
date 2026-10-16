@@ -300,6 +300,8 @@ def run_owned(installation, evidence: Path, probe) -> int:
     if not evidence.is_dir():
         raise ValueError("Create private evidence directory before starting resources")
     result = {"passed": False, "failure": None, "cleanup_failure": None}
+    if isinstance(installation, Installation):
+        record_owner(installation, evidence)
     try:
         installation.start()
         probe(installation)
@@ -329,6 +331,7 @@ def run_owned(installation, evidence: Path, probe) -> int:
 
 @contextmanager
 def owned_child(project: Installation, evidence: Path):
+    record_owner(project, evidence)
     primary = None
     errors = []
     try:
@@ -353,6 +356,13 @@ def owned_child(project: Installation, evidence: Path):
         )
         if errors and primary is None:
             raise RuntimeError("Child diagnostics or owned cleanup failed")
+
+
+def record_owner(project: Installation, evidence: Path) -> None:
+    with (evidence / "owned-projects.jsonl").open("a") as stream:
+        stream.write(
+            json.dumps({"project": project.project, "owner": project.owner}) + "\n"
+        )
 
 
 class Http:

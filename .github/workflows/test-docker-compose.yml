@@ -9,21 +9,36 @@ on:
       - opened
       - synchronize
 
+permissions:
+  contents: read
+
 jobs:
 
   test-docker-compose:
     runs-on: ubuntu-latest
     timeout-minutes: 30
     env:
+      COMPOSE_FILE: docker-compose.yml:docker-compose.override.yml
       COMPOSE_PROJECT_NAME: hdg-compose-${{ github.run_id }}-${{ github.run_attempt }}
     steps:
       - name: Checkout
         uses: actions/checkout@v7.0.1
+        with:
+          persist-credentials: false
       - run: docker compose build
       - run: docker compose up -d --wait backend frontend adminer
       - name: Test backend is up
         run: curl --fail --location http://localhost:8000/api/v1/utils/health-check/
       - name: Test frontend is up
         run: curl --fail http://localhost:5173
-      - run: docker compose down -v --remove-orphans
+      - name: Save service failure logs
         if: always()
+        run: docker compose logs --no-color > compose-service-logs.txt
+      - run: docker compose down -v
+        if: always()
+      - name: Store service diagnostics
+        if: always()
+        uses: actions/upload-artifact@v7.0.2
+        with:
+          name: compose-service-logs
+          path: compose-service-logs.txt

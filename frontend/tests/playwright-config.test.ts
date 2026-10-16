@@ -33,7 +33,7 @@ for (const value of [undefined, "false", "true"]) {
 
     assert.deepEqual(actual, {
       forbidOnly: isCI,
-      retries: isCI ? 2 : 0,
+      retries: 0,
       ...(isCI ? { workers: 1 } : {}),
       reporter: isCI ? "blob" : "html",
       reuseExistingServer: !isCI,

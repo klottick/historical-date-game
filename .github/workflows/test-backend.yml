@@ -9,11 +9,15 @@ on:
       - opened
       - synchronize
 
+permissions:
+  contents: read
+
 jobs:
   test-backend:
     runs-on: ubuntu-latest
     timeout-minutes: 45
     env:
+      COMPOSE_FILE: docker-compose.yml:docker-compose.override.yml
       HDG_VERIFICATION_PROFILE: lives
       POSTGRES_DB: historical_date_game_lives_backend_test
       POSTGRES_SERVER: "127.0.0.1"
@@ -23,6 +27,8 @@ jobs:
     steps:
       - name: Checkout
         uses: actions/checkout@v7.0.1
+        with:
+          persist-credentials: false
       - name: Set up Python
         uses: actions/setup-python@v7.0.0
         with:
@@ -46,8 +52,17 @@ jobs:
       - name: Run tests
         run: uv run bash scripts/tests-start.sh "Coverage for ${{ github.sha }}"
         working-directory: backend
-      - run: docker compose down -v --remove-orphans
+      - name: Save service failure logs
         if: always()
+        run: docker compose logs --no-color > backend-service-logs.txt
+      - run: docker compose down -v
+        if: always()
+      - name: Store service diagnostics
+        if: always()
+        uses: actions/upload-artifact@v7.0.2
+        with:
+          name: backend-service-logs
+          path: backend-service-logs.txt
       - name: Store coverage files
         if: always()
         uses: actions/upload-artifact@v7.0.2

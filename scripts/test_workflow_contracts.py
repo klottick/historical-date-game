@@ -37,8 +37,7 @@ class WorkflowContracts(unittest.TestCase):
             set(workflow("deploy-staging.yml")["on"]), {"workflow_dispatch"}
         )
         self.assertEqual(
-            workflow("deploy-production.yml")["on"],
-            {"release": {"types": ["published"]}},
+            set(workflow("deploy-production.yml")["on"]), {"workflow_dispatch"}
         )
 
     def test_backend_job_prepares_the_exact_lives_databases_before_testing(

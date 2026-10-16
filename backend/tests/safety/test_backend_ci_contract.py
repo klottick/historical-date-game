@@ -16,38 +16,27 @@ def workflow_job(filename: str, job: str) -> dict[str, Any]:
     return dict(workflow["jobs"][job])
 
 
-def test_generate_client_prefers_configured_token_with_default_fallback() -> None:
+def test_generate_client_has_no_write_token_or_persisted_credentials() -> None:
     job = workflow_job("generate-client.yml", "generate-client")
-    checkout = next(step for step in job["steps"] if "token" in step.get("with", {}))
-    assert checkout["with"]["token"] == (
-        "${{ secrets.FULL_STACK_FASTAPI_TEMPLATE_REPO_TOKEN || github.token }}"
-    )
-    assert checkout["with"]["ref"] == "${{ github.head_ref }}"
-    assert job["permissions"] == {"contents": "write"}
+    checkout = next(step for step in job["steps"] if step.get("uses", "").startswith("actions/checkout@"))
+    assert checkout["with"] == {"persist-credentials": False}
+    assert "permissions" not in job
 
 
-def test_generate_client_preserves_fork_check_policy_and_exclusive_checkouts() -> None:
+def test_generate_client_checks_all_prs_without_commits_or_pushes() -> None:
     job = workflow_job("generate-client.yml", "generate-client")
     checkouts = [
         step
         for step in job["steps"]
         if step.get("uses", "").startswith("actions/checkout@")
     ]
-    assert len(checkouts) == 2
-    read_only = (
-        "( github.event_name == 'pull_request' && github.secret_source != 'Actions' )"
-    )
-    writable = (
-        "( github.event_name != 'pull_request' || github.secret_source == 'Actions' )"
-    )
-    assert checkouts[0].get("if") == read_only
-    assert "with" not in checkouts[0]
-    assert checkouts[1]["if"] == writable
+    assert len(checkouts) == 1
+    assert "if" not in checkouts[0]
     steps = {step.get("name"): step for step in job["steps"]}
-    assert steps["Push changes"]["if"] == writable
-    assert steps["Check changes"]["if"] == read_only
-    assert "git diff --staged --quiet" in steps["Check changes"]["run"]
-    assert "git push" not in steps["Check changes"]["run"]
+    assert "Push changes" not in steps
+    assert "if" not in steps["Check changes"]
+    assert "git diff --exit-code" in steps["Check changes"]["run"]
+    assert not any("git push" in step.get("run", "") for step in job["steps"])
 
 
 def test_template_project_job_is_scoped_to_exact_upstream_repository() -> None:

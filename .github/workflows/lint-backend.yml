@@ -9,12 +9,17 @@ on:
       - opened
       - synchronize
 
+permissions:
+  contents: read
+
 jobs:
   lint-backend:
     runs-on: ubuntu-latest
     steps:
       - name: Checkout
         uses: actions/checkout@v7.0.1
+        with:
+          persist-credentials: false
       - name: Set up Python
         uses: actions/setup-python@v7.0.0
         with:

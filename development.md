@@ -2,6 +2,35 @@
 
 ## Docker Compose
 
+`compose.yaml` is the **pull-only release installer**, not the development stack.
+In every development terminal (including ones used for logs/tests), select the
+legacy development files explicitly before using the commands below:
+
+```bash
+ROOT=$(git rev-parse --show-toplevel)
+export COMPOSE_FILE="$ROOT/docker-compose.yml:$ROOT/docker-compose.override.yml"
+```
+
+Do not use installer volumes for development or verification. Existing data and
+running LAN services must remain untouched; never use volume pruning/reset as
+test setup. See [INSTALL.md](INSTALL.md) for source-free releases.
+
+### Owned test entry points
+
+`scripts/test.sh` / `scripts/test-local.sh` no longer delete volumes or run host
+`sudo` cleanup. They consume an **already prepared disposable** backend fixture
+stack only. They require `HDG_CI_DISPOSABLE=true`, a unique project named
+`hdg-devtest-` plus 32 lowercase UUID hex characters, and every container labelled
+`hdg.devtest.owner` equal to that complete project name. Missing/foreign labels
+refuse execution before backend tests. Preparation must use the existing exact
+database-profile/ownership guards; never label a retained stack just to bypass a
+refusal. These wrappers do not provision fixtures, build, stop or delete anything.
+Use the explicit owned-fixture sequence in `.github/workflows/test-backend.yml`
+as the reference for isolated verification, not an implicit local reset script.
+
+Generated clients are checked, never pushed by PR CI; run
+`uv run bash scripts/generate-client.sh` and commit generated changes yourself.
+
 * Start the local stack with Docker Compose:
 
 ```bash
