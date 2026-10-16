@@ -42,6 +42,7 @@ COPY --link backend/app /app/backend/app
 COPY --link backend/alembic.ini /app/backend/alembic.ini
 COPY --link backend/catalogue /app/backend/catalogue
 COPY --link LICENSE /app/LICENSE
+COPY --link scripts/distribution/backup.py /app/backup.py
 COPY --from=frontend /build/frontend/dist /app/frontend/dist
 ARG VERSION=unreleased
 ARG VCS_REF

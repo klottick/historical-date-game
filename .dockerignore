@@ -6,6 +6,11 @@
 !docker/
 docker/**
 !docker/python-build-constraints.txt
+!scripts/
+scripts/**
+!scripts/distribution/
+scripts/distribution/**
+!scripts/distribution/backup.py
 !backend/
 backend/**
 !backend/pyproject.toml

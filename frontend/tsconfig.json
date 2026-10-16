@@ -27,6 +27,8 @@
     "tests",
     "tests-real-catalog",
     "tests-guest-catalog",
+    "distribution",
+    "playwright.distribution.config.ts",
     "playwright.config.ts",
     "playwright.bootstrap.config.ts",
     "playwright.real-catalog.config.ts",
