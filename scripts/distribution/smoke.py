@@ -5,6 +5,7 @@ import hashlib
 import http.cookiejar
 import json
 import os
+import re
 import secrets
 import select
 import shutil
@@ -134,6 +135,8 @@ class Installation:
                 self.settings[field] = settings[field]
         for name in ("compose.yaml", "env.example"):
             shutil.copyfile(assets / name, directory / name)
+        if (assets / "INSTALL.md").is_file():
+            shutil.copyfile(assets / "INSTALL.md", directory / "INSTALL.md")
         with (directory / ".env").open("x") as stream:
             os.fchmod(stream.fileno(), 0o600)
             stream.write(
@@ -698,6 +701,55 @@ def check_shutdown(project: Installation) -> None:
     project.checks.append("native-amd64-graceful-app-db-shutdown")
 
 
+def documented_commands(guide: Path, name: str) -> str:
+    if name not in {"backup", "restore"}:
+        raise ValueError("Unknown documented operator command block")
+    blocks = re.findall(
+        r"<!-- distribution:" + name + r" -->\n```sh\n(.*?)```",
+        guide.read_text(),
+        re.DOTALL,
+    )
+    if len(blocks) != 1:
+        raise ValueError("Shipped operator command block is missing or ambiguous")
+    return blocks[0]
+
+
+def stage_operator_directory(project: Installation, directory: Path) -> None:
+    directory.mkdir(mode=0o700)
+    # Render only the ownership/network test override. Docker Compose's rendered
+    # JSON is valid YAML, so the guide's exact -f compose.yaml commands consume it
+    # without a wrapper, altered shell blocks or an undocumented restore path.
+    config = json.loads(project.compose("config", "--format", "json").stdout)
+    assert config["name"] == project.project
+    assert not any("build" in service for service in config["services"].values())
+    for name, data in (
+        ("compose.yaml", json.dumps(config).encode()),
+        (".env", (project.directory / ".env").read_bytes()),
+        ("image-digest.txt", json.dumps({"preview_image": project.image}).encode()),
+    ):
+        with (directory / name).open("xb") as stream:
+            os.fchmod(stream.fileno(), 0o600)
+            stream.write(data)
+
+
+def run_documented(project: Installation, name: str, directory: Path, *, check=True):
+    return subprocess.run(
+        [
+            "bash",
+            "-e",
+            "-o",
+            "pipefail",
+            "-c",
+            documented_commands(project.directory / "INSTALL.md", name),
+        ],
+        cwd=directory,
+        env=project.env | {"HDG_RECOVERY_PROJECT": project.project},
+        check=check,
+        capture_output=True,
+        timeout=180,
+    )
+
+
 def full_probe(project: Installation, evidence: Path, browser: bool = False) -> None:
     assert (
         project.python("import platform;assert platform.machine()=='x86_64'").strip()
@@ -756,40 +808,16 @@ def full_probe(project: Installation, evidence: Path, browser: bool = False) -> 
         assert player.json("POST", url + "/placements", move) == response
     assert player.raw("GET", media_url)[0] == old
     project.checks.append("app-db-replacement-all-row-hashes-and-historical-media")
-    # Quiesce all writers before both halves of the backup.
-    project.compose("stop", "app")
+    # Execute the shipped guide's exact shell blocks on private, owned fixtures.
     with tempfile.TemporaryDirectory(prefix="hdg-backup-", dir=private_temp()) as tmp:
         root = Path(tmp)
-        database, media = root / "database.dump", root / "media.tar"
-        environment_backup = root / "environment.private"
-        with environment_backup.open("xb") as stream:
-            os.fchmod(stream.fileno(), 0o600)
-            stream.write((project.directory / ".env").read_bytes())
-        for path in (database, media):
-            with path.open("xb") as stream:
-                os.fchmod(stream.fileno(), 0o600)
-                if path == database:
-                    project.compose(
-                        "exec",
-                        "-T",
-                        "db",
-                        "sh",
-                        "-c",
-                        'exec pg_dump --format=custom -U "$POSTGRES_USER" -d "$POSTGRES_DB"',
-                        stdout=stream,
-                    )
-                else:
-                    project.compose(
-                        "run",
-                        "--rm",
-                        "--no-deps",
-                        "--entrypoint",
-                        "python",
-                        "initialize",
-                        "/app/backup.py",
-                        "export-media",
-                        stdout=stream,
-                    )
+        original = root / "original"
+        stage_operator_directory(project, original)
+        run_documented(project, "backup", original)
+        project.refresh_endpoint()
+        backup = original / "backup"
+        database, media = backup / "database.dump", backup / "media.tar"
+        environment_backup = backup / "environment.private"
         saved_settings = dict(
             line.split("=", 1) for line in environment_backup.read_text().splitlines()
         )
@@ -797,57 +825,16 @@ def full_probe(project: Installation, evidence: Path, browser: bool = False) -> 
         with owned_child(restored, evidence):
             if restored.resources():
                 raise ValueError("Restore target unexpectedly exists")
-            restored.compose("up", "-d", "--wait", "db")
-            count = restored.compose(
-                "exec",
-                "-T",
-                "db",
-                "sh",
-                "-c",
-                'psql -XAt -U "$POSTGRES_USER" -d "$POSTGRES_DB" -c "'
-                + EMPTY_SCHEMA_SQL
-                + '"',
-            ).stdout.strip()
-            assert count == b"0", "Restore refuses a populated database"
-            with database.open("rb") as stream:
-                restored.compose(
-                    "exec",
-                    "-T",
-                    "db",
-                    "sh",
-                    "-c",
-                    'exec pg_restore --exit-on-error --no-owner -U "$POSTGRES_USER" -d "$POSTGRES_DB"',
-                    stdin=stream,
-                )
-            with media.open("rb") as stream:
-                restored.compose(
-                    "run",
-                    "--rm",
-                    "--no-deps",
-                    "--entrypoint",
-                    "python",
-                    "initialize",
-                    "/app/backup.py",
-                    "restore-media",
-                    stdin=stream,
-                )
-            restored.compose("up", "-d", "--wait", "--wait-timeout", "90")
+            recovery = root / "recovery-commands"
+            stage_operator_directory(restored, recovery)
+            for source in (database, media):
+                shutil.copyfile(source, recovery / source.name)
+                (recovery / source.name).chmod(0o600)
+            run_documented(restored, "restore", recovery)
             restored.refresh_endpoint()
             assert state(restored) == before
-            # Run the actual refusal guard, not pg_restore against retained data.
-            with database.open("rb") as stream:
-                rejected = restored.compose(
-                    "exec",
-                    "-T",
-                    "db",
-                    "sh",
-                    "-c",
-                    'test "$(psql -XAt -U "$POSTGRES_USER" -d "$POSTGRES_DB" -c "'
-                    + EMPTY_SCHEMA_SQL
-                    + '")" = 0 && exec pg_restore --exit-on-error --no-owner -U "$POSTGRES_USER" -d "$POSTGRES_DB"',
-                    stdin=stream,
-                    check=False,
-                )
+            # Reexecute the actual guide: its guard must refuse populated state.
+            rejected = run_documented(restored, "restore", recovery, check=False)
             assert rejected.returncode != 0
             with media.open("rb") as stream:
                 rejected = restored.compose(
@@ -875,7 +862,7 @@ def full_probe(project: Installation, evidence: Path, browser: bool = False) -> 
             project.checks.append(
                 "private-dump-media-restore-to-fresh-volumes-session-account-replay"
             )
-    # Main project is quiesced; stop DB too and assert clean exit status.
+    # Both guide procedures restarted their apps; verify graceful stop as well.
     check_shutdown(project)
 
 

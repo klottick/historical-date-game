@@ -1,5 +1,27 @@
 # Security Policy
 
+## Historical Date Game container distribution
+
+Containers package the existing security model; they do not add authentication,
+authorization, TLS, rate limiting, brute-force protection or a reviewed public
+reverse-proxy configuration. Account tokens protect account/admin APIs; guest
+sessions are game-only identities, not administrators or a public access-control
+layer. There is no independent security certification.
+
+The release defaults to loopback-only HTTP and an unpublished PostgreSQL port.
+LAN/public exposure needs an explicit binding, exact frontend origin, access
+controls and a separate TLS/proxy/security review. Use HTTPS with
+`ENVIRONMENT=production` outside local HTTP operation; Secure guest-cookie and
+same-origin request checks remain in force. Forwarded headers are not trusted.
+
+The application runs non-root and serving media is read-only. This does not hide
+database passwords, application secrets or private backups from the Docker host
+administrator. Keep `.env`, PostgreSQL dumps and all retained media private;
+back up the permanent `SECRET_KEY` to preserve identities across recovery. The
+build context excludes credentials, raw data and private worktrees by default.
+Never upload unredacted traces, credentials, session cookies or private reports.
+See [INSTALL.md](INSTALL.md) for safe initialization and recovery limitations.
+
 Security is very important for this project and its community. 🔒
 
 Learn more about it below. 👇

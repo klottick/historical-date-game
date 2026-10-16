@@ -449,3 +449,15 @@ or upstream copyright ownership. Full raw-source validation is a distinct build
 gate. Raw source archives need their own privacy/licence review before any
 separately authorized publication. Existing CI/publication prerequisites are not
 resolved merely by packaging this catalogue.
+# Prebuilt distribution boundary
+
+The root `compose.yaml` is the pull-only release installer; source/development
+commands in this guide must explicitly select the legacy Compose files, never
+rely on automatic discovery. See [INSTALL.md](../../INSTALL.md) for the released
+image layout (`/app/backend/catalogue`), UID `10001`, shared `/data` volume,
+read-only serving and the tested PostgreSQL/media/private-environment backup.
+Its initializer verifies the packaged catalogue offline and preserves any existing
+selection; it never rebuilds data, upgrades the selected catalogue or resets
+gameplay. Keep historical media releases for old runs and receipts. A populated
+legacy three-life migration refusal requires a separately reviewed migration or
+recovery of its matching backup, not deletion of retained state.

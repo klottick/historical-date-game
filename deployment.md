@@ -1,5 +1,20 @@
 # FastAPI Project - Deployment
 
+## Prebuilt release installation versus legacy deployment
+
+For the single-image Linux amd64 distribution, use the downloaded release assets
+and [INSTALL.md](INSTALL.md). The canonical `compose.yaml` is pull-only and binds
+the app to loopback; it does not deploy a reverse proxy or expose PostgreSQL.
+Account/admin authentication and guest identity are unchanged, and Docker does
+not make an untrusted public deployment safe.
+
+The older source-build/Traefik instructions below apply **only** to the explicitly
+selected `docker-compose.yml` stack. Staging and production workflows are
+manual-only. Publishing an image/release never deploys either environment.
+Do not combine these stacks' volumes or assume their image layouts match:
+the release layout is `/app/backend` plus `/app/frontend/dist`, with `/data`
+shared between the initializer (read-write) and app (read-only).
+
 ## Historical catalogue startup and storage
 
 The backend image packages the reviewed default at `/app/catalogue`. After
@@ -27,7 +42,8 @@ You can deploy the project using Docker Compose to a remote server.
 
 This project expects you to have a Traefik proxy handling communication to the outside world and HTTPS certificates.
 
-You can use CI/CD (continuous integration and continuous deployment) systems to deploy automatically, there are already configurations to do it with GitHub Actions.
+The provided deployment workflows require an explicit manual operator action;
+ordinary CI, releases and image publication do not deploy an application.
 
 But you have to configure a couple things first. 🤓
 

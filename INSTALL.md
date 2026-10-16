@@ -5,7 +5,16 @@ source code, builds, Python or Node.js. This guide is shipped with version-pinne
 `compose.yaml`, `env.example`, `image-digest.txt` and `SHA256SUMS` release assets.
 No release is claimed available by the source-tree templates alone.
 
-Download all those assets into a new empty directory. Verify `SHA256SUMS`, then:
+Download all five attachments from the same canonical stable release at
+<https://github.com/klottick/historical-date-game/releases> into a new empty
+directory (not the source archive). The release's `env.example` and Compose file
+already contain the exact tested image digest. Verify the downloaded files:
+
+```sh
+sha256sum --check SHA256SUMS
+```
+
+Then:
 
 ```sh
 umask 077
@@ -52,6 +61,7 @@ The dump/media archive and `.env` contain private state; do not commit or upload
 them. Back up all three together while application writes are stopped. Keep the
 release assets and digest as well. No host PostgreSQL/Python tools are needed.
 
+<!-- distribution:backup -->
 ```sh
 set -eu
 umask 077
@@ -77,17 +87,20 @@ this procedure at retained/populated volumes. Do not delete data to make a
 restore destination empty.
 
 In the new directory, place `database.dump`, `media.tar`, the original `.env` and
-`compose.yaml`; use a fresh project name throughout (shown as `hdg-recovery-new`).
+`compose.yaml`. Set `HDG_RECOVERY_PROJECT` to a new unique name (for example,
+`export HDG_RECOVERY_PROJECT=hdg-recovery-new`). Use that same name throughout.
 Do **not** run full `up`/initialization before restoring:
 
+<!-- distribution:restore -->
 ```sh
 set -eu
 umask 077
-docker compose --env-file .env -f compose.yaml -p hdg-recovery-new up -d --wait db
-test "$(docker compose --env-file .env -f compose.yaml -p hdg-recovery-new exec -T db sh -c 'psql -XAt -U "$POSTGRES_USER" -d "$POSTGRES_DB" -c "SELECT (SELECT count(*) FROM pg_class WHERE relnamespace = current_schema()::regnamespace) + (SELECT count(*) FROM pg_proc WHERE pronamespace = current_schema()::regnamespace) + (SELECT count(*) FROM pg_type WHERE typnamespace = current_schema()::regnamespace)"')" = 0
-docker compose --env-file .env -f compose.yaml -p hdg-recovery-new exec -T db sh -c 'exec pg_restore --exit-on-error --no-owner -U "$POSTGRES_USER" -d "$POSTGRES_DB"' < database.dump
-docker compose --env-file .env -f compose.yaml -p hdg-recovery-new run --rm -T --no-deps --entrypoint python initialize /app/backup.py restore-media < media.tar
-docker compose --env-file .env -f compose.yaml -p hdg-recovery-new up -d --wait
+: "${HDG_RECOVERY_PROJECT:?Set a NEW unique recovery project name}"
+docker compose --env-file .env -f compose.yaml -p "$HDG_RECOVERY_PROJECT" up -d --wait db
+test "$(docker compose --env-file .env -f compose.yaml -p "$HDG_RECOVERY_PROJECT" exec -T db sh -c 'psql -XAt -U "$POSTGRES_USER" -d "$POSTGRES_DB" -c "SELECT (SELECT count(*) FROM pg_class WHERE relnamespace = current_schema()::regnamespace) + (SELECT count(*) FROM pg_proc WHERE pronamespace = current_schema()::regnamespace) + (SELECT count(*) FROM pg_type WHERE typnamespace = current_schema()::regnamespace)"')" = 0
+docker compose --env-file .env -f compose.yaml -p "$HDG_RECOVERY_PROJECT" exec -T db sh -c 'exec pg_restore --exit-on-error --no-owner -U "$POSTGRES_USER" -d "$POSTGRES_DB"' < database.dump
+docker compose --env-file .env -f compose.yaml -p "$HDG_RECOVERY_PROJECT" run --rm -T --no-deps --entrypoint python initialize /app/backup.py restore-media < media.tar
+docker compose --env-file .env -f compose.yaml -p "$HDG_RECOVERY_PROJECT" up -d --wait
 ```
 
 Media restore refuses unsafe archive paths, links, corrupted hashed assets and
@@ -123,4 +136,64 @@ an exact origin, access control/TLS/reverse-proxy policy and security review.
 Forwarded headers are not trusted by the app. Configure SMTP explicitly if you
 need account email/reset; no mail service is included. Public repository visibility
 does not guarantee anonymous GHCR pulls. Supported images are **Linux amd64
-only**, including amd64 Docker VMs; no ARM or emulation support is promised.
+only**, including amd64 Docker VMs; ARM, 32-bit Linux and native Windows containers
+are unsupported. macOS/Windows require an appropriate Linux-container VM. Any
+amd64 emulation on another architecture is not claimed as native verified support.
+
+For ordinary maintenance:
+
+```sh
+docker compose --env-file .env -f compose.yaml ps
+docker compose --env-file .env -f compose.yaml logs --no-color
+docker compose --env-file .env -f compose.yaml stop
+docker compose --env-file .env -f compose.yaml up -d --wait
+```
+
+`down` without `-v` removes containers/networks but retains named volumes; continue
+using the same installation directory/project name to find them again. Keep the
+private environment and stable origin. A changed initial-admin password in `.env`
+does not rotate an existing account password; use the authenticated account flow.
+Likewise, changing `POSTGRES_PASSWORD` does not rotate an initialized database's
+password. Credential rotation needs a separately planned procedure.
+
+## Maintainer publication and partial-failure recovery
+
+These are maintainer checks, **not prerequisites for installing a release**.
+PR validation is read-only. A canonical published stable release starts serialized
+validation, full backend checks, the one native amd64 build/smoke job, publication
+of its exact archive, and attachment. No release or image action deploys a server.
+The version, `sha-<full-source-SHA>` and `latest` tags must have the same native
+manifest digest at publication; install bundles pin the immutable version/digest,
+never the mutable `latest` tag.
+
+Tag promotions are not atomic. Inspect the run-specific tested archive/metadata,
+`publication.json`, staging tag, stable version tag, full-SHA tag and `latest`
+after a failure. The journal records attempted versus verified promotions without
+credentials. **Never blindly rerun all jobs, overwrite/delete a stable version,
+or move `latest` backwards.** Existing versions/SHA tags and registry uncertainty
+refuse a new publication attempt. A staging-only or partly promoted result needs
+explicit reviewed operator repair; there is no automatic rollback or tag deletion.
+
+If all promotions were verified but only asset attachment failed, rerun only the
+failed attachment job. It downloads this run's successful publication evidence,
+revalidates release/tag/source and the version/SHA digest/config, then attaches
+only missing files. Identical existing files are a no-op; conflicting bytes stop
+without clobber. A newer release does not authorize republishing the older one,
+but does not prevent repairing that older version's still-valid assets. Expired
+archive/evidence artifacts require reviewed recovery, not weakening these guards.
+
+After separately approved push/merge/tag/release operations, maintainers can run:
+
+```sh
+python3 -m scripts.distribution.acceptance --repository klottick/historical-date-game --release-tag APPROVED_CANONICAL_TAG --expected-sha FULL_SOURCE_SHA --evidence-dir NEW_PRIVATE_DIRECTORY --browser
+```
+
+This development verification harness needs the repository's locked verification
+tools/browser; end users do not. It uses empty private Docker credentials and
+anonymous HTTP, verifies tag/digest/config identity, downloads the five assets
+without a source checkout in the install directory, and exercises real gameplay,
+replacement, documented backup/restore and shutdown on owned disposable volumes.
+Keep its diagnostic artifacts private and sanitized. Access denial is an unmet
+anonymous-pull gate, not permission to change package visibility. Real hosted CI,
+GHCR accessibility and released-asset installation must be verified explicitly;
+local smoke success alone proves none of them.

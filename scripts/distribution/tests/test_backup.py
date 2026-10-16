@@ -7,6 +7,26 @@ from pathlib import Path
 
 
 class BackupTests(unittest.TestCase):
+    def test_operator_commands_are_extracted_from_the_shipped_guide_without_fallbacks(
+        self,
+    ):
+        from scripts.distribution.smoke import documented_commands
+
+        with tempfile.TemporaryDirectory(dir="/tmp/opencode") as tmp:
+            path = Path(tmp) / "INSTALL.md"
+            path.write_text(
+                "<!-- distribution:backup -->\n```sh\nset -eu\nprintf documented-command\n```\n"
+            )
+            self.assertEqual(
+                documented_commands(path, "backup"),
+                "set -eu\nprintf documented-command\n",
+            )
+            with self.assertRaises(ValueError):
+                documented_commands(path, "restore")
+            path.write_text(path.read_text() * 2)
+            with self.assertRaises(ValueError):
+                documented_commands(path, "backup")
+
     def archive(self, name, *, kind=tarfile.REGTYPE, data=b"<svg/>"):
         stream = io.BytesIO()
         with tarfile.open(fileobj=stream, mode="w") as archive:

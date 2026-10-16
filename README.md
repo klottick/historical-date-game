@@ -1,5 +1,21 @@
 # Full Stack FastAPI Template
 
+## Install the Historical Date Game without building
+
+The prebuilt distribution targets **Linux amd64** and needs only Docker Engine
+and Docker Compose v2. Download `compose.yaml`, `env.example`, `INSTALL.md`,
+`image-digest.txt` and `SHA256SUMS` from the same stable
+[GitHub release](https://github.com/klottick/historical-date-game/releases).
+Follow [INSTALL.md](INSTALL.md): configure permanent secrets, pull the pinned
+digest, and start the app plus PostgreSQL. No source checkout, Python or Node.js
+installation is needed. Source-tree templates are not a published release.
+
+Default exposure is loopback only; Docker adds neither authentication nor TLS.
+Do not use release volumes for development/tests. For source development, select
+the legacy Compose files explicitly as described in [development.md](development.md).
+See [distribution verification](docs/verification/docker-distribution.md) for
+tested scope, known limitations and remote acceptance gates.
+
 ## Historical Date Game catalogue
 
 The backend includes an offline runtime catalogue: **1,276 historical events and
