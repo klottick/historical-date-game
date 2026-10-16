@@ -50,7 +50,7 @@ At source commit `098c9b1a4a63c091913ad4adc0a99b8d74e13ff0`:
 
 | Gate | Observed result |
 | --- | --- |
-| Fresh full isolated backend | 1,574 passed; legacy pytest collector coverage 89% (release checks run separately) |
+| Fresh full isolated backend | 1,574 passed at `ddbf1e4` (identical backend tree at this checkpoint); legacy pytest collector coverage 89% (release checks run separately) |
 | Distribution checks with actual context/image probes | 58 passed |
 | Backend mypy/Ruff/format | Passed, 76 application files |
 | Frontend lint/typecheck/unit/build | Passed, 86 unit tests |
@@ -133,10 +133,26 @@ also covers extra serialized fields beside sensitive `name`/`value` pairs.
 
 The revised saved-image audit covered 12 layers/9,688 files with no injected
 private sentinel. Backend mypy/Ruff/format, frontend lint/typecheck/86 unit tests/
-build, workflow contracts and actionlint passed again. A fresh full isolated
-backend run against this runtime source is pending. No second independent review
+build, workflow contracts and actionlint passed again. The fresh full isolated
+backend run against runtime source `99ca1c6` passed **1,574 tests in 624.10s**,
+89% legacy pytest coverage; release modules are exercised by the separate
+distribution/image checks. All three newly owned test containers were removed.
+The backend tree is unchanged through tooling checkpoint `f33d108`.
+
+The scratch backend launcher's original result JSON captured the outer branch's
+HEAD at completion, not its isolated source checkout. Both original results are
+preserved with explicit provenance-correction records; actual checkout HEADs and
+unchanged backend trees were verified rather than attributing tests to an untested
+revision. This affects provenance bookkeeping, not the observed test results.
+
+No second independent review
 was substituted for regressions: the five findings were fixed and tested by the
 implementer in one repair pass. No review approval or all-green claim is inferred.
+
+Local packaging checks and the review repair pass are recorded; Task 7 remains
+blocked at the overall board gate and approval-gated external steps. The branch
+and private evidence remain in place. No push/merge/tag/release/visibility change
+or live service deployment has been performed.
 
 The prior preview ID above does not contain these fixes. Earlier source-free preview runs
 used only installer files in the installation directory; they are not evidence of
