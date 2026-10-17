@@ -188,6 +188,32 @@ developer-widget opt-in test is the one board skip. This clears the previously
 failing local board acceptance check; it is not evidence of hosted release/GHCR
 or anonymously downloaded released-asset acceptance.
 
+### Hosted diagnostic-permission repair
+
+The first actual hosted `main` run at `f89be7c` passed prebuilt distribution,
+backend, lint, Compose and conflict checks. All four Playwright browser shards
+and the controlled-browser job also passed their tests, but the Playwright
+workflow failed during sanitization: Docker-created report directories were
+root-owned, so the unprivileged host could not replace reports or write its
+failure marker. The upload gates correctly withheld those unsanitized artifacts.
+
+The approved repair adds `diagnostics --copy-to`: reports are copied to a fresh,
+private runner-owned tree before sanitization. Original contents, modes and
+ownership remain untouched. Only the sanitized copy tree is selected for upload,
+still conditional on complete sanitization success. Links, special files,
+existing output directories, nested destinations and conflicting source names
+are refused; copy mode cannot perform ownership cleanup. No sudo, chown, relaxed
+artifact gate or browser retry was introduced.
+
+The exact workflow command failed against read-only report directories before
+the repair and passed afterward. Additional regressions verify invalid traces
+still fail without modifying originals and links/output conflicts are refused.
+All **69 distribution tests** passed with real context/image probes, along with
+workflow contracts and actionlint. A separate real Docker probe produced
+root-owned directories/reports and verified that the unprivileged host generated
+private sanitized copies with identical original bytes/owners/modes. Fresh hosted
+success is still required before the conditionally authorized v0.1.0 release.
+
 The prior preview ID above does not contain these fixes. Earlier source-free preview runs
 used only installer files in the installation directory; they are not evidence of
 downloaded GitHub assets.

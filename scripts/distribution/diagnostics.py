@@ -5,6 +5,7 @@ import io
 import json
 import os
 import re
+import stat
 import tempfile
 import zipfile
 from pathlib import Path
@@ -168,6 +169,7 @@ def sanitize_tree(root: Path) -> None:
                 os.fchmod(stream.fileno(), 0o600)
                 stream.write(data)
             temporary.write_bytes(sanitized)
+            temporary.chmod(0o600)
             temporary.replace(path)
         except (ValueError, UnicodeError, zipfile.BadZipFile):
             # Keep original evidence privately, but never let an always-run
@@ -192,6 +194,28 @@ def sanitize_tree(root: Path) -> None:
             ) from None
         finally:
             temporary.unlink(missing_ok=True)
+
+
+def copy_evidence(source: Path, destination: Path) -> None:
+    """Copy readable container outputs without changing their owners or modes."""
+    if source.is_symlink():
+        raise ValueError("Refusing linked diagnostic root")
+    if not source.exists():
+        return
+    if not source.is_dir():
+        raise ValueError("Diagnostic root must be a directory")
+    destination.mkdir(mode=0o700)
+    for path in source.rglob("*"):
+        target = destination / path.relative_to(source)
+        mode = path.lstat().st_mode
+        if stat.S_ISDIR(mode):
+            target.mkdir(mode=0o700)
+        elif stat.S_ISREG(mode):
+            with target.open("xb") as stream:
+                os.fchmod(stream.fileno(), 0o600)
+                stream.write(path.read_bytes())
+        else:
+            raise ValueError("Refusing linked or special diagnostic file")
 
 
 def cleanup_evidence(root: Path) -> None:
@@ -244,10 +268,37 @@ def main() -> int:
     parser = argparse.ArgumentParser(description=__doc__)
     parser.add_argument("--evidence", type=Path, required=True, action="append")
     parser.add_argument("--cleanup-owned", action="store_true")
+    parser.add_argument(
+        "--copy-to",
+        type=Path,
+        help="Sanitize fresh private copies, leaving source evidence untouched",
+    )
     args = parser.parse_args()
+    if args.copy_to:
+        if args.cleanup_owned:
+            parser.error("--copy-to cannot be combined with --cleanup-owned")
+        if len({path.name for path in args.evidence}) != len(args.evidence):
+            parser.error("Copy sources must have distinct directory names")
+        if any(
+            args.copy_to.resolve().is_relative_to(path.resolve())
+            for path in args.evidence
+        ):
+            parser.error("Copy destination must be outside every source tree")
+        try:
+            args.copy_to.mkdir(mode=0o700, parents=True, exist_ok=False)
+        except OSError:
+            parser.error("Copy destination must be a new writable directory")
     failures = []
     for evidence in args.evidence:
-        actions = [lambda root=evidence: sanitize_tree(root)]
+        target = args.copy_to / evidence.name if args.copy_to else evidence
+        actions = [lambda root=target: sanitize_tree(root)]
+        if args.copy_to:
+            actions.insert(
+                0,
+                lambda source=evidence, destination=target: copy_evidence(
+                    source, destination
+                ),
+            )
         if args.cleanup_owned:
             actions.insert(0, lambda root=evidence: cleanup_evidence(root))
         errors = []
@@ -258,10 +309,15 @@ def main() -> int:
                 errors.append(type(exc).__name__)
         if errors:
             failures.extend(errors)
-            if evidence.is_dir():
-                (evidence / "diagnostics-failure.json").write_text(
-                    json.dumps({"errors": errors}) + "\n"
-                )
+            if target.is_dir():
+                try:
+                    (target / "diagnostics-failure.json").write_text(
+                        json.dumps({"errors": errors}) + "\n"
+                    )
+                except OSError:
+                    # A read-only source can also reject the failure marker.
+                    # Keep the original failure and a nonzero upload gate.
+                    pass
     return 1 if failures else 0
 
 

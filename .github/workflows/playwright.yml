@@ -125,19 +125,19 @@ jobs:
     - name: Sanitize first-failure browser evidence
       id: sanitize
       if: always()
-      run: python3 -m scripts.distribution.diagnostics --evidence frontend/blob-report --evidence frontend/test-results --evidence frontend/service-diagnostics
+      run: python3 -m scripts.distribution.diagnostics --evidence frontend/blob-report --evidence frontend/test-results --evidence frontend/service-diagnostics --copy-to "$RUNNER_TEMP/playwright-diagnostics"
     - name: Upload service diagnostics
       if: ${{ always() && steps.sanitize.outcome == 'success' }}
       uses: actions/upload-artifact@v7.0.2
       with:
         name: playwright-service-logs-${{ matrix.shardIndex }}
-        path: frontend/service-diagnostics
+        path: ${{ runner.temp }}/playwright-diagnostics/service-diagnostics
     - name: Upload sanitized first-failure diagnostics
       if: ${{ always() && steps.sanitize.outcome == 'success' }}
       uses: actions/upload-artifact@v7.0.2
       with:
         name: browser-diagnostics-${{ matrix.shardIndex }}
-        path: frontend/blob-report
+        path: ${{ runner.temp }}/playwright-diagnostics
         include-hidden-files: true
         retention-days: 1
 

@@ -1,5 +1,6 @@
 import os
 import subprocess
+import sys
 import tempfile
 import unittest
 from pathlib import Path
@@ -16,6 +17,163 @@ def workflow(name):
 
 
 class CiTests(unittest.TestCase):
+    def test_workflow_sanitizes_runner_owned_copies_of_read_only_browser_reports(self):
+        import json
+        import zipfile
+
+        steps = workflow("playwright.yml")["jobs"]["test-playwright"]["steps"]
+        sanitize = next(step for step in steps if step.get("id") == "sanitize")
+        with tempfile.TemporaryDirectory(dir="/tmp/opencode") as tmp:
+            root = Path(tmp)
+            runner = root / "runner"
+            runner.mkdir()
+            sources = [
+                root / "frontend" / name
+                for name in ("blob-report", "test-results", "service-diagnostics")
+            ]
+            for source in sources:
+                source.mkdir(parents=True)
+            with zipfile.ZipFile(sources[0] / "report.zip", "w") as archive:
+                archive.writestr(
+                    "report.jsonl", json.dumps({"params": {"password": "COPY_PRIVATE"}})
+                )
+            (sources[1] / "nested").mkdir()
+            (sources[1] / "nested/trace.json").write_text(
+                '{"access_token":"COPY_PRIVATE"}'
+            )
+            (sources[2] / "service-logs.txt").write_text("password=COPY_PRIVATE")
+            paths = [
+                path for source in sources for path in [source, *source.rglob("*")]
+            ]
+            for path in paths:
+                path.chmod(0o555 if path.is_dir() else 0o444)
+            before = {
+                path: (
+                    path.stat().st_uid,
+                    path.stat().st_gid,
+                    path.stat().st_mode,
+                    path.read_bytes() if path.is_file() else None,
+                )
+                for path in paths
+            }
+            try:
+                result = subprocess.run(
+                    ["bash", "-e", "-c", sanitize["run"]],
+                    cwd=root,
+                    env=dict(os.environ)
+                    | {
+                        "PYTHONPATH": str(ROOT),
+                        "PATH": str(Path(sys.executable).parent)
+                        + ":"
+                        + os.environ["PATH"],
+                        "RUNNER_TEMP": str(runner),
+                    },
+                    check=False,
+                    capture_output=True,
+                )
+                self.assertEqual(result.returncode, 0, result.stderr.decode())
+                after = {
+                    path: (
+                        path.stat().st_uid,
+                        path.stat().st_gid,
+                        path.stat().st_mode,
+                        path.read_bytes() if path.is_file() else None,
+                    )
+                    for path in paths
+                }
+                self.assertEqual(after, before)
+                for step in steps:
+                    if "upload-artifact@" not in step.get("uses", ""):
+                        continue
+                    upload = Path(
+                        step["with"]["path"].replace("${{ runner.temp }}", str(runner))
+                    )
+                    if not upload.is_absolute():
+                        upload = root / upload
+                    self.assertTrue(upload.is_relative_to(runner), upload)
+                    files = [path for path in upload.rglob("*") if path.is_file()]
+                    self.assertTrue(files, upload)
+                    for path in files:
+                        self.assertEqual(path.stat().st_uid, os.getuid())
+                        self.assertEqual(path.stat().st_mode & 0o777, 0o600)
+                        if path.suffix == ".zip":
+                            with zipfile.ZipFile(path) as archive:
+                                for name in archive.namelist():
+                                    self.assertNotIn(
+                                        b"COPY_PRIVATE", archive.read(name)
+                                    )
+                        else:
+                            self.assertNotIn(b"COPY_PRIVATE", path.read_bytes())
+            finally:
+                for path in paths:
+                    path.chmod(0o700 if path.is_dir() else 0o600)
+
+    def test_bad_trace_in_copy_mode_fails_without_modifying_the_original(self):
+        import json
+        import zipfile
+
+        with tempfile.TemporaryDirectory(dir="/tmp/opencode") as tmp:
+            root = Path(tmp)
+            source = root / "source"
+            source.mkdir()
+            with zipfile.ZipFile(source / "trace.zip", "w") as archive:
+                archive.writestr("broken.network", "PRIVATE_INVALID_JSON")
+            original = (source / "trace.zip").read_bytes()
+            result = subprocess.run(
+                [
+                    sys.executable,
+                    "-m",
+                    "scripts.distribution.diagnostics",
+                    "--evidence",
+                    str(source),
+                    "--copy-to",
+                    str(root / "copies"),
+                ],
+                cwd=ROOT,
+                env=dict(os.environ) | {"RUNNER_TEMP": tmp},
+                check=False,
+                capture_output=True,
+            )
+            self.assertEqual(result.returncode, 1, result.stderr.decode())
+            self.assertEqual((source / "trace.zip").read_bytes(), original)
+            self.assertEqual({path.name for path in source.iterdir()}, {"trace.zip"})
+            self.assertFalse((root / "copies/source/trace.zip").exists())
+            self.assertEqual(
+                json.loads(
+                    (root / "copies/source/diagnostics-failure.json").read_text()
+                )["errors"],
+                ["ValueError"],
+            )
+
+    def test_copy_mode_refuses_links_and_existing_output_without_source_mutation(self):
+        with tempfile.TemporaryDirectory(dir="/tmp/opencode") as tmp:
+            root = Path(tmp)
+            source = root / "source"
+            source.mkdir()
+            private = root / "outside.json"
+            private.write_text('{"secret":"DO_NOT_COPY"}')
+            (source / "linked.json").symlink_to(private)
+            for output in (root / "copies", source / "inside", root):
+                result = subprocess.run(
+                    [
+                        sys.executable,
+                        "-m",
+                        "scripts.distribution.diagnostics",
+                        "--evidence",
+                        str(source),
+                        "--copy-to",
+                        str(output),
+                    ],
+                    cwd=ROOT,
+                    env=dict(os.environ) | {"RUNNER_TEMP": tmp},
+                    check=False,
+                    capture_output=True,
+                )
+                self.assertNotEqual(result.returncode, 0)
+            self.assertEqual(private.read_text(), '{"secret":"DO_NOT_COPY"}')
+            self.assertTrue((source / "linked.json").is_symlink())
+            self.assertFalse((source / "inside").exists())
+
     def test_all_browser_diagnostic_uploads_require_successful_sanitization(self):
         for name, job, guard in (
             (
