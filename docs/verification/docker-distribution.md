@@ -2,16 +2,21 @@
 
 ## Scope and approval boundary
 
-Implementation is local on a clean branch descended from public `main`
+Implementation began on a clean branch descended from public `main`
 `76ba4c3d740237af99bc8db7fb9b1e4f5d25e40a`, not from private feature history.
 Only Linux amd64 containers are supported and tested; no ARM image, privileged
 emulation setup or multi-platform index is involved.
 
-**Not yet verified:** actual hosted PR/release workflows, GHCR publication,
-anonymous public package access, and downloaded *published* release installation.
-Push, merge, tag/release creation and any package-visibility change each require
-separate approval. No live application deployment or retained database migration
-is part of this implementation. Local preview images are not released images.
+**Current published checkpoint:** v0.1.0 at
+`94f470c7dcfb36d0a4bbfab672d65ee37a049b4c` passed all six hosted `main`
+workflows. Its release validation/backend/image/publish jobs passed; attachment
+failed and was recovered with the guarded asset-only procedure. Anonymous image
+access and downloaded installation were verified as detailed below. These are
+not claims of a successful hosted PR run or an all-green v0.1.0 release workflow.
+Push, merge and release actions were separately approved. Package visibility was
+not changed; no live deployment or retained database migration was performed.
+Local preview images are not released images. Earlier checkpoints below retain
+their original limitations rather than retroactively becoming release evidence.
 
 ## Local evidence
 
@@ -214,9 +219,71 @@ root-owned directories/reports and verified that the unprivileged host generated
 private sanitized copies with identical original bytes/owners/modes. Fresh hosted
 success is still required before the conditionally authorized v0.1.0 release.
 
-The prior preview ID above does not contain these fixes. Earlier source-free preview runs
+The prior preview ID above predates these tooling/test repairs. Earlier source-free preview runs
 used only installer files in the installation directory; they are not evidence of
 downloaded GitHub assets.
+
+### Actual v0.1.0 publication and recovery
+
+Release: <https://github.com/klottick/historical-date-game/releases/tag/v0.1.0>.
+Exact source: `94f470c7dcfb36d0a4bbfab672d65ee37a049b4c`.
+
+| Identity | Verified value |
+| --- | --- |
+| Native Linux amd64 manifest | `sha256:44564f5a3370ce223c3f0f4bc83c03b4f2370fc8c77de69d8f6ef4cafadb9d90` |
+| Tested image/config | `sha256:94caf8da66f80e531db1eae180ce42263806feece63244b034ec2d084af950f5` |
+| Release workflow | [38995986709](https://github.com/klottick/historical-date-game/actions/runs/38995986709), attempt 1 |
+| Attached installer files | `compose.yaml`, `env.example`, `INSTALL.md`, `image-digest.txt`, `SHA256SUMS` |
+
+All six fresh hosted main workflows succeeded before the stable release was
+created with an explicit full-SHA target. The release workflow tested one native
+image, archived it and published that exact image without rebuilding. Version,
+full-SHA, `latest` and digest references matched anonymously. No package-visibility
+change was needed.
+
+Only the attachment job failed: the pinned artifact download action extracts a
+single match directly into its destination, but the script searched only child
+directories. The successful same-run publication record was downloaded and
+verified against the live release/tag/main and registry manifest/config before
+the shipped `publish --attach-only` procedure attached all five files. No workflow
+rerun, tag move, image rebuild or image republishing was used. The original failed
+workflow remains visible.
+
+The original acceptance CLI then downloaded and checksum-verified the assets and
+pulled the pinned image with empty Docker credentials, but stopped before startup:
+this host's containerd image store reports the manifest digest as Docker's image
+ID, not the config digest assumed by the script. Independent read-only checks
+matched the descriptor, manifest/config identities, rootfs layers and runtime
+configuration, followed by the same full downloaded-asset installation smoke.
+All eight smoke checks passed, including desktop/mobile browsers with zero
+retries, account/gameplay replay, replacement with every row hash/historical-media
+inventory preserved, the shipped backup/restore and subsequent maintenance
+commands, readiness outages/recovery, migration refusal and graceful shutdown.
+The original CLI failure was retained, not relabeled successful.
+
+### Release-tooling follow-up
+
+The approved bounded fixes preserve v0.1.0's tag, assets and image. Attachment
+examines both root-level and nested records, still requiring exactly one complete
+successful same-run publication; foreign-run, ambiguous, malformed or absent
+evidence is refused. Tests execute the workflow's actual Python selection block,
+substituting only its remote attachment boundary.
+
+Pulled-image acceptance supports classic config IDs and containerd manifest IDs.
+Manifest IDs require a matching native-manifest descriptor; a contradictory
+descriptor is refused even with a config ID. Both paths compare Linux amd64,
+rootfs layers and the complete normalized runtime configuration with the
+digest-verified registry config. Registry manifest/config hashes, source/version
+labels and anonymous alias equality remain mandatory.
+
+The new regressions were observed failing before implementation. All **73
+distribution checks**, including real image/context probes, then passed, as did
+5 workflow contracts, Ruff/format and actionlint. The repaired acceptance CLI
+also passed unmodified end-to-end against the actual v0.1.0 downloaded assets on
+this containerd host, including all eight installation checks and zero-retry
+desktop/mobile browsers. This is new verifier evidence; it does not erase either
+original failure. Fresh hosted CI and an actual all-green v0.1.1 publication are
+still required before claiming the follow-up release successful.
 
 ## Reproducing local checks
 

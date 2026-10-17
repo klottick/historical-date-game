@@ -133,6 +133,49 @@ def download_bundle(repository: str, tag: str, directory: Path, revision: str) -
     return validate_bundle(directory, tag, revision)
 
 
+def verify_pulled_image(info: dict, config_id: str, digest: str, config: dict) -> None:
+    """Bind either Docker store's inspect identity to the verified registry image."""
+    descriptor = info.get("Descriptor")
+    if info.get("Id") not in {config_id, digest} or (
+        (info.get("Id") == digest or descriptor is not None)
+        and (
+            not isinstance(descriptor, dict)
+            or descriptor.get("digest") != digest
+            or descriptor.get("mediaType") not in registry.MEDIA
+        )
+    ):
+        raise ValueError("Anonymously pulled image identity mismatch")
+    if (
+        info.get("Os") != "linux"
+        or info.get("Architecture") != "amd64"
+        or config.get("os") != "linux"
+        or config.get("architecture") != "amd64"
+    ):
+        raise ValueError("Anonymously pulled image is not native Linux amd64")
+    expected_root = config.get("rootfs", {})
+    root = info.get("RootFS", {})
+    layers = expected_root.get("diff_ids")
+    if (
+        expected_root.get("type") != "layers"
+        or not isinstance(layers, list)
+        or not layers
+        or root.get("Type") != "layers"
+        or root.get("Layers") != layers
+    ):
+        raise ValueError("Anonymously pulled image layers mismatch")
+    expected = config.get("config")
+    runtime = info.get("Config")
+    if (
+        not isinstance(expected, dict)
+        or not isinstance(runtime, dict)
+        or any(
+            runtime.get(key) != expected.get(key)
+            for key in runtime.keys() | expected.keys()
+        )
+    ):
+        raise ValueError("Anonymously pulled image runtime configuration mismatch")
+
+
 def main() -> None:
     parser = argparse.ArgumentParser(description=__doc__)
     parser.add_argument("--repository", required=True)
@@ -187,8 +230,10 @@ def main() -> None:
                         env=environment,
                     )
                 )[0]
-                if info["Id"] != image_id:
-                    raise ValueError("Anonymously pulled image ID mismatch")
+                config = registry.config_blob(
+                    IMAGE, image_id, registry.token(IMAGE, anonymous=True)
+                )
+                verify_pulled_image(info, image_id, identity["digest"], config)
                 installation = Installation(
                     identity["image"],
                     evidence / "downloaded-assets",

@@ -10,6 +10,114 @@ SHA = "a" * 40
 
 
 class AcceptanceTests(unittest.TestCase):
+    def test_pulled_image_identity_accepts_classic_config_id_or_manifest_descriptor(
+        self,
+    ):
+        from scripts.distribution import acceptance
+
+        config_id = "sha256:" + "b" * 64
+        digest = "sha256:" + "d" * 64
+        config = {
+            "os": "linux",
+            "architecture": "amd64",
+            "rootfs": {"type": "layers", "diff_ids": ["sha256:" + "e" * 64]},
+            "config": {
+                "Labels": {
+                    "org.opencontainers.image.revision": SHA,
+                    "org.opencontainers.image.version": "1.0.0",
+                },
+                "Env": ["PATH=/app/bin"],
+                "User": "10001:10001",
+                "WorkingDir": "/app",
+                "Entrypoint": ["python"],
+                "Cmd": ["-m", "app"],
+            },
+        }
+        classic = {
+            "Id": config_id,
+            "Os": "linux",
+            "Architecture": "amd64",
+            "RootFS": {"Type": "layers", "Layers": ["sha256:" + "e" * 64]},
+            "Config": config["config"],
+        }
+        containerd = classic | {
+            "Id": digest,
+            "Descriptor": {
+                "digest": digest,
+                "mediaType": "application/vnd.docker.distribution.manifest.v2+json",
+                "size": 2829,
+            },
+        }
+        verifier = getattr(acceptance, "verify_pulled_image", None)
+        self.assertTrue(
+            callable(verifier),
+            "Pulled-image identity verification must support both Docker stores",
+        )
+        for info in (classic, containerd):
+            with self.subTest(image_id=info["Id"]):
+                verifier(info, config_id, digest, config)
+
+    def test_pulled_image_identity_rejects_wrong_ids_descriptors_platform_layers_and_config(
+        self,
+    ):
+        import copy
+
+        from scripts.distribution import acceptance
+
+        verifier = getattr(acceptance, "verify_pulled_image", None)
+        self.assertTrue(
+            callable(verifier), "Pulled-image identity verifier is required"
+        )
+        config_id = "sha256:" + "b" * 64
+        digest = "sha256:" + "d" * 64
+        config = {
+            "os": "linux",
+            "architecture": "amd64",
+            "rootfs": {"type": "layers", "diff_ids": ["sha256:" + "e" * 64]},
+            "config": {
+                "Labels": {"org.opencontainers.image.revision": SHA},
+                "Env": ["A=B"],
+                "User": "10001",
+                "WorkingDir": "/app",
+                "Entrypoint": ["python"],
+                "Cmd": ["app"],
+            },
+        }
+        good = {
+            "Id": digest,
+            "Os": "linux",
+            "Architecture": "amd64",
+            "RootFS": {"Type": "layers", "Layers": ["sha256:" + "e" * 64]},
+            "Config": config["config"],
+            "Descriptor": {
+                "digest": digest,
+                "mediaType": "application/vnd.oci.image.manifest.v1+json",
+                "size": 2829,
+            },
+        }
+        bad = [
+            good | {"Id": config_id + "0"},
+            good | {"Descriptor": None},
+            good | {"Descriptor": good["Descriptor"] | {"digest": config_id}},
+            good
+            | {
+                "Descriptor": good["Descriptor"]
+                | {"mediaType": "application/vnd.oci.image.index.v1+json"}
+            },
+            good | {"Os": "windows"},
+            good | {"Architecture": "arm64"},
+            good | {"RootFS": {"Type": "layers", "Layers": ["sha256:" + "f" * 64]}},
+            good | {"RootFS": {}},
+            good | {"Config": {}},
+        ]
+        for field in config["config"]:
+            item = copy.deepcopy(good)
+            item["Config"][field] = None
+            bad.append(item)
+        for info in bad:
+            with self.subTest(info=info), self.assertRaises(ValueError):
+                verifier(info, config_id, digest, config)
+
     def test_downloads_only_anonymous_attachments_into_an_empty_source_free_directory(
         self,
     ):

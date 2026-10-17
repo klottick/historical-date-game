@@ -120,9 +120,14 @@ jobs:
           from scripts.distribution.publish import attach
           root=Path(os.environ['RUNNER_TEMP'])
           candidates=[]
-          for path in (root/'publication-attempts').glob('*/publication.json'):
+          evidence=root/'publication-attempts'
+          # A single matching artifact extracts at the root; multiple matches
+          # extract under their artifact names. Inspect both without merging.
+          for path in [*evidence.glob('publication.json'), *evidence.glob('*/publication.json')]:
               value=json.loads(path.read_bytes())
               if value.get('passed') is True:
+                  if value.get('run_id') != os.environ['GITHUB_RUN_ID']:
+                      raise SystemExit('Publication evidence belongs to a different run')
                   candidates.append(path)
           if len(candidates)!=1:
               raise SystemExit('Exactly one successful same-run publication required; inspect partial attempts')

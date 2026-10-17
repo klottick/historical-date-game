@@ -17,6 +17,90 @@ def workflow(name):
 
 
 class CiTests(unittest.TestCase):
+    def test_attachment_step_accepts_flat_or_nested_same_run_publication(self):
+        for layout in ("publication.json", "publication-123-1/publication.json"):
+            with self.subTest(layout=layout):
+                self.run_attachment_selection(
+                    {layout: {"passed": True, "run_id": "123"}}, layout
+                )
+        self.run_attachment_selection(
+            {
+                "publication-123-1/publication.json": {"passed": False},
+                "publication-123-2/publication.json": {"passed": True, "run_id": "123"},
+            },
+            "publication-123-2/publication.json",
+        )
+
+    def test_attachment_step_refuses_missing_ambiguous_foreign_or_invalid_evidence(
+        self,
+    ):
+        for records in (
+            {},
+            {"publication.json": {"passed": False, "run_id": "123"}},
+            {"publication.json": {"passed": True, "run_id": "999"}},
+            {"publication-123-1/publication.json": {"passed": True, "run_id": "999"}},
+            {"publication.json": {"passed": True}},
+            {
+                "publication.json": {"passed": True, "run_id": "123"},
+                "publication-123-2/publication.json": {"passed": True, "run_id": "123"},
+            },
+            {"publication.json": "malformed"},
+        ):
+            with self.subTest(records=records):
+                self.run_attachment_selection(records, None)
+
+    def run_attachment_selection(self, records, expected):
+        """Run the actual workflow Python; replace only the remote attachment boundary."""
+        import json
+        import runpy
+        from unittest.mock import patch
+
+        steps = workflow("release-image.yml")["jobs"]["attach"]["steps"]
+        command = next(
+            step["run"]
+            for step in steps
+            if step.get("name") == "Attach only the verified published version"
+        )
+        self.assertTrue(command.startswith("python3 - <<'PY'\n"))
+        code = command.split("\n", 1)[1].rsplit("\nPY", 1)[0]
+        with tempfile.TemporaryDirectory(dir="/tmp/opencode") as tmp:
+            root = Path(tmp)
+            evidence = root / "publication-attempts"
+            evidence.mkdir()
+            script = root / "attach_step.py"
+            script.write_text(code)
+            for name, value in records.items():
+                path = evidence / name
+                path.parent.mkdir(parents=True, exist_ok=True)
+                path.write_text(value if isinstance(value, str) else json.dumps(value))
+            selected = []
+            with (
+                patch.dict(
+                    os.environ,
+                    {
+                        "RUNNER_TEMP": tmp,
+                        "GITHUB_RUN_ID": "123",
+                        "GITHUB_REPOSITORY": "klottick/historical-date-game",
+                        "RELEASE_ID": "7",
+                        "GITHUB_SHA": "a" * 40,
+                    },
+                ),
+                patch(
+                    "scripts.distribution.publish.attach",
+                    side_effect=lambda path, *args: selected.append(path),
+                ),
+            ):
+                if expected is None:
+                    with self.assertRaises((ValueError, SystemExit)):
+                        runpy.run_path(str(script), run_name="__main__")
+                    self.assertEqual(selected, [])
+                else:
+                    try:
+                        runpy.run_path(str(script), run_name="__main__")
+                    except SystemExit as exc:
+                        self.fail(f"Valid publication layout was rejected: {exc}")
+                    self.assertEqual(selected, [evidence / expected])
+
     def test_workflow_sanitizes_runner_owned_copies_of_read_only_browser_reports(self):
         import json
         import zipfile
