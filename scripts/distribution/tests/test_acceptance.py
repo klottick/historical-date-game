@@ -53,7 +53,12 @@ class AcceptanceTests(unittest.TestCase):
             callable(verifier),
             "Pulled-image identity verification must support both Docker stores",
         )
-        for info in (classic, containerd):
+        for info in (
+            classic,
+            containerd,
+            classic | {"Descriptor": containerd["Descriptor"]},
+            classic | {"Config": classic["Config"] | {"StopSignal": None}},
+        ):
             with self.subTest(image_id=info["Id"]):
                 verifier(info, config_id, digest, config)
 
@@ -101,6 +106,11 @@ class AcceptanceTests(unittest.TestCase):
             good | {"Descriptor": good["Descriptor"] | {"digest": config_id}},
             good
             | {
+                "Id": config_id,
+                "Descriptor": good["Descriptor"] | {"digest": config_id},
+            },
+            good
+            | {
                 "Descriptor": good["Descriptor"]
                 | {"mediaType": "application/vnd.oci.image.index.v1+json"}
             },
@@ -109,6 +119,7 @@ class AcceptanceTests(unittest.TestCase):
             good | {"RootFS": {"Type": "layers", "Layers": ["sha256:" + "f" * 64]}},
             good | {"RootFS": {}},
             good | {"Config": {}},
+            good | {"Config": good["Config"] | {"StopSignal": "SIGKILL"}},
         ]
         for field in config["config"]:
             item = copy.deepcopy(good)
